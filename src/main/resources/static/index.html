@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Design is Code</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Design is Code</h1>
+            <p>Design your backend. Get verified code.</p>
+        </header>
+
+        <main>
+            <div id="wizard">
+                <!-- Step 1: User Story -->
+                <section id="step-1" class="step active">
+                    <h2>Step 1: What's the user story?</h2>
+                    <textarea id="user-story" placeholder="e.g., As a user, I want to create an order with inventory validation"></textarea>
+                    <button onclick="nextStep(2)">Next</button>
+                </section>
+
+                <!-- Step 2: Entry Point -->
+                <section id="step-2" class="step">
+                    <h2>Step 2: Which service handles this?</h2>
+                    <input type="text" id="entry-point" placeholder="e.g., OrderService">
+                    <button onclick="prevStep(1)">Back</button>
+                    <button onclick="nextStep(3)">Next</button>
+                </section>
+
+                <!-- Step 3: Collaborators -->
+                <section id="step-3" class="step">
+                    <h2>Step 3: What needs to happen?</h2>
+                    <div id="actions-list"></div>
+                    <button onclick="addAction()">+ Add action</button>
+                    <button onclick="prevStep(2)">Back</button>
+                    <button onclick="nextStep(4)">Next</button>
+                </section>
+
+                <!-- Step 4: Flow -->
+                <section id="step-4" class="step">
+                    <h2>Step 4: Review the flow</h2>
+                    <div id="flow-preview"></div>
+                    <button onclick="prevStep(3)">Back</button>
+                    <button onclick="generate()">Generate</button>
+                </section>
+
+                <!-- Step 5: Result -->
+                <section id="step-5" class="step">
+                    <h2>Step 5: Generated output</h2>
+                    <pre id="output"></pre>
+                    <button onclick="prevStep(4)">Back</button>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="/js/app.js"></script>
+</body>
+</html>
