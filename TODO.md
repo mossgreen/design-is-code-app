@@ -1,49 +1,51 @@
 # Design is Code App — TODO
 
-## Step 0: Project Path
-- [ ] Text field for user to paste the absolute path of the project
-- [ ] Backend scans the path for service files, entities, etc.
-- [ ] Later: replace with git repo connection or file picker
+The app's only output is **one valid UML sequence diagram** that DisC consumes.
+DisC itself handles project scanning, CREATE/UPDATE detection, classification, test generation and implementation. This wizard stays thin.
+
+## Helper: Connect project (optional)
+- [x] Backend scan endpoint — walks `src/main/java/**/*.java`, returns classes, interfaces, data types, methods
+- [x] "Connect project" chip in the header — path input + scan
+- [ ] Future: replace path paste with git repo connection or file picker
+- [ ] Scan result powers autocomplete in Step 2 (class + type datalist) and Step 3 (collaborators)
+- Rule: the chip is **never a gate**. Empty means user types freely; reuse is optional, not required (aligns with DisC supporting CREATE and UPDATE equally).
 
 ## Step 1: User Story
-- [ ] Scan project file names from connected codebase
-- [ ] Based on matching, show existing services as suggestions
-- [ ] Allow user to select, add new, or delete selections
-- [ ] Free text input for the user story itself
+- [x] Textarea for natural-language user story
+- [ ] Multimodal icons (voice / image / video) shown disabled — roadmap signal only
 
 ## Step 2: Entry Point
-- [ ] Show services discovered in Step 1 as options
-- [ ] Allow user to pick one or create new
-- [ ] This is the `component_under_test`
-- [ ] Method: allow user to type a method name OR describe what it does (system generates name from description)
-- [ ] Return type: define as abstraction (interface) first — consistent with participant naming rule
+- [x] Class input with scan-powered typeahead, story-keyword boost
+- [x] Package (autofills from scan match)
+- [x] Method name + method picks from existing class
+- [x] Parameters list
+- [x] Return type (datalist of primitives + scanned types)
+- [ ] Post-MVP: allow the user to describe the method in natural language and have the system propose a name
 
 ## Step 3: Collaborators (the core design step)
-- [ ] Based on Step 2 answer, show each collaborator as a list item
-- [ ] List should be reorderable (drag to change call order)
-- [ ] Each row represents one interaction, laid out left to right:
-  - **Abstraction** — the interface name (e.g., `OrderRepository`)
-  - **Implementation** — explicit name or tick "Default" (e.g., `DefaultOrderRepository`)
-  - **Method** — what it does (e.g., `save`)
-  - **Input** — what goes in (e.g., `order : Order`)
-  - **Return** — what comes back (e.g., `savedOrder : Order`)
-- [ ] Allow add new row, delete row
-- [ ] Should support marking branches (alt/else) and exceptions
+- [ ] One row = one call arrow. Each row captures:
+  - **Callee** — `Abstraction` or `Implementation : Abstraction` (colon-split per DisC participant naming)
+  - **Method**
+  - **Input** — e.g. `order : Order`
+  - **Return** — e.g. `savedOrder : Order` (absence = no return arrow)
+- [ ] Add / remove rows
+- [ ] Reorder via ↑ / ↓ buttons (drag-drop is post-MVP)
+- [ ] Autocomplete callee from scan (interfaces first, then classes)
+- [ ] Post-MVP: fragment markers (`alt`, `loop`, `throws`) — defer until the row model is stable
 
-## Step 4: Flow Preview
-- [ ] Render the list from Step 3 as a visual sequence diagram
-- [ ] Show participants at top, arrows between them
-- [ ] Read-only visualisation — edits happen in Step 3
-- [ ] Team review / sign-off happens here
+## Step 4: Preview
+- [ ] Render the entry + arrows as a minimalist sequence diagram
+- [ ] Participants row at top (derived from entry + unique callees)
+- [ ] Read-only — edits go back to Step 3
+- [ ] Post-MVP: team review / sign-off
 
 ## Step 5: Generate
-- [ ] Serialize the design to structured JSON
-- [ ] Feed to DisC engine (backend)
-- [ ] Show generated tests + implementation
-- [ ] Option to export / push to repo
+- [ ] Emit the design as structured JSON matching DisC's expected sequence-diagram shape
+- [ ] Show the JSON + a copy button (MVP)
+- [ ] Post-MVP: POST to backend → backend runs the DisC skill → stream back tests + implementation
+- [ ] Post-MVP: export / push to repo
 
-## Open Questions
-- Step 1 codebase scanning: build now or later? (needs git repo connection)
-- Step 3 branch/exception UX: how to represent visually in a list?
-- Step 4 rendering: plain HTML/CSS or use a diagram library?
-- Team sign-off workflow: comments, approvals — what's MVP?
+## Open questions
+- Step 3 fragments (alt / loop / throws): how to represent visually without cluttering the row? (open)
+- Step 4 rendering: hand-built HTML/CSS vs. a diagram library? (MVP = HTML/CSS)
+- Backend-to-DisC handoff: shell out to the `claude` CLI with a crafted prompt, or expose an HTTP wrapper around the skill? (post-MVP decision)

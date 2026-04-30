@@ -7,55 +7,257 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-    <div id="app">
-        <header>
-            <h1>Design is Code</h1>
-            <p>Design your backend. Get verified code.</p>
-        </header>
-
-        <main>
-            <div id="wizard">
-                <!-- Step 1: User Story -->
-                <section id="step-1" class="step active">
-                    <h2>Step 1: What's the user story?</h2>
-                    <textarea id="user-story" placeholder="e.g., As a user, I want to create an order with inventory validation"></textarea>
-                    <button onclick="nextStep(2)">Next</button>
-                </section>
-
-                <!-- Step 2: Entry Point -->
-                <section id="step-2" class="step">
-                    <h2>Step 2: Which service handles this?</h2>
-                    <input type="text" id="entry-point" placeholder="e.g., OrderService">
-                    <button onclick="prevStep(1)">Back</button>
-                    <button onclick="nextStep(3)">Next</button>
-                </section>
-
-                <!-- Step 3: Collaborators -->
-                <section id="step-3" class="step">
-                    <h2>Step 3: What needs to happen?</h2>
-                    <div id="actions-list"></div>
-                    <button onclick="addAction()">+ Add action</button>
-                    <button onclick="prevStep(2)">Back</button>
-                    <button onclick="nextStep(4)">Next</button>
-                </section>
-
-                <!-- Step 4: Flow -->
-                <section id="step-4" class="step">
-                    <h2>Step 4: Review the flow</h2>
-                    <div id="flow-preview"></div>
-                    <button onclick="prevStep(3)">Back</button>
-                    <button onclick="generate()">Generate</button>
-                </section>
-
-                <!-- Step 5: Result -->
-                <section id="step-5" class="step">
-                    <h2>Step 5: Generated output</h2>
-                    <pre id="output"></pre>
-                    <button onclick="prevStep(4)">Back</button>
-                </section>
+    <header>
+        <div class="header-inner">
+            <div class="title">
+                <h1>Design is Code</h1>
+                <p class="tagline">Design your backend. Get verified code.</p>
             </div>
-        </main>
-    </div>
+            <button type="button" id="project-chip" class="project-chip" aria-expanded="false">
+                <span class="chip-icon" aria-hidden="true">+</span>
+                <span id="chip-label">Connect project</span>
+            </button>
+        </div>
+        <div id="project-panel" class="project-panel hidden">
+            <p class="help">Paste the absolute path to your Java / Spring project. Optional — it powers autocomplete, it isn't required.</p>
+            <form id="scan-form" autocomplete="off">
+                <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
+                <button type="submit" id="scan-btn">Scan</button>
+                <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
+            </form>
+            <div id="scan-status" class="status hidden">
+                <div class="spinner"></div>
+                <span id="status-text">Scanning project…</span>
+            </div>
+            <div id="scan-error" class="error hidden"></div>
+            <div id="scan-result" class="scan-summary hidden">
+                <span id="scan-summary-text"></span>
+            </div>
+        </div>
+    </header>
+
+    <nav class="stepper" id="stepper">
+        <div class="step active" data-step="1">
+            <span class="step-num">1</span><span class="step-label">User Story</span>
+        </div>
+        <div class="step" data-step="2">
+            <span class="step-num">2</span><span class="step-label">Starting Point</span>
+        </div>
+        <div class="step" data-step="3">
+            <span class="step-num">3</span><span class="step-label">Flow</span>
+        </div>
+        <div class="step" data-step="4">
+            <span class="step-num">4</span><span class="step-label">Preview</span>
+        </div>
+        <div class="step" data-step="5">
+            <span class="step-num">5</span><span class="step-label">Generate</span>
+        </div>
+    </nav>
+
+    <main>
+        <section class="panel" id="panel-1">
+            <h2>Step 1 · User story</h2>
+            <textarea id="story-input" rows="6" placeholder="e.g. As a customer, I want to place an order with a gift message, and have inventory reserved before my card is charged."></textarea>
+            <div class="input-modes" aria-label="Additional input modes">
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Voice input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="9" y="3" width="6" height="11" rx="3"/>
+                        <path d="M5 11v1a7 7 0 0 0 14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
+                    <span class="sr-only">Voice</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Image input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="14" rx="2"/>
+                        <circle cx="9" cy="10" r="1.6"/>
+                        <path d="m21 17-5-5-4 4-3-3-6 6"/>
+                    </svg>
+                    <span class="sr-only">Image</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Video input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="6" width="13" height="12" rx="2"/>
+                        <path d="m16 10 5-3v10l-5-3z"/>
+                    </svg>
+                    <span class="sr-only">Video</span>
+                </button>
+                <span class="input-modes-hint">Voice, image, video — coming soon</span>
+            </div>
+            <div class="actions">
+                <button type="button" id="story-next">Continue →</button>
+            </div>
+        </section>
+
+        <section class="panel hidden" id="panel-2">
+            <h2>Step 2 · Starting point</h2>
+            <p class="help">Where does this flow start?</p>
+            <div class="story-context hidden" id="story-echo"></div>
+
+            <div class="field">
+                <label for="sut-class">Service name</label>
+                <div class="typeahead">
+                    <input type="text" id="sut-class" placeholder="e.g. InvoiceService" autocomplete="off">
+                    <div class="suggestions hidden" id="sut-class-suggestions"></div>
+                </div>
+                <div class="hint hidden" id="sut-class-new-hint"></div>
+            </div>
+
+            <div class="field">
+                <label for="sut-package">Package</label>
+                <input type="text" id="sut-package" placeholder="e.g. com.example.order" autocomplete="off">
+            </div>
+
+            <div class="field">
+                <label for="sut-method">Method</label>
+                <div class="method-picks hidden" id="method-picks"></div>
+                <input type="text" id="sut-method" placeholder="e.g. placeOrder" autocomplete="off">
+            </div>
+
+            <div class="field">
+                <label>Parameters</label>
+                <div id="params-list"></div>
+                <button type="button" class="secondary small" id="add-param">+ Add parameter</button>
+            </div>
+
+            <div class="field">
+                <label for="sut-return">Return type</label>
+                <input type="text" id="sut-return" list="types-datalist" placeholder="e.g. Order, void" autocomplete="off">
+            </div>
+
+            <datalist id="types-datalist"></datalist>
+
+            <div class="input-modes" aria-label="Additional input modes">
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Voice input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="9" y="3" width="6" height="11" rx="3"/>
+                        <path d="M5 11v1a7 7 0 0 0 14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
+                    <span class="sr-only">Voice</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Image input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="14" rx="2"/>
+                        <circle cx="9" cy="10" r="1.6"/>
+                        <path d="m21 17-5-5-4 4-3-3-6 6"/>
+                    </svg>
+                    <span class="sr-only">Image</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Video input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="6" width="13" height="12" rx="2"/>
+                        <path d="m16 10 5-3v10l-5-3z"/>
+                    </svg>
+                    <span class="sr-only">Video</span>
+                </button>
+                <span class="input-modes-hint">Voice, image, video — coming soon</span>
+            </div>
+
+            <div class="actions">
+                <button type="button" class="secondary" data-back="1">← Back</button>
+                <button type="button" id="entry-next">Continue →</button>
+            </div>
+        </section>
+
+        <section class="panel hidden" id="panel-3">
+            <h2>Step 3 · Flow</h2>
+            <p class="help">Write the call sequence PlantUML-style. One line = one arrow. <code>Caller -&gt; Callee : method(input)</code> for calls, <code>Caller &lt;- Callee : returnValue</code> for returns. Lines starting with <code>#</code> are comments.</p>
+            <div class="uml-editor">
+                <div class="uml-block">
+                    <label class="uml-label" for="uml-input">Calls</label>
+                    <textarea id="uml-input" rows="10" spellcheck="false" placeholder="OrderService -> OrderValidator : validate(order)
+OrderService <- OrderValidator : ValidationResult
+OrderService -> InventoryService : reserve(order)
+InventoryService -> StockRepository : check(sku)
+InventoryService <- StockRepository : stockLevel
+OrderService <- InventoryService : Reservation"></textarea>
+                </div>
+                <div class="uml-meta">
+                    <div id="uml-participants" class="uml-chips"></div>
+                    <div id="uml-errors" class="uml-errors hidden"></div>
+                </div>
+            </div>
+            <div class="input-modes" aria-label="Additional input modes">
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Voice input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="9" y="3" width="6" height="11" rx="3"/>
+                        <path d="M5 11v1a7 7 0 0 0 14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                    </svg>
+                    <span class="sr-only">Voice</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Image input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="5" width="18" height="14" rx="2"/>
+                        <circle cx="9" cy="10" r="1.6"/>
+                        <path d="m21 17-5-5-4 4-3-3-6 6"/>
+                    </svg>
+                    <span class="sr-only">Image</span>
+                </button>
+                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Video input — coming soon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="3" y="6" width="13" height="12" rx="2"/>
+                        <path d="m16 10 5-3v10l-5-3z"/>
+                    </svg>
+                    <span class="sr-only">Video</span>
+                </button>
+                <span class="input-modes-hint">Voice, image, video — coming soon</span>
+            </div>
+            <div class="actions">
+                <button type="button" class="secondary" data-back="2">← Back</button>
+                <button type="button" id="arrows-next">Continue →</button>
+            </div>
+        </section>
+
+        <section class="panel hidden" id="panel-4">
+            <h2>Step 4 · Preview</h2>
+            <p class="help">Review the sequence. Go back to Step 3 to edit.</p>
+            <div class="preview" id="preview-area"></div>
+            <div class="actions">
+                <button type="button" class="secondary" data-back="3">← Back</button>
+                <button type="button" id="preview-next">Looks right — continue →</button>
+            </div>
+        </section>
+
+        <section class="panel hidden" id="panel-5">
+            <h2>Step 5 · Generate</h2>
+            <p class="help">Your design as a PlantUML sequence diagram. Save it into your project's <code>design/</code> folder, then run the <code>/disc</code> command in Claude Code to generate tests and implementation.</p>
+
+            <div class="field">
+                <label for="puml-filename">File name</label>
+                <input type="text" id="puml-filename" placeholder="generate-invoice.puml" autocomplete="off">
+            </div>
+
+            <div class="output-actions">
+                <button type="button" id="save-to-project">Save to project →</button>
+                <button type="button" class="secondary small" id="copy-output">Copy .puml</button>
+                <span id="copy-feedback" class="copy-feedback"></span>
+            </div>
+
+            <pre id="output"></pre>
+
+            <div id="save-result" class="save-result hidden">
+                <div class="save-result-head">
+                    Saved to <code id="save-result-path"></code>
+                </div>
+                <div class="save-result-cmd">
+                    <span>Next, in Claude Code run</span>
+                    <code id="save-result-command"></code>
+                    <button type="button" id="run-disc">Run it for me →</button>
+                    <button type="button" class="secondary small" id="copy-command">Copy command</button>
+                    <span id="command-feedback" class="copy-feedback"></span>
+                </div>
+                <pre id="run-console" class="run-console hidden"></pre>
+            </div>
+
+            <div id="save-error" class="error hidden"></div>
+
+            <div class="actions">
+                <button type="button" class="secondary" data-back="4">← Back</button>
+            </div>
+        </section>
+    </main>
 
     <script src="/js/app.js"></script>
 </body>
