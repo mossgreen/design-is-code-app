@@ -11,6 +11,10 @@ build/
 .classpath
 .project
 .settings
+bin/
+
+### Local tooling ###
+.claude/
 
 ### OS ###
 .DS_Store

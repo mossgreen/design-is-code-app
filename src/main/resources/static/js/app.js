@@ -2,8 +2,19 @@ const state = {
     projectPath: null,
     scanResult: null,
     userStory: '',
-    entryPoint: null
+    participants: [],
+    sequence: [],
+    targetPackage: ''
 };
+
+// Java package name validator: at least two segments, each starting with a
+// lowercase letter, dotted. e.g. com.example.invoice
+const JAVA_PACKAGE_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+
+let nextId = 1;
+const newId = () => `id-${nextId++}`;
+
+const STEP_KIND = { CALL: 'call', LOOP_START: 'loop-start', LOOP_END: 'loop-end' };
 
 const els = {
     chip: document.getElementById('project-chip'),
@@ -46,7 +57,6 @@ els.disconnectBtn.addEventListener('click', () => {
     els.chip.classList.remove('connected');
     els.chipLabel.textContent = 'Connect project';
     populateTypesDatalist();
-    populateCalleesDatalist();
 });
 
 async function runScan(path) {
@@ -70,7 +80,6 @@ async function runScan(path) {
         state.scanResult = data;
         renderScanResult(data);
         populateTypesDatalist();
-        populateCalleesDatalist();
     } catch (err) {
         els.error.textContent = err.message;
         els.error.classList.remove('hidden');
@@ -117,7 +126,6 @@ function goToStep(n) {
     if (n === 2) enterStep2();
     if (n === 3) enterStep3();
     if (n === 4) enterStep4();
-    if (n === 5) enterStep5();
 }
 
 // --- Step 1: story ---
@@ -130,57 +138,33 @@ document.getElementById('story-next').addEventListener('click', () => {
     goToStep(2);
 });
 
-// --- Step 2: entry point ---
+// --- Step 2: participants & flow ---
 
-const STOPWORDS = new Set('the a an is are was were to for of and or but with from by on in at as it this that these those be been being have has had i you we they he she want wants will would should could may might do does did not if so am as user users their our your my'.split(' '));
-
-function storyKeywords(text) {
-    if (!text) return new Set();
-    return new Set(
-        text.toLowerCase()
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .split(/\s+/)
-            .filter(w => w.length >= 3 && !STOPWORDS.has(w))
-    );
-}
-
-function splitCamel(name) {
-    return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-               .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-               .toLowerCase()
-               .split(/\s+/)
-               .filter(Boolean);
-}
-
-function scoreAgainstStory(name, kwSet) {
-    const tokens = splitCamel(name);
-    return tokens.filter(t => kwSet.has(t)).length;
-}
-
-const entryEls = {
+const step2Els = {
     storyEcho: document.getElementById('story-echo'),
-    sutClass: document.getElementById('sut-class'),
-    sutClassSuggestions: document.getElementById('sut-class-suggestions'),
-    sutClassNewHint: document.getElementById('sut-class-new-hint'),
-    sutPackage: document.getElementById('sut-package'),
-    sutMethod: document.getElementById('sut-method'),
-    methodPicks: document.getElementById('method-picks'),
-    paramsList: document.getElementById('params-list'),
-    addParam: document.getElementById('add-param'),
-    sutReturn: document.getElementById('sut-return'),
+    participantsList: document.getElementById('participants-list'),
+    stepsBoard: document.getElementById('steps-board'),
+    stepsCount: document.getElementById('steps-count'),
+    sequenceHint: document.getElementById('sequence-hint'),
     typesDatalist: document.getElementById('types-datalist'),
-    entryNext: document.getElementById('entry-next')
+    flowNext: document.getElementById('flow-next'),
+    modal: document.getElementById('participant-modal'),
+    modalTitle: document.getElementById('modal-title'),
+    modalName: document.getElementById('modal-name'),
+    modalMethods: document.getElementById('modal-methods'),
+    modalAddMethod: document.getElementById('modal-add-method'),
+    modalClose: document.getElementById('modal-close'),
+    modalDelete: document.getElementById('modal-delete'),
+    modalDone: document.getElementById('modal-done'),
+    modalImpl: document.getElementById('modal-impl'),
+    modalMethodsCount: document.getElementById('modal-methods-count'),
+    participantsCount: document.getElementById('participants-count')
 };
 
-function enterStep2() {
-    if (state.userStory) {
-        entryEls.storyEcho.textContent = state.userStory;
-        entryEls.storyEcho.classList.remove('hidden');
-    } else {
-        entryEls.storyEcho.classList.add('hidden');
-    }
-    populateTypesDatalist();
-    updateClassIsNew();
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
 }
 
 function populateTypesDatalist() {
@@ -190,194 +174,698 @@ function populateTypesDatalist() {
         scan.interfaces.forEach(i => items.push(i.name));
         scan.dataTypes.forEach(d => items.push(d.name));
     }
-    entryEls.typesDatalist.innerHTML = [...new Set(items)]
+    state.participants.forEach(p => { if (p.name) items.push(p.name); });
+    step2Els.typesDatalist.innerHTML = [...new Set(items)]
         .map(t => `<option value="${escapeHtml(t)}">`)
         .join('');
 }
 
-function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
+// --- Participant model ---
+
+function makeParticipant(name = '', implByDefault = true) {
+    return { id: newId(), name, implByDefault, methods: [] };
 }
 
-function scannedServices() {
-    const scan = state.scanResult;
-    if (!scan) return [];
-    return [...scan.classes, ...scan.interfaces];
+function makeMethod(name = '', inputs = [], output = '') {
+    return { id: newId(), name, inputs, output };
 }
 
-function refreshClassSuggestions() {
-    const all = scannedServices();
-    if (all.length === 0) {
-        entryEls.sutClassSuggestions.classList.add('hidden');
-        updateClassIsNew();
-        return;
-    }
-    const query = entryEls.sutClass.value.trim().toLowerCase();
-    const kwSet = storyKeywords(state.userStory);
-
-    const filtered = all
-        .filter(c => !query || c.name.toLowerCase().includes(query))
-        .map(c => ({
-            c,
-            score: scoreAgainstStory(c.name, kwSet),
-            starts: query ? c.name.toLowerCase().startsWith(query) : false
-        }))
-        .sort((a, b) => {
-            if (b.score !== a.score) return b.score - a.score;
-            if (b.starts !== a.starts) return (b.starts ? 1 : 0) - (a.starts ? 1 : 0);
-            return a.c.name.localeCompare(b.c.name);
-        })
-        .slice(0, 8);
-
-    if (filtered.length === 0) {
-        entryEls.sutClassSuggestions.classList.add('hidden');
-        updateClassIsNew();
-        return;
-    }
-
-    entryEls.sutClassSuggestions.innerHTML = filtered.map(({ c, score }) => `
-        <div class="suggestion" data-name="${escapeHtml(c.name)}" data-pkg="${escapeHtml(c.packageName)}">
-            <div><strong>${escapeHtml(c.name)}</strong><span class="pkg">${escapeHtml(c.packageName)}</span></div>
-            ${score > 0 ? '<span class="match-badge">story match</span>' : ''}
-        </div>
-    `).join('');
-    entryEls.sutClassSuggestions.classList.remove('hidden');
-    updateClassIsNew();
+function findParticipant(id) { return state.participants.find(p => p.id === id); }
+function findMethod(participantId, methodId) {
+    const p = findParticipant(participantId);
+    return p ? p.methods.find(m => m.id === methodId) : null;
 }
 
-function updateClassIsNew() {
-    const name = entryEls.sutClass.value.trim();
-    if (!name) {
-        entryEls.sutClassNewHint.className = 'hint hidden';
-        entryEls.methodPicks.classList.add('hidden');
-        return;
-    }
-    const match = scannedServices().find(c => c.name === name);
-    if (match) {
-        entryEls.sutClassNewHint.textContent = `Existing service — found in ${match.packageName}`;
-        entryEls.sutClassNewHint.className = 'hint hint-found';
-        renderMethodPicks(match.methods);
-    } else {
-        const implName = 'Default' + name;
-        entryEls.sutClassNewHint.textContent = `New service — ${implName} will be created`;
-        entryEls.sutClassNewHint.className = 'hint hint-new';
-        entryEls.methodPicks.classList.add('hidden');
-    }
+function methodSignature(m) {
+    const inputs = (m.inputs || []).map(i => `${i.name || ''}${i.type ? ': ' + i.type : ''}`.trim()).filter(Boolean).join(', ');
+    return `${m.name || '?'}(${inputs})`;
 }
 
-function renderMethodPicks(methods) {
-    if (!methods || methods.length === 0) {
-        entryEls.methodPicks.classList.add('hidden');
-        return;
-    }
-    entryEls.methodPicks.innerHTML = methods
-        .map(m => `<button type="button" class="method-pick" data-method="${escapeHtml(m)}">${escapeHtml(m)}</button>`)
-        .join('');
-    entryEls.methodPicks.classList.remove('hidden');
+function methodPreviewSignature(m) {
+    const types = (m.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
+    const out = (m.output || '').trim() || 'void';
+    return `${m.name || '?'}(${types}) → ${out}`;
 }
 
-entryEls.sutClass.addEventListener('input', refreshClassSuggestions);
-entryEls.sutClass.addEventListener('focus', refreshClassSuggestions);
-
-entryEls.sutClassSuggestions.addEventListener('click', (e) => {
-    const row = e.target.closest('.suggestion');
-    if (!row) return;
-    entryEls.sutClass.value = row.dataset.name;
-    entryEls.sutPackage.value = row.dataset.pkg;
-    entryEls.sutClassSuggestions.classList.add('hidden');
-    updateClassIsNew();
-    entryEls.sutMethod.focus();
-});
-
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.typeahead')) {
-        entryEls.sutClassSuggestions.classList.add('hidden');
-    }
-});
-
-entryEls.methodPicks.addEventListener('click', (e) => {
-    const btn = e.target.closest('.method-pick');
-    if (!btn) return;
-    entryEls.sutMethod.value = btn.dataset.method;
-});
-
-function addParamRow(name = '', type = '') {
-    const row = document.createElement('div');
-    row.className = 'param-row';
-    const nameInput = document.createElement('input');
-    nameInput.type = 'text';
-    nameInput.placeholder = 'name (e.g. orderId)';
-    nameInput.value = name;
-    const typeInput = document.createElement('input');
-    typeInput.type = 'text';
-    typeInput.setAttribute('list', 'types-datalist');
-    typeInput.placeholder = 'type (e.g. Long)';
-    typeInput.value = type;
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-param';
-    removeBtn.title = 'Remove';
-    removeBtn.textContent = '×';
-    removeBtn.addEventListener('click', () => row.remove());
-    row.append(nameInput, typeInput, removeBtn);
-    entryEls.paramsList.appendChild(row);
+function returnLabelFor(m) {
+    if (!m || !m.output || m.output.trim() === '' || m.output.trim().toLowerCase() === 'void') return null;
+    return m.output.trim();
 }
 
-entryEls.addParam.addEventListener('click', () => addParamRow());
-
-function collectParams() {
-    return Array.from(entryEls.paramsList.querySelectorAll('.param-row'))
-        .map(row => {
-            const [nameInput, typeInput] = row.querySelectorAll('input');
-            return { name: nameInput.value.trim(), type: typeInput.value.trim() };
-        })
-        .filter(p => p.name || p.type);
-}
-
-entryEls.entryNext.addEventListener('click', () => {
-    const className = entryEls.sutClass.value.trim();
-    const packageName = entryEls.sutPackage.value.trim();
-    const methodName = entryEls.sutMethod.value.trim();
-    const returnType = entryEls.sutReturn.value.trim();
-
-    if (!className) { entryEls.sutClass.focus(); return; }
-    if (!methodName) { entryEls.sutMethod.focus(); return; }
-
-    const scan = state.scanResult;
-    const matchClass = scan ? scan.classes.find(c => c.name === className) : null;
-    const matchMethod = matchClass ? matchClass.methods.includes(methodName) : false;
-
-    state.entryPoint = {
-        className,
-        packageName,
-        isNew: !matchClass,
-        method: {
-            name: methodName,
-            parameters: collectParams(),
-            returnType,
-            isNew: !matchMethod
+// Returns Map<step.id, participant | null>. A call step "creates" a participant
+// when (a) its method's output exactly matches a defined participant's name AND
+// (b) that participant has not been referenced (caller, callee, or earlier
+// create-target) by any prior step in the sequence. Loop fragments are skipped.
+function resolveCreates(seq) {
+    const seq2 = seq || state.sequence;
+    const seen = new Set();
+    const map = new Map();
+    for (const s of seq2) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+        const method = findMethod(s.calleeId, s.methodId);
+        const ret = method ? returnLabelFor(method) : null;
+        let created = null;
+        if (ret) {
+            const target = state.participants.find(p => p.name && p.name === ret);
+            if (target && !seen.has(target.id)) created = target;
         }
-    };
+        map.set(s.id, created);
+        if (s.callerId) seen.add(s.callerId);
+        if (s.calleeId) seen.add(s.calleeId);
+        if (created) seen.add(created.id);
+    }
+    return map;
+}
 
+// --- Step 2 entry ---
+
+function enterStep2() {
+    if (state.userStory) {
+        step2Els.storyEcho.textContent = state.userStory;
+        step2Els.storyEcho.classList.remove('hidden');
+    } else {
+        step2Els.storyEcho.classList.add('hidden');
+    }
+    populateTypesDatalist();
+    renderParticipants();
+    renderSequence();
+}
+
+// --- Participants UI ---
+
+function renderParticipants() {
+    const list = step2Els.participantsList;
+    list.innerHTML = '';
+    const n = state.participants.length;
+    step2Els.participantsCount.textContent = `${n} class${n === 1 ? '' : 'es'}`;
+
+    state.participants.forEach((p, idx) => {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'pc-card';
+        if (idx === 0) card.classList.add('caller');
+        card.dataset.id = p.id;
+
+        const previewMethods = p.methods.slice(0, 3).map(m => {
+            return escapeHtml(methodPreviewSignature(m));
+        }).join('<br>');
+        const moreCount = p.methods.length - 3;
+
+        card.innerHTML = `
+            <div class="pc-card-head">
+                ${idx === 0 ? '<span class="caller-badge" title="Caller of the main chain">CALLER</span>' : ''}
+                <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
+                ${p.implByDefault ? '<span class="impl-badge" title="A default implementation will be generated">IMPL</span>' : ''}
+            </div>
+            <div class="pc-card-methods">
+                ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
+                ${moreCount > 0 ? `<div class="pc-card-more">+${moreCount} more</div>` : ''}
+            </div>
+        `;
+        card.addEventListener('click', () => openModal(p.id));
+        list.appendChild(card);
+    });
+
+    const addTile = document.createElement('button');
+    addTile.type = 'button';
+    addTile.className = 'pc-add-tile';
+    addTile.textContent = '+ new class';
+    addTile.addEventListener('click', () => {
+        const p = makeParticipant();
+        state.participants.push(p);
+        openModal(p.id);
+    });
+    list.appendChild(addTile);
+}
+
+// --- Modal ---
+
+let modalParticipantId = null;
+
+function openModal(id) {
+    modalParticipantId = id;
+    const p = findParticipant(id);
+    if (!p) return;
+    step2Els.modalTitle.textContent = p.name ? `Edit ${p.name}` : 'New participant';
+    step2Els.modalName.value = p.name;
+    step2Els.modalImpl.checked = !!p.implByDefault;
+    renderModalMethods();
+    step2Els.modal.classList.remove('hidden');
+    setTimeout(() => step2Els.modalName.focus(), 0);
+}
+
+function closeModal() {
+    if (!modalParticipantId) return;
+    const p = findParticipant(modalParticipantId);
+    if (p && !p.name.trim() && p.methods.length === 0) {
+        // discard empty participants on close
+        state.participants = state.participants.filter(x => x.id !== p.id);
+    }
+    modalParticipantId = null;
+    step2Els.modal.classList.add('hidden');
+    populateTypesDatalist();
+    renderParticipants();
+    renderSequence();
+}
+
+function renderModalMethods() {
+    const p = findParticipant(modalParticipantId);
+    if (!p) return;
+    step2Els.modalMethods.innerHTML = '';
+    p.methods.forEach(m => step2Els.modalMethods.appendChild(renderMethodRow(p, m)));
+    step2Els.modalMethodsCount.textContent = String(p.methods.length);
+}
+
+step2Els.modalName.addEventListener('input', (e) => {
+    const p = findParticipant(modalParticipantId);
+    if (p) p.name = e.target.value;
+});
+
+step2Els.modalImpl.addEventListener('change', (e) => {
+    const p = findParticipant(modalParticipantId);
+    if (p) p.implByDefault = e.target.checked;
+});
+
+step2Els.modalAddMethod.addEventListener('click', () => {
+    const p = findParticipant(modalParticipantId);
+    if (!p) return;
+    const m = makeMethod();
+    p.methods.push(m);
+    step2Els.modalMethods.appendChild(renderMethodRow(p, m));
+    step2Els.modalMethodsCount.textContent = String(p.methods.length);
+});
+
+step2Els.modalDelete.addEventListener('click', () => {
+    const p = findParticipant(modalParticipantId);
+    if (!p) return;
+    state.participants = state.participants.filter(x => x.id !== p.id);
+    state.sequence = state.sequence.filter(c =>
+        c.kind !== STEP_KIND.CALL || (c.callerId !== p.id && c.calleeId !== p.id)
+    );
+    modalParticipantId = null;
+    step2Els.modal.classList.add('hidden');
+    populateTypesDatalist();
+    renderParticipants();
+    renderSequence();
+});
+
+step2Els.modalDone.addEventListener('click', closeModal);
+step2Els.modalClose.addEventListener('click', closeModal);
+step2Els.modal.addEventListener('click', (e) => {
+    if (e.target === step2Els.modal) closeModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !step2Els.modal.classList.contains('hidden')) closeModal();
+});
+
+function renderMethodRow(participant, method) {
+    const row = document.createElement('div');
+    row.className = 'method-block';
+    row.dataset.id = method.id;
+
+    const head = document.createElement('div');
+    head.className = 'mb-head';
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'mb-name';
+    name.placeholder = 'what it does';
+    name.value = method.name;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-btn mb-remove';
+    remove.title = 'Remove method';
+    remove.textContent = '×';
+
+    head.append(name, remove);
+
+    const inRow = document.createElement('div');
+    inRow.className = 'mb-row';
+    const inTag = document.createElement('span');
+    inTag.className = 'io-tag';
+    inTag.textContent = 'in';
+    const inputsWrap = document.createElement('div');
+    inputsWrap.className = 'mb-inputs';
+    inRow.append(inTag, inputsWrap);
+
+    const renderInputs = () => {
+        inputsWrap.innerHTML = '';
+        if (method.inputs.length === 0) {
+            const empty = document.createElement('span');
+            empty.className = 'mb-empty';
+            empty.textContent = '(no parameters)';
+            inputsWrap.appendChild(empty);
+        } else {
+            method.inputs.forEach((inp, i) => {
+                const pair = document.createElement('span');
+                pair.className = 'param-pair';
+                pair.innerHTML = `
+                    <input type="text" class="p-name" placeholder="name" value="${escapeHtml(inp.name)}">
+                    <input type="text" class="p-type" list="types-datalist" placeholder="type" value="${escapeHtml(inp.type)}">
+                    <button type="button" class="icon-btn p-remove" title="Remove parameter">×</button>
+                `;
+                const [pn, pt] = pair.querySelectorAll('input');
+                pn.addEventListener('input', e => { method.inputs[i].name = e.target.value; renderSequence(); });
+                pt.addEventListener('input', e => { method.inputs[i].type = e.target.value; renderSequence(); });
+                pair.querySelector('.p-remove').addEventListener('click', () => {
+                    method.inputs.splice(i, 1);
+                    renderInputs();
+                    renderSequence();
+                });
+                inputsWrap.appendChild(pair);
+            });
+        }
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'mb-add-param';
+        add.textContent = '+ parameter';
+        add.addEventListener('click', () => {
+            method.inputs.push({ name: '', type: '' });
+            renderInputs();
+            renderSequence();
+        });
+        inputsWrap.appendChild(add);
+    };
+    renderInputs();
+
+    const outRow = document.createElement('div');
+    outRow.className = 'mb-row';
+    const outTag = document.createElement('span');
+    outTag.className = 'io-tag out';
+    outTag.textContent = 'out';
+    const output = document.createElement('input');
+    output.type = 'text';
+    output.className = 'mb-output';
+    output.setAttribute('list', 'types-datalist');
+    output.placeholder = 'void';
+    output.value = method.output;
+    outRow.append(outTag, output);
+
+    name.addEventListener('input', e => { method.name = e.target.value; renderSequence(); });
+    output.addEventListener('input', e => { method.output = e.target.value; renderSequence(); });
+    remove.addEventListener('click', () => {
+        participant.methods = participant.methods.filter(m => m.id !== method.id);
+        state.sequence = state.sequence.filter(c =>
+            c.kind !== STEP_KIND.CALL || !(c.calleeId === participant.id && c.methodId === method.id)
+        );
+        row.remove();
+        if (modalParticipantId === participant.id) {
+            step2Els.modalMethodsCount.textContent = String(participant.methods.length);
+        }
+        renderSequence();
+    });
+
+    row.append(head, inRow, outRow);
+    return row;
+}
+
+// --- Steps (interactions) ---
+
+let dragCallId = null;
+let addStepDraft = null;  // { callerId, calleeId, methodId }
+
+function ensureAddStepDraft() {
+    if (!addStepDraft) {
+        addStepDraft = { callerId: '', calleeId: '', methodId: '' };
+        return;
+    }
+    // Re-validate against current participants — drop refs to deleted entities.
+    if (addStepDraft.callerId && !findParticipant(addStepDraft.callerId)) addStepDraft.callerId = '';
+    if (addStepDraft.calleeId && !findParticipant(addStepDraft.calleeId)) addStepDraft.calleeId = '';
+    if (addStepDraft.methodId && !findMethod(addStepDraft.calleeId, addStepDraft.methodId)) addStepDraft.methodId = '';
+}
+
+// How many loop-start markers are currently unmatched. Used to disable the
+// "+ end loop" button when there's nothing to close.
+function openLoopDepth() {
+    let d = 0;
+    for (const s of state.sequence) {
+        if (s.kind === STEP_KIND.LOOP_START) d++;
+        else if (s.kind === STEP_KIND.LOOP_END) d = Math.max(0, d - 1);
+    }
+    return d;
+}
+
+// Transient UI state for the inline "+ start loop" mini-form. When non-null,
+// the composer renders the mini-form instead of the secondary buttons.
+let loopFormOpen = false;
+
+function renderSequence() {
+    renderSteps();
+    renderAddStep();
+    const liveSeq = document.getElementById('live-sequence');
+    if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
+}
+
+function renderSteps() {
+    const board = step2Els.stepsBoard;
+    board.innerHTML = '';
+    const callCount = state.sequence.filter(s => s.kind === STEP_KIND.CALL).length;
+    step2Els.stepsCount.textContent = `${callCount} added`;
+
+    if (state.sequence.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'steps-empty';
+        empty.textContent = 'No steps yet. Add the first call to start the sequence.';
+        board.appendChild(empty);
+    }
+
+    const creates = resolveCreates();
+    let callIdx = 0;
+
+    state.sequence.forEach(step => {
+        if (step.kind === STEP_KIND.LOOP_START) {
+            const row = document.createElement('div');
+            row.className = 'step-row loop-start';
+            row.dataset.id = step.id;
+            row.draggable = false;
+            row.innerHTML = `
+                <span class="step-num loop-glyph" title="loop start">↻</span>
+                <div class="step-lines">
+                    <div class="step-line">
+                        <span class="loop-tag">loop</span>
+                        <input type="text" class="loop-label" placeholder="loop label (e.g. for each order)" value="${escapeHtml(step.label || '')}">
+                    </div>
+                </div>
+                <button type="button" class="icon-btn step-remove" title="Remove loop">×</button>
+            `;
+            row.querySelector('.loop-label').addEventListener('input', (e) => {
+                step.label = e.target.value;
+                // Re-render the live diagram so the bracket label updates,
+                // but don't re-render the steps list (we'd lose input focus).
+                const liveSeq = document.getElementById('live-sequence');
+                if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
+            });
+            row.querySelector('.step-remove').addEventListener('click', () => {
+                state.sequence = state.sequence.filter(s => s.id !== step.id);
+                renderSequence();
+            });
+            board.appendChild(row);
+            return;
+        }
+
+        if (step.kind === STEP_KIND.LOOP_END) {
+            const row = document.createElement('div');
+            row.className = 'step-row loop-end';
+            row.dataset.id = step.id;
+            row.draggable = false;
+            row.innerHTML = `
+                <span class="step-num loop-glyph" title="loop end">↺</span>
+                <div class="step-lines">
+                    <div class="step-line"><span class="loop-tag">end loop</span></div>
+                </div>
+                <button type="button" class="icon-btn step-remove" title="Remove loop end">×</button>
+            `;
+            row.querySelector('.step-remove').addEventListener('click', () => {
+                state.sequence = state.sequence.filter(s => s.id !== step.id);
+                renderSequence();
+            });
+            board.appendChild(row);
+            return;
+        }
+
+        // CALL
+        const call = step;
+        const caller = findParticipant(call.callerId);
+        const callee = findParticipant(call.calleeId);
+        const method = findMethod(call.calleeId, call.methodId);
+        if (!caller || !callee || !method) return;
+
+        callIdx++;
+        const callerName = escapeHtml(caller.name || '(unnamed)');
+        const calleeName = escapeHtml(callee.name || '(unnamed)');
+        const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
+        const methodCall = `.${method.name || '?'}(${inputArgs})`;
+        const ret = returnLabelFor(method);
+        const created = creates.get(call.id);
+
+        let returnLine;
+        if (created) {
+            returnLine = `<div class="step-line return create"><span class="dir">↪</span><span class="payload create-payload">creates ${escapeHtml(created.name)}</span></div>`;
+        } else if (ret) {
+            returnLine = `<div class="step-line return"><span class="dir">↩</span><span class="who from">${calleeName}</span><span class="arrow">→</span><span class="who to">${callerName}</span><span class="payload">${escapeHtml(ret)}</span></div>`;
+        } else {
+            returnLine = `<div class="step-line return leaf"><span class="dir">⤬</span><span class="payload">no return (void)</span></div>`;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'step-row';
+        if (created) row.classList.add('is-create');
+        row.draggable = true;
+        row.dataset.id = call.id;
+        row.innerHTML = `
+            <span class="step-num">${callIdx}</span>
+            <div class="step-lines">
+                <div class="step-line call">
+                    <span class="who from">${callerName}</span>
+                    <span class="arrow">→</span>
+                    <span class="who to">${calleeName}</span>
+                    <span class="step-method">${escapeHtml(methodCall)}</span>
+                </div>
+                ${returnLine}
+            </div>
+            <button type="button" class="icon-btn step-remove" title="Remove step">×</button>
+        `;
+
+        row.addEventListener('dragstart', (e) => { dragCallId = call.id; e.dataTransfer.effectAllowed = 'move'; });
+        row.addEventListener('dragend', () => { dragCallId = null; row.classList.remove('dragging'); });
+        row.addEventListener('dragover', (e) => {
+            if (!dragCallId || dragCallId === call.id) return;
+            e.preventDefault();
+            row.classList.add('drop-above');
+        });
+        row.addEventListener('dragleave', () => row.classList.remove('drop-above'));
+        row.addEventListener('drop', (e) => {
+            row.classList.remove('drop-above');
+            if (!dragCallId || dragCallId === call.id) return;
+            e.preventDefault();
+            const fromIdx = state.sequence.findIndex(c => c.id === dragCallId);
+            const toIdx = state.sequence.findIndex(c => c.id === call.id);
+            if (fromIdx < 0 || toIdx < 0) return;
+            const [moved] = state.sequence.splice(fromIdx, 1);
+            state.sequence.splice(toIdx, 0, moved);
+            renderSequence();
+        });
+
+        row.querySelector('.step-remove').addEventListener('click', () => {
+            state.sequence = state.sequence.filter(c => c.id !== call.id);
+            renderSequence();
+        });
+
+        board.appendChild(row);
+    });
+}
+
+function renderAddStep() {
+    // Idempotent: strip any existing composer before appending a fresh one.
+    const existing = step2Els.stepsBoard.querySelector('.add-step-panel');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'add-step-panel';
+    step2Els.stepsBoard.appendChild(panel);
+
+    if (state.participants.length < 2) {
+        const msg = document.createElement('div');
+        msg.className = 'add-step-empty';
+        msg.textContent = state.participants.length === 0
+            ? 'Add at least two participants to define a step.'
+            : 'Add one more participant — a step needs a caller and a callee.';
+        panel.appendChild(msg);
+        return;
+    }
+
+    ensureAddStepDraft();
+
+    const stepNum = state.sequence.length + 1;
+    const callerOptions = ['<option value="">caller</option>']
+        .concat(state.participants.map(p =>
+            `<option value="${p.id}" ${p.id === addStepDraft.callerId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
+        .join('');
+    const calleeOptions = ['<option value="">callee</option>']
+        .concat(state.participants
+            .filter(p => p.id !== addStepDraft.callerId)
+            .map(p => `<option value="${p.id}" ${p.id === addStepDraft.calleeId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
+        .join('');
+    const callee = findParticipant(addStepDraft.calleeId);
+    const methodOptions = ['<option value="">method</option>']
+        .concat((callee ? callee.methods : [])
+            .map(m => `<option value="${m.id}" ${m.id === addStepDraft.methodId ? 'selected' : ''}>${escapeHtml(m.name || '?')}</option>`))
+        .join('');
+    const method = findMethod(addStepDraft.calleeId, addStepDraft.methodId);
+    const argsPreview = method ? (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ') : '';
+    const retPreview = method ? (returnLabelFor(method) || 'void') : '';
+    const ready = !!(addStepDraft.callerId && addStepDraft.calleeId && addStepDraft.methodId);
+    const hint = !addStepDraft.callerId
+        ? 'who is calling?'
+        : !addStepDraft.calleeId
+            ? 'who do they call?'
+            : !addStepDraft.methodId
+                ? 'which method?'
+                : 'ready to add';
+
+    const argsPart = method
+        ? `<span class="as-paren">(</span><span class="as-args">${argsPreview ? escapeHtml(argsPreview) : ''}</span><span class="as-paren">)</span>`
+        : '';
+
+    // Would this draft step create a participant? Simulate by appending it.
+    let draftCreates = null;
+    if (method) {
+        const draftId = '__draft__';
+        const simulated = state.sequence.concat([{
+            id: draftId,
+            kind: STEP_KIND.CALL,
+            callerId: addStepDraft.callerId,
+            calleeId: addStepDraft.calleeId,
+            methodId: addStepDraft.methodId
+        }]);
+        const map = resolveCreates(simulated);
+        draftCreates = map.get(draftId);
+    }
+
+    const retPart = method
+        ? (draftCreates
+            ? `<span class="as-ret-arrow">→</span><span class="as-creates-hint" title="The next step would introduce ${escapeHtml(draftCreates.name)} as a new lifeline">↪ creates ${escapeHtml(draftCreates.name)}</span>`
+            : `<span class="as-ret-arrow">→</span><span class="as-return ${retPreview === 'void' ? 'is-void' : ''}">${escapeHtml(retPreview)}</span>`)
+        : '';
+
+    const depth = openLoopDepth();
+    const secondaryStrip = loopFormOpen
+        ? `<div class="as-secondary as-loop-form-strip">
+               <form class="as-loop-form" autocomplete="off">
+                   <span class="as-loop-form-label">loop:</span>
+                   <input type="text" class="as-loop-input" placeholder="for each order in orders" autofocus>
+                   <button type="submit" class="as-loop-confirm">Add loop</button>
+                   <button type="button" class="as-loop-cancel">Cancel</button>
+               </form>
+           </div>`
+        : `<div class="as-secondary">
+               <button type="button" class="as-loop-add">+ start loop</button>
+               <button type="button" class="as-loop-end-btn" ${depth > 0 ? '' : 'disabled'}>+ end loop${depth > 0 ? '' : ' (no open loop)'}</button>
+           </div>`;
+
+    panel.innerHTML = `
+        <div class="add-step-head">
+            <span class="step-badge">${stepNum}</span>
+            <div class="add-step-title">
+                <strong>Step ${stepNum}</strong>
+                <span class="add-step-status">${escapeHtml(hint)}</span>
+            </div>
+        </div>
+        <form class="add-step-form" autocomplete="off">
+            <select class="as-caller">${callerOptions}</select>
+            <span class="as-arrow">→</span>
+            <select class="as-callee">${calleeOptions}</select>
+            <span class="as-dot">.</span>
+            <select class="as-method method-pill">${methodOptions}</select>
+            ${argsPart}
+            ${retPart}
+            <div class="as-actions">
+                <button type="submit" class="as-add" ${ready ? '' : 'disabled'}>Add step ${stepNum} ↵</button>
+                <span class="as-hint">${ready ? 'Enter to add the next step' : 'fill the dropdowns left to right'}</span>
+            </div>
+        </form>
+        ${secondaryStrip}
+    `;
+
+    const form = panel.querySelector('.add-step-form');
+    const callerSel = panel.querySelector('.as-caller');
+    const calleeSel = panel.querySelector('.as-callee');
+    const methodSel = panel.querySelector('.as-method');
+
+    // Secondary actions: start / end loop.
+    const loopAddBtn = panel.querySelector('.as-loop-add');
+    if (loopAddBtn) {
+        loopAddBtn.addEventListener('click', () => {
+            loopFormOpen = true;
+            renderAddStep();
+            const input = step2Els.stepsBoard.querySelector('.as-loop-input');
+            if (input) input.focus();
+        });
+    }
+    const loopEndBtn = panel.querySelector('.as-loop-end-btn');
+    if (loopEndBtn) {
+        loopEndBtn.addEventListener('click', () => {
+            if (openLoopDepth() === 0) return;
+            state.sequence.push({ id: newId(), kind: STEP_KIND.LOOP_END });
+            renderSequence();
+        });
+    }
+    const loopForm = panel.querySelector('.as-loop-form');
+    if (loopForm) {
+        loopForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = panel.querySelector('.as-loop-input');
+            const label = (input ? input.value : '').trim();
+            state.sequence.push({ id: newId(), kind: STEP_KIND.LOOP_START, label });
+            loopFormOpen = false;
+            renderSequence();
+        });
+        panel.querySelector('.as-loop-cancel').addEventListener('click', () => {
+            loopFormOpen = false;
+            renderAddStep();
+        });
+    }
+
+    callerSel.addEventListener('change', e => {
+        addStepDraft.callerId = e.target.value;
+        // If the chosen caller equals the current callee, clear callee + method.
+        if (addStepDraft.calleeId === addStepDraft.callerId) {
+            addStepDraft.calleeId = '';
+            addStepDraft.methodId = '';
+        }
+        renderAddStep();
+    });
+    calleeSel.addEventListener('change', e => {
+        addStepDraft.calleeId = e.target.value;
+        addStepDraft.methodId = '';  // method belongs to the callee, so reset
+        renderAddStep();
+    });
+    methodSel.addEventListener('change', e => {
+        addStepDraft.methodId = e.target.value;
+        renderAddStep();
+    });
+
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!addStepDraft.callerId || !addStepDraft.calleeId || !addStepDraft.methodId) return;
+        state.sequence.push({
+            id: newId(),
+            kind: STEP_KIND.CALL,
+            callerId: addStepDraft.callerId,
+            calleeId: addStepDraft.calleeId,
+            methodId: addStepDraft.methodId
+        });
+        // Clear the draft after add — next step starts fresh, matching the
+        // progressive "who is calling?" prompt.
+        addStepDraft = { callerId: '', calleeId: '', methodId: '' };
+        renderSequence();
+        // Refocus the caller in the freshly-rendered composer so the next
+        // step is one keystroke away. No scroll — the live diagram below
+        // updates in place; users can glance down to see the new arrow.
+        const composer = step2Els.stepsBoard.querySelector('.add-step-panel');
+        if (composer) {
+            const nextCallerSel = composer.querySelector('.as-caller');
+            if (nextCallerSel) nextCallerSel.focus({ preventScroll: true });
+        }
+    });
+}
+
+step2Els.flowNext.addEventListener('click', () => {
+    if (state.sequence.length === 0) {
+        step2Els.sequenceHint.classList.add('warn');
+        return;
+    }
+    step2Els.sequenceHint.classList.remove('warn');
     goToStep(3);
 });
 
-// --- Step 3: collaborators (PlantUML-style text editor) ---
-
-const umlEls = {
-    textarea: document.getElementById('uml-input'),
-    participants: document.getElementById('uml-participants'),
-    errors: document.getElementById('uml-errors'),
-    next: document.getElementById('arrows-next')
-};
+// --- UML emission + parsing (preserved for Step 3 preview & Step 4 generate) ---
 
 let parsedUml = { arrows: [], items: [], participants: [], errors: [] };
 
 const UML_LINE_RE = /^([A-Za-z_][\w]*)\s*(->|<-)\s*([A-Za-z_][\w]*)\s*(?::\s*(.+?))?\s*$/;
-const LOOP_LINE_RE = /^loop\b\s*(.*)$/i;
-const END_LINE_RE = /^end$/i;
 
 function parseUml(text) {
     const arrows = [];
@@ -388,17 +876,7 @@ function parseUml(text) {
 
     text.split('\n').forEach((raw, idx) => {
         const line = raw.trim();
-        if (!line || line.startsWith('#')) return;
-
-        const loopMatch = line.match(LOOP_LINE_RE);
-        if (loopMatch) {
-            items.push({ kind: 'loop', text: loopMatch[1].trim(), lineNo: idx + 1 });
-            return;
-        }
-        if (END_LINE_RE.test(line)) {
-            items.push({ kind: 'end', lineNo: idx + 1 });
-            return;
-        }
+        if (!line || line.startsWith('#') || line.startsWith('@')) return;
 
         const m = line.match(UML_LINE_RE);
         if (!m) {
@@ -441,141 +919,342 @@ function parseUml(text) {
 }
 
 function emitPlantUml() {
-    reparseUml();
     const lines = ['@startuml'];
-    let loopDepth = 0;
-    const indent = () => '    '.repeat(loopDepth);
+    // Emit the DisC target_placement declaration when set. DisC's Step 1
+    // refuses .puml files without this header, so the warning in Step 4 nudges
+    // the user to fill it before save/run.
+    if (state.targetPackage && state.targetPackage.trim()) {
+        lines.push(`' @package ${state.targetPackage.trim()}`);
+    }
+    const creates = resolveCreates();
+    let indent = 0;
+    const pad = () => '  '.repeat(indent);
 
-    parsedUml.items.forEach(it => {
-        if (it.kind === 'loop') {
-            const text = it.text ? ` ${it.text}` : '';
-            lines.push(`${indent()}loop${text}`);
-            loopDepth++;
-        } else if (it.kind === 'end') {
-            loopDepth = Math.max(0, loopDepth - 1);
-            lines.push(`${indent()}end`);
-        } else if (it.kind === 'call') {
-            const isCreate = it.label && it.label.trim() === '<<create>>';
-            const arrow = isCreate ? '-->' : '->';
-            const suffix = it.label ? `: ${it.label}` : '';
-            lines.push(`${indent()}${it.left} ${arrow} ${it.right}${suffix}`);
-        } else if (it.kind === 'return') {
-            const suffix = it.label ? `: ${it.label}` : '';
-            lines.push(`${indent()}${it.left} <-- ${it.right}${suffix}`);
+    state.sequence.forEach(s => {
+        if (s.kind === STEP_KIND.LOOP_START) {
+            const label = (s.label || '').replace(/\n/g, ' ').trim();
+            lines.push(`${pad()}loop ${label}`.trimEnd());
+            indent++;
+            return;
+        }
+        if (s.kind === STEP_KIND.LOOP_END) {
+            indent = Math.max(0, indent - 1);
+            lines.push(`${pad()}end`);
+            return;
+        }
+        // CALL
+        const caller = findParticipant(s.callerId);
+        const callee = findParticipant(s.calleeId);
+        const method = findMethod(s.calleeId, s.methodId);
+        if (!caller || !callee || !method) return;
+        const callerName = caller.name || '_';
+        const calleeName = callee.name || '_';
+        const created = creates.get(s.id);
+        if (created) {
+            // PlantUML's idiom for "Service asks Factory to create Builder":
+            //   1. Service -> Factory : create()        (regular call to factory)
+            //   2. create Builder                       (declares the new lifeline)
+            //   3. Factory --> Service : Builder        (factory returns the new instance)
+            // The `create` keyword between the call and the return makes
+            // PlantUML start Builder's lifeline mid-diagram, faithfully
+            // reflecting the "constructed at this point" semantics.
+            const createdName = created.name;
+            lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
+            lines.push(`${pad()}create ${createdName}`);
+            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdName}`);
+            return;
+        }
+        lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
+        const ret = returnLabelFor(method);
+        if (ret) {
+            lines.push(`${pad()}${callerName} <- ${calleeName} : ${ret}`);
         }
     });
-
+    // Auto-close any unbalanced loops so we always emit valid PlantUML.
+    while (indent > 0) {
+        indent--;
+        lines.push(`${'  '.repeat(indent)}end`);
+    }
     lines.push('@enduml');
     return lines.join('\n') + '\n';
 }
 
-function renderUmlFeedback() {
-    const { arrows, participants, errors } = parsedUml;
+function refreshParsedUml() {
+    parsedUml = parseUml(emitPlantUml());
+}
 
-    umlEls.participants.innerHTML = participants.length === 0
-        ? '<span class="uml-empty">No participants yet.</span>'
-        : participants.map((p, i) =>
-            `<span class="participant-pill ${i === 0 ? 'sut' : ''}">${escapeHtml(p)}</span>`
-        ).join('');
+// Sequence diagram renderer — emits a stand-alone SVG into the given container.
+// Lifelines appear in the order participants are first referenced (caller, then
+// callee, per step). Each call step renders as a forward arrow + dashed return.
+// Create-style steps (where the method's return type is itself a participant)
+// render as a dashed <<create>> arrow that also positions the new lifeline's
+// head at the step's row, with no separate return arrow. Loop fragments render
+// as translucent indigo brackets behind the wrapped step rows.
+function renderSequenceDiagram(steps, container) {
+    container.innerHTML = '';
 
-    if (errors.length === 0) {
-        umlEls.errors.classList.add('hidden');
-        umlEls.errors.innerHTML = '';
-    } else {
-        umlEls.errors.classList.remove('hidden');
-        umlEls.errors.innerHTML = errors.map(e =>
-            `<div class="uml-error">Line ${e.lineNo}: ${escapeHtml(e.msg)}</div>`
-        ).join('');
+    if (!steps || steps.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'seq-empty';
+        empty.textContent = 'add your first step — pick a caller and a callee';
+        container.appendChild(empty);
+        return;
     }
+
+    const creates = resolveCreates(steps);
+
+    // Resolve calls; build lifelines + remember which step (by index) creates which.
+    const resolved = [];
+    const lifelines = [];
+    for (const s of steps) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+        const caller = findParticipant(s.callerId);
+        const callee = findParticipant(s.calleeId);
+        const method = findMethod(s.calleeId, s.methodId);
+        if (!caller || !callee || !method) continue;
+        const fromName = caller.name || '(unnamed)';
+        const toName = callee.name || '(unnamed)';
+        if (!lifelines.includes(fromName)) lifelines.push(fromName);
+        if (!lifelines.includes(toName)) lifelines.push(toName);
+        const argText = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
+        const created = creates.get(s.id);
+        if (created && !lifelines.includes(created.name)) lifelines.push(created.name);
+        resolved.push({
+            from: fromName,
+            to: toName,
+            label: `${method.name || '?'}(${argText})`,
+            ret: returnLabelFor(method),
+            isCreate: !!created,
+            createsName: created ? created.name : null
+        });
+    }
+
+    if (resolved.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'seq-empty';
+        empty.textContent = 'no valid steps to render';
+        container.appendChild(empty);
+        return;
+    }
+
+    const colW = 150;
+    const padX = 60;
+    const headTop = 14;
+    const headH = 30;
+    const stepGap = 56;
+    const stepStart = headTop + headH + 28;
+    const w = Math.max(560, padX * 2 + colW * Math.max(lifelines.length - 1, 1));
+    const h = stepStart + resolved.length * stepGap + 30;
+    const xOf = (name) => padX + lifelines.indexOf(name) * colW;
+
+    // Per-lifeline head Y. Default headTop; create-target's head sits at the
+    // create step's *response* row so the dashed create-arrow lands on it
+    // (visually: "Builder appeared as the result of Factory.create()").
+    const headY = {};
+    for (const name of lifelines) headY[name] = headTop;
+    resolved.forEach((s, i) => {
+        if (s.isCreate && s.createsName && headY[s.createsName] === headTop) {
+            const callY = stepStart + i * stepGap;
+            // Center the head rect ~28px below the call arrow so it sits
+            // between the call (top) and next step (below).
+            headY[s.createsName] = callY + 28 - Math.floor(headH / 2);
+        }
+    });
+
+    // Loop spans (computed off raw `steps`, indexed by call ordinal).
+    const loopSpans = [];
+    {
+        const stack = [];
+        let callIdx = 0;
+        for (const s of steps) {
+            if (s.kind === STEP_KIND.LOOP_START) {
+                stack.push({ label: s.label || '', startCallIdx: callIdx, depth: stack.length });
+            } else if (s.kind === STEP_KIND.LOOP_END) {
+                const open = stack.pop();
+                if (!open) continue;
+                const innerCount = callIdx - open.startCallIdx;
+                loopSpans.push({
+                    label: open.label,
+                    yStart: stepStart + open.startCallIdx * stepGap - 22,
+                    yEnd:   stepStart + Math.max(callIdx - 1, open.startCallIdx) * stepGap + 26,
+                    depth:  open.depth,
+                    empty:  innerCount === 0
+                });
+            } else if (s.kind === STEP_KIND.CALL) {
+                // Only count valid calls (those that survived resolution).
+                const caller = findParticipant(s.callerId);
+                const callee = findParticipant(s.calleeId);
+                const method = findMethod(s.calleeId, s.methodId);
+                if (caller && callee && method) callIdx++;
+            }
+        }
+        // Auto-close any open loops at the bottom.
+        while (stack.length > 0) {
+            const open = stack.pop();
+            const innerCount = callIdx - open.startCallIdx;
+            loopSpans.push({
+                label: open.label,
+                yStart: stepStart + open.startCallIdx * stepGap - 22,
+                yEnd:   stepStart + Math.max(callIdx - 1, open.startCallIdx) * stepGap + 26,
+                depth:  open.depth,
+                empty:  innerCount === 0
+            });
+        }
+    }
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('class', 'seq-svg');
+
+    const el = (tag, attrs, text) => {
+        const node = document.createElementNS(SVG_NS, tag);
+        for (const k in attrs) node.setAttribute(k, attrs[k]);
+        if (text != null) node.textContent = text;
+        return node;
+    };
+
+    // Loop brackets — draw first so steps render on top.
+    for (const span of loopSpans) {
+        const inset = span.depth * 8;
+        const bx = padX - 28 - inset;
+        const bw = w - 2 * (padX - 28 - inset);
+        svg.appendChild(el('rect', {
+            x: bx, y: span.yStart, width: bw, height: span.yEnd - span.yStart,
+            fill: 'rgba(99,102,241,0.06)',
+            stroke: '#a5b4fc', 'stroke-width': '1', 'stroke-dasharray': '4 4',
+            rx: '4'
+        }));
+        const labelText = `↻ ${span.label || 'loop'}${span.empty ? ' (empty)' : ''}`;
+        svg.appendChild(el('text', {
+            x: bx + 8, y: span.yStart + 13,
+            'font-size': '10', fill: '#5b21b6', 'font-weight': '700'
+        }, labelText));
+    }
+
+    // Lifeline heads + dashed verticals.
+    for (const name of lifelines) {
+        const x = xOf(name);
+        const y = headY[name];
+        svg.appendChild(el('rect', { x: x - 50, y: y, width: 100, height: headH, fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': '1.5', rx: '3' }));
+        svg.appendChild(el('text', { x, y: y + 19, 'text-anchor': 'middle', 'font-size': '13', fill: '#1a1a1a', 'font-weight': '700' }, name));
+        svg.appendChild(el('line', { x1: x, y1: y + headH, x2: x, y2: h - 8, stroke: '#444444', 'stroke-width': '1', 'stroke-dasharray': '4 4' }));
+    }
+
+    // Steps.
+    resolved.forEach((s, i) => {
+        const x1 = xOf(s.from);
+        const x2 = xOf(s.to);
+        const y = stepStart + i * stepGap;
+        const ry = y + 22;
+        const dir = x2 > x1 ? 1 : -1;
+        const head = 6;
+
+        if (s.isCreate) {
+            // Two-arrow rendering of "Service asks Factory.create() to make Builder":
+            //   1. Solid call arrow Service -> Factory at the call row (y), labeled with the method name.
+            //   2. Dashed creation arrow Factory --> Builder, landing at Builder's head rect, at its head Y.
+            // Builder's head rect already sits below the call row (per headY map above).
+
+            // (1) Regular call from caller to callee.
+            svg.appendChild(el('text', {
+                x: (x1 + x2) / 2, y: y - 8,
+                'text-anchor': 'middle', 'font-size': '11', fill: '#444444'
+            }, `${i + 1}. ${s.label}`));
+            svg.appendChild(el('path', {
+                d: `M ${x1} ${y} L ${x2 - dir * head} ${y}`,
+                fill: 'none', stroke: '#1a1a1a', 'stroke-width': '1.4'
+            }));
+            svg.appendChild(el('polygon', {
+                points: `${x2 - dir * head},${y - 4} ${x2},${y} ${x2 - dir * head},${y + 4}`,
+                fill: '#1a1a1a'
+            }));
+
+            // (2) Dashed creation arrow callee --> created, ending at the
+            // new lifeline's head rect.
+            const xCreated = xOf(s.createsName);
+            const createeDir = xCreated > x2 ? 1 : -1;
+            const targetX = xCreated - createeDir * 50;  // stop at head rect edge
+            const createY = headY[s.createsName] + Math.floor(headH / 2);
+            svg.appendChild(el('text', {
+                x: (x2 + targetX) / 2, y: createY - 5,
+                'text-anchor': 'middle', 'font-size': '10', fill: '#5b21b6', 'font-weight': '700', 'font-style': 'italic'
+            }, `«create» ${s.createsName}`));
+            svg.appendChild(el('path', {
+                d: `M ${x2} ${createY} L ${targetX} ${createY}`,
+                fill: 'none', stroke: '#5b21b6', 'stroke-width': '1.4', 'stroke-dasharray': '5 3'
+            }));
+            svg.appendChild(el('polygon', {
+                points: `${targetX - createeDir * head},${createY - 4} ${targetX},${createY} ${targetX - createeDir * head},${createY + 4}`,
+                fill: '#5b21b6'
+            }));
+            return;
+        }
+
+        // Regular call: forward arrow.
+        svg.appendChild(el('text', { x: (x1 + x2) / 2, y: y - 8, 'text-anchor': 'middle', 'font-size': '11', fill: '#444444' }, `${i + 1}. ${s.label}`));
+        svg.appendChild(el('path', { d: `M ${x1} ${y} L ${x2 - dir * head} ${y}`, fill: 'none', stroke: '#1a1a1a', 'stroke-width': '1.4' }));
+        svg.appendChild(el('polygon', { points: `${x2 - dir * head},${y - 4} ${x2},${y} ${x2 - dir * head},${y + 4}`, fill: '#1a1a1a' }));
+        // Return arrow: dashed back. Label "← ret" or "← ack" if void.
+        const respLabel = s.ret || 'ack';
+        svg.appendChild(el('text', { x: (x1 + x2) / 2, y: ry - 5, 'text-anchor': 'middle', 'font-size': '10', fill: '#888888', 'font-style': 'italic' }, `← ${respLabel}`));
+        svg.appendChild(el('path', { d: `M ${x2} ${ry} L ${x1 + dir * head} ${ry}`, fill: 'none', stroke: '#444444', 'stroke-width': '1.2', 'stroke-dasharray': '5 3' }));
+        svg.appendChild(el('polygon', { points: `${x1 + dir * head},${ry - 3.5} ${x1},${ry} ${x1 + dir * head},${ry + 3.5}`, fill: '#444444' }));
+    });
+
+    container.appendChild(svg);
 }
 
-function reparseUml() {
-    parsedUml = parseUml(umlEls.textarea.value);
-    renderUmlFeedback();
-}
+// --- Step 3: review ---
 
-umlEls.textarea.addEventListener('input', reparseUml);
+const reviewEls = {
+    story: document.getElementById('review-story'),
+    summary: document.getElementById('review-summary'),
+    sequence: document.getElementById('review-sequence')
+};
 
 function enterStep3() {
-    reparseUml();
-}
+    reviewEls.story.textContent = state.userStory || '(no story given)';
+    if (!state.userStory) reviewEls.story.classList.add('muted');
+    else reviewEls.story.classList.remove('muted');
 
-umlEls.next.addEventListener('click', () => {
-    reparseUml();
-    const calls = parsedUml.arrows.filter(a => a.kind === 'call');
-    if (calls.length === 0) {
-        umlEls.textarea.focus();
-        return;
-    }
-    goToStep(4);
-});
+    const pCount = state.participants.length;
+    const sCount = state.sequence.length;
+    const usedIds = new Set();
+    state.sequence.forEach(c => { usedIds.add(c.callerId); usedIds.add(c.calleeId); });
+    const usedParticipants = state.participants.filter(p => usedIds.has(p.id));
+    const unused = state.participants.filter(p => !usedIds.has(p.id));
 
-// --- Step 4: preview ---
-
-const previewEl = document.getElementById('preview-area');
-
-function enterStep4() {
-    reparseUml();
-    const { arrows, items, participants } = parsedUml;
-
-    if (arrows.length === 0) {
-        previewEl.innerHTML = '<div class="preview-empty">No arrows defined. Go back and add some.</div>';
-        return;
-    }
-
-    const sutName = state.entryPoint ? state.entryPoint.className : (participants[0] || '');
-    const ordered = [sutName, ...participants.filter(p => p !== sutName)];
-
-    const pills = ordered.map((p, i) =>
-        `<span class="participant-pill ${i === 0 ? 'sut' : ''}">${escapeHtml(p)}</span>`
-    ).join('');
-
-    const rows = items.map(it => {
-        if (it.kind === 'loop') {
-            return `
-                <div class="preview-row fragment">
-                    <span class="fragment-label">loop</span>
-                    <span class="fragment-text">${escapeHtml(it.text || '')}</span>
-                </div>
-            `;
-        }
-        if (it.kind === 'end') {
-            return `
-                <div class="preview-row fragment">
-                    <span class="fragment-label">end</span>
-                    <span class="fragment-text"></span>
-                </div>
-            `;
-        }
-        const label = it.label ? escapeHtml(it.label) : '';
-        const pad = it.depth * 1.5;
-        return `
-            <div class="preview-row ${it.kind}" style="padding-left:${pad}rem">
-                <span class="who left">${escapeHtml(it.left)}</span>
-                <span class="arrow-line">
-                    ${label ? `<span class="arrow-label">${label}</span>` : ''}
-                    <span class="arrow-glyph"></span>
-                </span>
-                <span class="who right">${escapeHtml(it.right)}</span>
-            </div>
-        `;
+    const partLines = usedParticipants.map(p => {
+        const methodNames = p.methods.map(m => m.name || '?').join(', ') || '(no methods)';
+        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(methodNames)}</span></li>`;
     }).join('');
+    const unusedLine = unused.length > 0
+        ? `<div class="review-warn">${unused.length} unused participant${unused.length === 1 ? '' : 's'}: ${unused.map(p => escapeHtml(p.name || '(unnamed)')).join(', ')}</div>`
+        : '';
 
-    previewEl.innerHTML = `
-        <div class="preview-participants">${pills}</div>
-        ${rows}
+    reviewEls.summary.innerHTML = `
+        <div class="review-counts">${pCount} participant${pCount === 1 ? '' : 's'} · ${sCount} step${sCount === 1 ? '' : 's'}</div>
+        <ul class="review-participants">${partLines || '<li class="muted">no participants</li>'}</ul>
+        ${unusedLine}
     `;
+
+    renderSequenceDiagram(state.sequence, reviewEls.sequence);
 }
 
-document.getElementById('preview-next').addEventListener('click', () => goToStep(5));
+document.getElementById('preview-next').addEventListener('click', () => goToStep(4));
 
-// --- Step 5: generate ---
+// --- Step 4: generate ---
 
 const outputEl = document.getElementById('output');
 const copyFeedbackEl = document.getElementById('copy-feedback');
 
 const saveEls = {
     filename: document.getElementById('puml-filename'),
+    pkg: document.getElementById('puml-package'),
+    pkgWarn: document.getElementById('package-warn'),
     save: document.getElementById('save-to-project'),
     result: document.getElementById('save-result'),
     resultPath: document.getElementById('save-result-path'),
@@ -587,6 +1266,27 @@ const saveEls = {
     runConsole: document.getElementById('run-console')
 };
 
+function refreshPackageWarning() {
+    const v = state.targetPackage.trim();
+    if (!v) {
+        saveEls.pkgWarn.textContent = 'No package set — DisC will refuse this file. Enter a Java package like com.example.invoice.';
+        saveEls.pkgWarn.className = 'package-warn warn';
+    } else if (!JAVA_PACKAGE_RE.test(v)) {
+        saveEls.pkgWarn.textContent = `"${v}" doesn't look like a Java package (expected e.g. com.example.invoice). DisC may refuse this file.`;
+        saveEls.pkgWarn.className = 'package-warn warn';
+    } else {
+        saveEls.pkgWarn.textContent = '';
+        saveEls.pkgWarn.className = 'package-warn hidden';
+    }
+}
+
+saveEls.pkg.addEventListener('input', (e) => {
+    state.targetPackage = e.target.value;
+    refreshPackageWarning();
+    // Re-render the output preview so the user sees the @package header land.
+    outputEl.textContent = emitPlantUml();
+});
+
 let lastSavedRelativePath = null;
 
 function kebab(s) {
@@ -597,14 +1297,22 @@ function kebab(s) {
 }
 
 function defaultFileName() {
-    const ep = state.entryPoint;
-    if (!ep) return 'design.puml';
-    const cls = kebab(ep.className || 'design');
-    const method = kebab(ep.method && ep.method.name || '');
-    return method ? `${cls}-${method}.puml` : `${cls}.puml`;
+    const caller = state.participants[0];
+    if (!caller) return 'design.puml';
+    const cls = kebab(caller.name || 'design');
+    const firstCall = state.sequence[0];
+    if (firstCall) {
+        const method = findMethod(firstCall.calleeId, firstCall.methodId);
+        if (method && method.name) return `${cls}-${kebab(method.name)}.puml`;
+    }
+    return `${cls}.puml`;
 }
 
-function enterStep5() {
+function enterStep4() {
+    if (saveEls.pkg.value !== state.targetPackage) {
+        saveEls.pkg.value = state.targetPackage;
+    }
+    refreshPackageWarning();
     outputEl.textContent = emitPlantUml();
     if (!saveEls.filename.value.trim()) {
         saveEls.filename.value = defaultFileName();
@@ -732,24 +1440,34 @@ const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
         "As accounting, I want to generate an invoice for a customer that " +
         "includes every order they've placed, so we can bill them in one go.";
 
-    entryEls.sutClass.value = 'InvoiceService';
-    entryEls.sutPackage.value = 'com.example.invoice';
-    entryEls.sutMethod.value = 'generateInvoice';
-    addParamRow('customerId', 'UUID');
-    entryEls.sutReturn.value = 'Invoice';
+    state.targetPackage = 'com.example.invoice';
 
-    umlEls.textarea.value = [
-        'InvoiceService -> OrderRepository : findAllByCustomerId(customerId)',
-        'InvoiceService <- OrderRepository : orders: List<Order>',
-        'InvoiceService -> InvoiceBuilderFactory : create()',
-        'InvoiceBuilderFactory -> InvoiceBuilder : <<create>>',
-        'InvoiceService <- InvoiceBuilderFactory : invoiceBuilder: InvoiceBuilder',
-        'loop for each order in orders',
-        '    InvoiceService -> InvoiceBuilder : addLine(order)',
-        'end',
-        'InvoiceService -> InvoiceBuilder : build()',
-        'InvoiceService <- InvoiceBuilder : invoice: Invoice'
-    ].join('\n');
+    const invoiceService = makeParticipant('InvoiceService');
+    const generateInvoice = makeMethod('generateInvoice', [{ name: 'customerId', type: 'UUID' }], 'Invoice');
+    invoiceService.methods.push(generateInvoice);
+
+    const orderRepository = makeParticipant('OrderRepository');
+    const findAllByCustomerId = makeMethod('findAllByCustomerId', [{ name: 'customerId', type: 'UUID' }], 'List<Order>');
+    orderRepository.methods.push(findAllByCustomerId);
+
+    const invoiceBuilderFactory = makeParticipant('InvoiceBuilderFactory');
+    const create = makeMethod('create', [], 'InvoiceBuilder');
+    invoiceBuilderFactory.methods.push(create);
+
+    const invoiceBuilder = makeParticipant('InvoiceBuilder');
+    const addLine = makeMethod('addLine', [{ name: 'order', type: 'Order' }], 'void');
+    const build = makeMethod('build', [], 'Invoice');
+    invoiceBuilder.methods.push(addLine, build);
+
+    state.participants = [invoiceService, orderRepository, invoiceBuilderFactory, invoiceBuilder];
+    state.sequence = [
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: orderRepository.id, methodId: findAllByCustomerId.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilderFactory.id, methodId: create.id },
+        { id: newId(), kind: STEP_KIND.LOOP_START, label: 'for each order in orders' },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: addLine.id },
+        { id: newId(), kind: STEP_KIND.LOOP_END },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: build.id }
+    ];
 
     // Default target project + auto-connect so the save-to-project step
     // "just works" with no manual path entry. If the path doesn't exist

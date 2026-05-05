@@ -49,3 +49,8 @@ DisC itself handles project scanning, CREATE/UPDATE detection, classification, t
 - Step 3 fragments (alt / loop / throws): how to represent visually without cluttering the row? (open)
 - Step 4 rendering: hand-built HTML/CSS vs. a diagram library? (MVP = HTML/CSS)
 - Backend-to-DisC handoff: shell out to the `claude` CLI with a crafted prompt, or expose an HTTP wrapper around the skill? (post-MVP decision)
+
+
+## manual entered
+
+in step 4, if we identify a participiant is not in an interaction, it's a leaf node, then we need to let user to decide, is it pure function. if it's pure function, then we need to provide a decision table.  
