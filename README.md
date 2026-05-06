@@ -23,9 +23,24 @@ The result of DisC consuming the generated `.puml` (tests + implementation produ
 
 ![DisC run result](screenshots/disc_run_result.png)
 
-## Running locally
+## Requirements
 
-Requires Java 21+.
+- **Java 21 or newer.** Spring Boot 4 requires Java 21; older JDKs will fail at startup with `UnsupportedClassVersionError`.
+
+  Check what you have:
+
+  ```sh
+  java -version
+  ```
+
+  If you're on Java 17 or older, install JDK 21:
+
+  - **macOS / Linux** (recommended): [SDKMAN](https://sdkman.io/) — `sdk install java 21-tem`
+  - **Any platform**: download from [Adoptium](https://adoptium.net/temurin/releases/?version=21)
+
+- **Optional, for the "Run it for me" button only**: the [`claude` CLI](https://docs.claude.com/en/docs/claude-code) on your `PATH`, plus the [`design-is-code` plugin](https://github.com/mossgreen/design-is-code-plugin) installed in your Claude Code profile. Without these, you can still build and copy the `.puml` — you just lose the in-app code-generation step.
+
+## Running locally
 
 ```sh
 ./gradlew bootRun
@@ -68,7 +83,7 @@ The `' @package …` header is DisC's `target_placement` declaration — require
 - **Frontend** — vanilla HTML / CSS / JS. No framework, no build step. The live sequence diagram is hand-rolled SVG.
 - **Backend endpoints** — `/api/scan` (project scan), `/api/design` (save `.puml`), `/api/run-disc` (shell out to `claude` CLI, stream output back).
 
-## Prerequisites for "Run it for me"
+## How "Run it for me" works
 
 The Step-4 "Run it for me" button shells out to:
 
@@ -76,12 +91,7 @@ The Step-4 "Run it for me" button shells out to:
 claude --dangerously-skip-permissions -p /design-is-code:disc <file>
 ```
 
-For that to work locally, you need:
-
-- The `claude` CLI on your `PATH`.
-- The [`design-is-code` plugin](https://github.com/mossgreen/design-is-code-plugin) installed in your Claude Code profile (provides the `/design-is-code:disc` slash command).
-
-Without those, you can still copy the `.puml` and run DisC yourself anywhere `claude` is available.
+…and streams the CLI's output back into the wizard. The `claude` CLI and the `design-is-code` plugin are listed under [Requirements](#requirements). Without them, you can still copy the `.puml` and run DisC yourself anywhere the CLI is available.
 
 ## Status
 
