@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
-## [v0.1.0] - 2026-05-06
+## [v0.1.0] - 2026-05-05
 
 First usable release. A 4-step wizard for designing sequence-diagram-driven
 flows and handing them off to DisC for code generation.
