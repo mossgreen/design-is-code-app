@@ -14,7 +14,43 @@ const JAVA_PACKAGE_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 let nextId = 1;
 const newId = () => `id-${nextId++}`;
 
-const STEP_KIND = { CALL: 'call', LOOP_START: 'loop-start', LOOP_END: 'loop-end' };
+// STEP_KIND. Sequences are linear; fragments are expressed as paired
+// frag-start / frag-else / frag-end markers. fragType picks the PlantUML
+// keyword (loop, while, foreach, alt, opt, par). LOOP_START/LOOP_END are
+// preserved as a back-compat shorthand for plain `loop` fragments and are
+// normalised into FRAG markers when emitted/rendered.
+const STEP_KIND = {
+    CALL: 'call',
+    LOOP_START: 'loop-start',
+    LOOP_END: 'loop-end',
+    FRAG_START: 'frag-start',
+    FRAG_ELSE: 'frag-else',
+    FRAG_END: 'frag-end'
+};
+
+// fragType -> { plantUml keyword, default label, allows else, glyph, label, color }
+const FRAG_TYPES = {
+    loop:    { keyword: 'loop',  defaultLabel: 'for each item', allowsElse: false, glyph: '↻', label: 'loop',     color: '#4f46e5' },
+    while:   { keyword: 'loop',  defaultLabel: 'while condition', allowsElse: false, glyph: '↻', label: 'while',  color: '#4f46e5', emitPrefix: 'while ' },
+    foreach: { keyword: 'loop',  defaultLabel: 'for each item in items', allowsElse: false, glyph: '↻', label: 'for each', color: '#4f46e5', emitPrefix: 'for each ' },
+    alt:     { keyword: 'alt',   defaultLabel: 'if condition',  allowsElse: true,  glyph: '◇', label: 'if',       color: '#0e7490' },
+    opt:     { keyword: 'opt',   defaultLabel: 'if optional',   allowsElse: false, glyph: '◇', label: 'opt',      color: '#7c3aed' },
+    par:     { keyword: 'par',   defaultLabel: 'branch A',      allowsElse: true,  glyph: '⇶', label: 'par',      color: '#0891b2' }
+};
+
+function fragMeta(type) { return FRAG_TYPES[type] || FRAG_TYPES.loop; }
+
+function isFragStart(s) { return s.kind === STEP_KIND.FRAG_START || s.kind === STEP_KIND.LOOP_START; }
+function isFragEnd(s)   { return s.kind === STEP_KIND.FRAG_END   || s.kind === STEP_KIND.LOOP_END; }
+function isFragElse(s)  { return s.kind === STEP_KIND.FRAG_ELSE; }
+
+// Normalise a step's effective fragType: legacy LOOP_START is treated as
+// fragType: 'loop'. FRAG_START carries its fragType explicitly.
+function effectiveFragType(s) {
+    if (s.kind === STEP_KIND.LOOP_START) return 'loop';
+    if (s.kind === STEP_KIND.FRAG_START) return s.fragType || 'loop';
+    return null;
+}
 
 const els = {
     chip: document.getElementById('project-chip'),
@@ -496,20 +532,32 @@ function ensureAddStepDraft() {
     if (addStepDraft.methodId && !findMethod(addStepDraft.calleeId, addStepDraft.methodId)) addStepDraft.methodId = '';
 }
 
-// How many loop-start markers are currently unmatched. Used to disable the
-// "+ end loop" button when there's nothing to close.
-function openLoopDepth() {
+// How many fragment-start markers are currently unmatched. Used to disable
+// the "+ end" / "+ else" buttons when there's nothing to close.
+function openFragDepth() {
     let d = 0;
     for (const s of state.sequence) {
-        if (s.kind === STEP_KIND.LOOP_START) d++;
-        else if (s.kind === STEP_KIND.LOOP_END) d = Math.max(0, d - 1);
+        if (isFragStart(s)) d++;
+        else if (isFragEnd(s)) d = Math.max(0, d - 1);
     }
     return d;
 }
 
-// Transient UI state for the inline "+ start loop" mini-form. When non-null,
+// The fragType of the innermost currently-open fragment, or null. Used to
+// gate the "+ else" button: only alt/par fragments allow else.
+function currentOpenFragType() {
+    const stack = [];
+    for (const s of state.sequence) {
+        if (isFragStart(s)) stack.push(effectiveFragType(s));
+        else if (isFragEnd(s)) stack.pop();
+    }
+    return stack.length > 0 ? stack[stack.length - 1] : null;
+}
+
+// Transient UI state for the inline fragment-insert mini-form. When non-null,
 // the composer renders the mini-form instead of the secondary buttons.
-let loopFormOpen = false;
+// Shape: { type: 'loop'|'while'|'foreach'|'alt'|'opt'|'par', label: '' }
+let fragFormOpen = null;
 
 function renderSequence() {
     renderSteps();
@@ -534,26 +582,32 @@ function renderSteps() {
     const creates = resolveCreates();
     let callIdx = 0;
 
+    // Track the open fragment stack so frag-end rows know what they're closing
+    // and frag-else rows know which fragment they belong to.
+    const fragStack = [];
+
     state.sequence.forEach(step => {
-        if (step.kind === STEP_KIND.LOOP_START) {
+        if (isFragStart(step)) {
+            const type = effectiveFragType(step);
+            const meta = fragMeta(type);
+            fragStack.push({ type, depth: fragStack.length });
             const row = document.createElement('div');
-            row.className = 'step-row loop-start';
+            row.className = `step-row frag-start frag-${type}`;
             row.dataset.id = step.id;
             row.draggable = false;
+            row.style.setProperty('--frag-color', meta.color);
             row.innerHTML = `
-                <span class="step-num loop-glyph" title="loop start">↻</span>
+                <span class="step-num frag-glyph" title="${escapeHtml(meta.label)} start">${meta.glyph}</span>
                 <div class="step-lines">
                     <div class="step-line">
-                        <span class="loop-tag">loop</span>
-                        <input type="text" class="loop-label" placeholder="loop label (e.g. for each order)" value="${escapeHtml(step.label || '')}">
+                        <span class="frag-tag">${escapeHtml(meta.label)}</span>
+                        <input type="text" class="frag-label" placeholder="${escapeHtml(meta.defaultLabel)}" value="${escapeHtml(step.label || '')}">
                     </div>
                 </div>
-                <button type="button" class="icon-btn step-remove" title="Remove loop">×</button>
+                <button type="button" class="icon-btn step-remove" title="Remove ${escapeHtml(meta.label)}">×</button>
             `;
-            row.querySelector('.loop-label').addEventListener('input', (e) => {
+            row.querySelector('.frag-label').addEventListener('input', (e) => {
                 step.label = e.target.value;
-                // Re-render the live diagram so the bracket label updates,
-                // but don't re-render the steps list (we'd lose input focus).
                 const liveSeq = document.getElementById('live-sequence');
                 if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
             });
@@ -565,17 +619,54 @@ function renderSteps() {
             return;
         }
 
-        if (step.kind === STEP_KIND.LOOP_END) {
+        if (isFragElse(step)) {
+            const open = fragStack[fragStack.length - 1];
+            const type = open ? open.type : 'alt';
+            const meta = fragMeta(type);
             const row = document.createElement('div');
-            row.className = 'step-row loop-end';
+            row.className = `step-row frag-else frag-${type}`;
             row.dataset.id = step.id;
             row.draggable = false;
+            row.style.setProperty('--frag-color', meta.color);
+            const elseLabel = type === 'par' ? 'else (parallel branch)' : 'else if';
             row.innerHTML = `
-                <span class="step-num loop-glyph" title="loop end">↺</span>
+                <span class="step-num frag-glyph" title="${escapeHtml(elseLabel)}">⇅</span>
                 <div class="step-lines">
-                    <div class="step-line"><span class="loop-tag">end loop</span></div>
+                    <div class="step-line">
+                        <span class="frag-tag">else</span>
+                        <input type="text" class="frag-label" placeholder="${escapeHtml(elseLabel === 'else if' ? 'else condition' : 'parallel branch label')}" value="${escapeHtml(step.label || '')}">
+                    </div>
                 </div>
-                <button type="button" class="icon-btn step-remove" title="Remove loop end">×</button>
+                <button type="button" class="icon-btn step-remove" title="Remove else">×</button>
+            `;
+            row.querySelector('.frag-label').addEventListener('input', (e) => {
+                step.label = e.target.value;
+                const liveSeq = document.getElementById('live-sequence');
+                if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
+            });
+            row.querySelector('.step-remove').addEventListener('click', () => {
+                state.sequence = state.sequence.filter(s => s.id !== step.id);
+                renderSequence();
+            });
+            board.appendChild(row);
+            return;
+        }
+
+        if (isFragEnd(step)) {
+            const open = fragStack.pop();
+            const type = open ? open.type : 'loop';
+            const meta = fragMeta(type);
+            const row = document.createElement('div');
+            row.className = `step-row frag-end frag-${type}`;
+            row.dataset.id = step.id;
+            row.draggable = false;
+            row.style.setProperty('--frag-color', meta.color);
+            row.innerHTML = `
+                <span class="step-num frag-glyph" title="${escapeHtml(meta.label)} end">↺</span>
+                <div class="step-lines">
+                    <div class="step-line"><span class="frag-tag">end ${escapeHtml(meta.label)}</span></div>
+                </div>
+                <button type="button" class="icon-btn step-remove" title="Remove end">×</button>
             `;
             row.querySelector('.step-remove').addEventListener('click', () => {
                 state.sequence = state.sequence.filter(s => s.id !== step.id);
@@ -730,20 +821,38 @@ function renderAddStep() {
             : `<span class="as-ret-arrow">→</span><span class="as-return ${retPreview === 'void' ? 'is-void' : ''}">${escapeHtml(retPreview)}</span>`)
         : '';
 
-    const depth = openLoopDepth();
-    const secondaryStrip = loopFormOpen
-        ? `<div class="as-secondary as-loop-form-strip">
-               <form class="as-loop-form" autocomplete="off">
-                   <span class="as-loop-form-label">loop:</span>
-                   <input type="text" class="as-loop-input" placeholder="for each order in orders" autofocus>
-                   <button type="submit" class="as-loop-confirm">Add loop</button>
-                   <button type="button" class="as-loop-cancel">Cancel</button>
+    const depth = openFragDepth();
+    const openType = currentOpenFragType();
+    const elseAllowed = openType ? fragMeta(openType).allowsElse : false;
+    let secondaryStrip;
+    if (fragFormOpen) {
+        const ft = fragFormOpen.type;
+        const meta = fragMeta(ft);
+        secondaryStrip = `<div class="as-secondary as-frag-form-strip">
+               <form class="as-frag-form" autocomplete="off" data-frag-type="${ft}">
+                   <span class="as-frag-form-label" style="color: ${meta.color}">${escapeHtml(meta.label)}:</span>
+                   <input type="text" class="as-frag-input" placeholder="${escapeHtml(meta.defaultLabel)}" autofocus>
+                   <button type="submit" class="as-frag-confirm">Add ${escapeHtml(meta.label)}</button>
+                   <button type="button" class="as-frag-cancel">Cancel</button>
                </form>
-           </div>`
-        : `<div class="as-secondary">
-               <button type="button" class="as-loop-add">+ start loop</button>
-               <button type="button" class="as-loop-end-btn" ${depth > 0 ? '' : 'disabled'}>+ end loop${depth > 0 ? '' : ' (no open loop)'}</button>
            </div>`;
+    } else {
+        const elseBtn = elseAllowed
+            ? `<button type="button" class="as-frag-else-btn" data-frag-type="${openType}">+ else</button>`
+            : '';
+        const endLabel = openType ? ` (${fragMeta(openType).label})` : '';
+        secondaryStrip = `<div class="as-secondary">
+               <span class="as-secondary-label">flow control:</span>
+               <button type="button" class="as-frag-add" data-frag-type="loop">+ loop</button>
+               <button type="button" class="as-frag-add" data-frag-type="while">+ while</button>
+               <button type="button" class="as-frag-add" data-frag-type="foreach">+ for-each</button>
+               <button type="button" class="as-frag-add" data-frag-type="alt">+ if/else</button>
+               <button type="button" class="as-frag-add" data-frag-type="opt">+ opt</button>
+               <button type="button" class="as-frag-add" data-frag-type="par">+ par</button>
+               ${elseBtn}
+               <button type="button" class="as-frag-end-btn" ${depth > 0 ? '' : 'disabled'}>+ end${depth > 0 ? endLabel : ' (none open)'}</button>
+           </div>`;
+    }
 
     panel.innerHTML = `
         <div class="add-step-head">
@@ -774,36 +883,50 @@ function renderAddStep() {
     const calleeSel = panel.querySelector('.as-callee');
     const methodSel = panel.querySelector('.as-method');
 
-    // Secondary actions: start / end loop.
-    const loopAddBtn = panel.querySelector('.as-loop-add');
-    if (loopAddBtn) {
-        loopAddBtn.addEventListener('click', () => {
-            loopFormOpen = true;
+    // Secondary actions: open a fragment-insert mini-form for any frag type.
+    panel.querySelectorAll('.as-frag-add').forEach(btn => {
+        btn.addEventListener('click', () => {
+            fragFormOpen = { type: btn.dataset.fragType };
             renderAddStep();
-            const input = step2Els.stepsBoard.querySelector('.as-loop-input');
+            const input = step2Els.stepsBoard.querySelector('.as-frag-input');
             if (input) input.focus();
         });
-    }
-    const loopEndBtn = panel.querySelector('.as-loop-end-btn');
-    if (loopEndBtn) {
-        loopEndBtn.addEventListener('click', () => {
-            if (openLoopDepth() === 0) return;
-            state.sequence.push({ id: newId(), kind: STEP_KIND.LOOP_END });
+    });
+
+    // + else: insert FRAG_ELSE row inside the current open fragment.
+    const elseBtn = panel.querySelector('.as-frag-else-btn');
+    if (elseBtn) {
+        elseBtn.addEventListener('click', () => {
+            if (!currentOpenFragType()) return;
+            state.sequence.push({ id: newId(), kind: STEP_KIND.FRAG_ELSE, label: '' });
             renderSequence();
         });
     }
-    const loopForm = panel.querySelector('.as-loop-form');
-    if (loopForm) {
-        loopForm.addEventListener('submit', (e) => {
+
+    // + end: close the innermost open fragment.
+    const endBtn = panel.querySelector('.as-frag-end-btn');
+    if (endBtn) {
+        endBtn.addEventListener('click', () => {
+            if (openFragDepth() === 0) return;
+            state.sequence.push({ id: newId(), kind: STEP_KIND.FRAG_END });
+            renderSequence();
+        });
+    }
+
+    // Mini-form submit: push a FRAG_START with the chosen type + label.
+    const fragForm = panel.querySelector('.as-frag-form');
+    if (fragForm) {
+        fragForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const input = panel.querySelector('.as-loop-input');
+            const input = panel.querySelector('.as-frag-input');
             const label = (input ? input.value : '').trim();
-            state.sequence.push({ id: newId(), kind: STEP_KIND.LOOP_START, label });
-            loopFormOpen = false;
+            const type = fragForm.dataset.fragType || 'loop';
+            state.sequence.push({ id: newId(), kind: STEP_KIND.FRAG_START, fragType: type, label });
+            fragFormOpen = null;
             renderSequence();
         });
-        panel.querySelector('.as-loop-cancel').addEventListener('click', () => {
-            loopFormOpen = false;
+        panel.querySelector('.as-frag-cancel').addEventListener('click', () => {
+            fragFormOpen = null;
             renderAddStep();
         });
     }
@@ -930,15 +1053,37 @@ function emitPlantUml() {
     let indent = 0;
     const pad = () => '  '.repeat(indent);
 
+    // Track the open fragment stack so that:
+    //  (a) FRAG_ELSE emits the right keyword (`else` for alt/opt, also `else`
+    //      for par — PlantUML uses `else` to separate par branches);
+    //  (b) FRAG_END knows which fragment it's closing (only matters for
+    //      tooling — PlantUML always closes with `end`).
+    const fragStack = [];
+
     state.sequence.forEach(s => {
-        if (s.kind === STEP_KIND.LOOP_START) {
-            const label = (s.label || '').replace(/\n/g, ' ').trim();
-            lines.push(`${pad()}loop ${label}`.trimEnd());
+        if (isFragStart(s)) {
+            const type = effectiveFragType(s);
+            const meta = fragMeta(type);
+            fragStack.push(type);
+            const rawLabel = (s.label || '').replace(/\n/g, ' ').trim();
+            const label = (meta.emitPrefix && rawLabel && !rawLabel.toLowerCase().startsWith(meta.emitPrefix.trim()))
+                ? meta.emitPrefix + rawLabel
+                : rawLabel;
+            lines.push(`${pad()}${meta.keyword} ${label}`.trimEnd());
             indent++;
             return;
         }
-        if (s.kind === STEP_KIND.LOOP_END) {
+        if (isFragElse(s)) {
+            // else lives at the parent fragment's indent; the call lines
+            // between two else markers stay one level deeper than the frag.
+            const elseIndent = Math.max(0, indent - 1);
+            const label = (s.label || '').replace(/\n/g, ' ').trim();
+            lines.push(`${'  '.repeat(elseIndent)}else ${label}`.trimEnd());
+            return;
+        }
+        if (isFragEnd(s)) {
             indent = Math.max(0, indent - 1);
+            fragStack.pop();
             lines.push(`${pad()}end`);
             return;
         }
@@ -1061,43 +1206,69 @@ function renderSequenceDiagram(steps, container) {
         }
     });
 
-    // Loop spans (computed off raw `steps`, indexed by call ordinal).
-    const loopSpans = [];
+    // Fragment spans (computed off raw `steps`, indexed by call ordinal).
+    // Each span gets its frag type's color + label; alt/par fragments also
+    // record their `else` divider Y positions so the renderer can draw
+    // dashed cross-lines between branches.
+    const fragSpans = [];
     {
         const stack = [];
         let callIdx = 0;
+        const isValidCall = (s) => {
+            if (s.kind !== STEP_KIND.CALL) return false;
+            const caller = findParticipant(s.callerId);
+            const callee = findParticipant(s.calleeId);
+            const method = findMethod(s.calleeId, s.methodId);
+            return !!(caller && callee && method);
+        };
         for (const s of steps) {
-            if (s.kind === STEP_KIND.LOOP_START) {
-                stack.push({ label: s.label || '', startCallIdx: callIdx, depth: stack.length });
-            } else if (s.kind === STEP_KIND.LOOP_END) {
+            if (isFragStart(s)) {
+                const type = effectiveFragType(s);
+                stack.push({
+                    type,
+                    label: s.label || '',
+                    startCallIdx: callIdx,
+                    depth: stack.length,
+                    elseYs: []  // [{y, label}, ...]
+                });
+            } else if (isFragElse(s)) {
+                const open = stack[stack.length - 1];
+                if (open) {
+                    open.elseYs.push({
+                        // Position the else divider just above the next call row.
+                        y: stepStart + callIdx * stepGap - 22,
+                        label: s.label || ''
+                    });
+                }
+            } else if (isFragEnd(s)) {
                 const open = stack.pop();
                 if (!open) continue;
                 const innerCount = callIdx - open.startCallIdx;
-                loopSpans.push({
+                fragSpans.push({
+                    type: open.type,
                     label: open.label,
                     yStart: stepStart + open.startCallIdx * stepGap - 22,
                     yEnd:   stepStart + Math.max(callIdx - 1, open.startCallIdx) * stepGap + 26,
                     depth:  open.depth,
-                    empty:  innerCount === 0
+                    empty:  innerCount === 0,
+                    elseYs: open.elseYs
                 });
-            } else if (s.kind === STEP_KIND.CALL) {
-                // Only count valid calls (those that survived resolution).
-                const caller = findParticipant(s.callerId);
-                const callee = findParticipant(s.calleeId);
-                const method = findMethod(s.calleeId, s.methodId);
-                if (caller && callee && method) callIdx++;
+            } else if (isValidCall(s)) {
+                callIdx++;
             }
         }
-        // Auto-close any open loops at the bottom.
+        // Auto-close any still-open fragments at the bottom.
         while (stack.length > 0) {
             const open = stack.pop();
             const innerCount = callIdx - open.startCallIdx;
-            loopSpans.push({
+            fragSpans.push({
+                type: open.type,
                 label: open.label,
                 yStart: stepStart + open.startCallIdx * stepGap - 22,
                 yEnd:   stepStart + Math.max(callIdx - 1, open.startCallIdx) * stepGap + 26,
                 depth:  open.depth,
-                empty:  innerCount === 0
+                empty:  innerCount === 0,
+                elseYs: open.elseYs
             });
         }
     }
@@ -1116,22 +1287,48 @@ function renderSequenceDiagram(steps, container) {
         return node;
     };
 
-    // Loop brackets — draw first so steps render on top.
-    for (const span of loopSpans) {
+    // Fragment brackets — draw first so steps render on top. Each bracket's
+    // color comes from FRAG_TYPES; alt/par also draw dashed `else` dividers.
+    for (const span of fragSpans) {
+        const meta = fragMeta(span.type);
         const inset = span.depth * 8;
         const bx = padX - 28 - inset;
         const bw = w - 2 * (padX - 28 - inset);
+
+        // Translucent fill (use the frag color via a low-alpha rgba).
+        // Convert the meta hex to rgba 0.06 by splitting the channels.
+        const hex = meta.color.replace('#', '');
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        const fill = `rgba(${r},${g},${b},0.06)`;
+        const stroke = `rgba(${r},${g},${b},0.55)`;
+
         svg.appendChild(el('rect', {
             x: bx, y: span.yStart, width: bw, height: span.yEnd - span.yStart,
-            fill: 'rgba(99,102,241,0.06)',
-            stroke: '#a5b4fc', 'stroke-width': '1', 'stroke-dasharray': '4 4',
+            fill,
+            stroke, 'stroke-width': '1', 'stroke-dasharray': '4 4',
             rx: '4'
         }));
-        const labelText = `↻ ${span.label || 'loop'}${span.empty ? ' (empty)' : ''}`;
+        const labelText = `${meta.glyph} ${meta.label}${span.label ? ' · ' + span.label : ''}${span.empty ? ' (empty)' : ''}`;
         svg.appendChild(el('text', {
             x: bx + 8, y: span.yStart + 13,
-            'font-size': '10', fill: '#5b21b6', 'font-weight': '700'
+            'font-size': '10', fill: meta.color, 'font-weight': '700'
         }, labelText));
+
+        // Else dividers: dashed horizontal lines spanning the bracket, with
+        // an inline label.
+        for (const e of (span.elseYs || [])) {
+            svg.appendChild(el('line', {
+                x1: bx + 4, y1: e.y, x2: bx + bw - 4, y2: e.y,
+                stroke, 'stroke-width': '1', 'stroke-dasharray': '6 3'
+            }));
+            const elseText = `else${e.label ? ' · ' + e.label : ''}`;
+            svg.appendChild(el('text', {
+                x: bx + 12, y: e.y - 3,
+                'font-size': '10', fill: meta.color, 'font-weight': '700', 'font-style': 'italic'
+            }, elseText));
+        }
     }
 
     // Lifeline heads + dashed verticals.

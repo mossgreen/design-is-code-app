@@ -1,20 +1,74 @@
 * { box-sizing: border-box; }
 
+:root {
+    /* Type */
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --fs-base: 13px;
+    --fs-sm: 12px;
+    --fs-xs: 11px;
+    --fs-lg: 15px;
+    --fs-xl: 18px;
+    --fs-h1: 22px;
+
+    /* Neutral surfaces (Linear/Vercel-flat) */
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --surface-2: #f7f7f8;
+    --surface-3: #f1f1f2;
+    --border: #e6e6e8;
+    --border-2: #d4d4d8;
+    --text: #18181b;
+    --text-2: #52525b;
+    --text-3: #8a8a93;
+    --muted: #a1a1aa;
+
+    /* Deep blue accent */
+    --accent: #1e40af;
+    --accent-hover: #1d3a9e;
+    --accent-soft: #eef2ff;
+    --accent-border: #c7d2fe;
+
+    /* Semantic */
+    --indigo: #4f46e5;
+    --indigo-soft: #eef2ff;
+    --emerald: #059669;
+    --amber: #d97706;
+    --rose: #e11d48;
+
+    /* Shape */
+    --radius-sm: 4px;
+    --radius: 6px;
+    --radius-lg: 8px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
 html, body {
     margin: 0;
     padding: 0;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #111827;
-    background: #fafafa;
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: var(--bg);
     line-height: 1.5;
+    font-size: var(--fs-base);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+code, pre, .mono {
+    font-family: var(--font-mono);
 }
 
 header {
     background: #fff;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
 }
 
 .header-inner {
@@ -47,7 +101,7 @@ header {
     padding: 0.4rem 0.8rem;
     background: #f3f4f6;
     color: #374151;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 999px;
     font-size: 0.82rem;
     font-weight: 500;
@@ -120,7 +174,7 @@ header {
     margin-top: 0.75rem;
     font-size: 0.85rem;
     color: #4b5563;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
 }
 
 .stepper {
@@ -130,7 +184,7 @@ header {
     max-width: 1200px;
     margin: 0 auto;
     background: #fff;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
     overflow-x: auto;
 }
 
@@ -166,9 +220,9 @@ header {
 }
 
 .step.active { color: #111827; }
-.step.active .step-num { background: #6366f1; color: #fff; }
+.step.active .step-num { background: var(--accent); color: #fff; }
 .step.done { color: #374151; }
-.step.done .step-num { background: #10b981; color: #fff; }
+.step.done .step-num { background: var(--emerald); color: #fff; }
 
 main {
     max-width: 1200px;
@@ -178,8 +232,8 @@ main {
 
 .panel {
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 2rem;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
@@ -198,7 +252,7 @@ main {
 }
 
 .help code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85em;
     padding: 0.1em 0.35em;
     background: #f3f4f6;
@@ -209,25 +263,25 @@ main {
 input[type="text"] {
     flex: 1;
     padding: 0.7rem 0.9rem;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
     font-size: 0.95rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     outline: none;
     transition: border-color 0.15s, box-shadow 0.15s;
     background: #fff;
 }
 
 input[type="text"]:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.15);
 }
 
 textarea {
     width: 100%;
     padding: 0.75rem 0.9rem;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
     font-size: 0.95rem;
     font-family: inherit;
     line-height: 1.5;
@@ -240,8 +294,8 @@ textarea {
 }
 
 textarea:focus {
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.15);
 }
 
 .input-modes {
@@ -253,8 +307,8 @@ textarea:focus {
 
 .mode-btn {
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 0.4rem;
     display: inline-flex;
     align-items: center;
@@ -288,10 +342,10 @@ textarea:focus {
 
 button {
     padding: 0.7rem 1.25rem;
-    background: #6366f1;
+    background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius);
     font-size: 0.95rem;
     font-weight: 500;
     cursor: pointer;
@@ -299,13 +353,13 @@ button {
     font-family: inherit;
 }
 
-button:hover { background: #4f46e5; }
+button:hover { background: var(--accent-hover); }
 button:disabled { background: #9ca3af; cursor: not-allowed; }
 
 button.secondary {
     background: #fff;
     color: #374151;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-2);
 }
 
 button.secondary:hover { background: #f9fafb; }
@@ -322,7 +376,7 @@ button.small {
     padding: 0.7rem 0.9rem;
     margin-top: 0.75rem;
     background: #f3f4f6;
-    border-radius: 8px;
+    border-radius: var(--radius);
     color: #374151;
     font-size: 0.88rem;
 }
@@ -331,7 +385,7 @@ button.small {
     width: 1rem;
     height: 1rem;
     border: 2px solid #d1d5db;
-    border-top-color: #6366f1;
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
     flex-shrink: 0;
@@ -345,7 +399,7 @@ button.small {
     background: #fef2f2;
     color: #991b1b;
     border: 1px solid #fecaca;
-    border-radius: 8px;
+    border-radius: var(--radius);
     font-size: 0.88rem;
 }
 
@@ -372,7 +426,7 @@ button.small {
     padding: 0.75rem 1rem;
     margin-bottom: 1.5rem;
     background: #f9fafb;
-    border-left: 3px solid #6366f1;
+    border-left: 3px solid var(--accent);
     border-radius: 4px;
     color: #4b5563;
     font-size: 0.88rem;
@@ -401,8 +455,8 @@ button.small {
     max-height: 240px;
     overflow-y: auto;
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
     z-index: 5;
     padding: 0.25rem;
@@ -424,7 +478,7 @@ button.small {
 
 .suggestion .pkg {
     color: #9ca3af;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     margin-left: 0.4rem;
 }
@@ -464,10 +518,10 @@ button.small {
     padding: 0.3rem 0.7rem;
     background: #f3f4f6;
     color: #374151;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 999px;
     font-size: 0.8rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     cursor: pointer;
 }
 
@@ -486,9 +540,9 @@ button.small {
 .arrow-row .icon-btn {
     padding: 0.5rem 0.65rem;
     background: #fff;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     color: #6b7280;
-    border-radius: 8px;
+    border-radius: var(--radius);
     cursor: pointer;
     font-size: 0.9rem;
     line-height: 1;
@@ -525,7 +579,7 @@ button.small {
 
 #uml-input {
     min-height: 180px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.88rem;
     line-height: 1.55;
     margin-bottom: 0;
@@ -558,7 +612,7 @@ button.small {
     border: 1px solid #fecaca;
     border-radius: 6px;
     font-size: 0.82rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -568,9 +622,9 @@ button.small {
     margin: 0;
     padding: 0.9rem 1rem;
     background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
     font-size: 0.86rem;
     line-height: 1.7;
     white-space: pre;
@@ -601,7 +655,7 @@ button.small {
 
 .preview {
     background: #fafafa;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1.25rem;
     margin-bottom: 1rem;
@@ -621,12 +675,12 @@ button.small {
     color: #3730a3;
     border-radius: 999px;
     font-size: 0.78rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-weight: 500;
 }
 
 .participant-pill.sut {
-    background: #6366f1;
+    background: var(--accent);
     color: #fff;
 }
 
@@ -643,7 +697,7 @@ button.small {
 .preview-row:first-of-type { border-top: none; }
 
 .preview-row .who {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-weight: 500;
     color: #374151;
 }
@@ -661,7 +715,7 @@ button.small {
 }
 
 .preview-row .arrow-label {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     color: #4b5563;
     white-space: nowrap;
@@ -722,10 +776,10 @@ button.small {
     background: #0f172a;
     color: #e2e8f0;
     padding: 1rem;
-    border-radius: 8px;
+    border-radius: var(--radius);
     overflow-x: auto;
     font-size: 0.82rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     white-space: pre-wrap;
     max-height: 520px;
     overflow-y: auto;
@@ -737,7 +791,7 @@ button.small {
     padding: 0.9rem 1rem;
     background: #ecfdf5;
     border: 1px solid #a7f3d0;
-    border-radius: 8px;
+    border-radius: var(--radius);
     color: #065f46;
     font-size: 0.88rem;
     display: flex;
@@ -746,7 +800,7 @@ button.small {
 }
 
 .save-result code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     background: rgba(6, 95, 70, 0.08);
     padding: 0.1em 0.4em;
     border-radius: 4px;
@@ -767,8 +821,8 @@ button.small {
     padding: 0.9rem 1rem;
     background: #0f172a;
     color: #e2e8f0;
-    border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
     font-size: 0.8rem;
     line-height: 1.5;
     white-space: pre-wrap;
@@ -781,7 +835,7 @@ button.small {
     grid-template-columns: auto 1fr;
     gap: 0.6rem;
     color: #4338ca;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.82rem;
 }
 
@@ -808,7 +862,7 @@ button.small {
     margin-bottom: 1.5rem;
     padding: 1rem;
     background: #fafafa;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 10px;
 }
 
@@ -831,7 +885,7 @@ button.small {
 
 .section-head .section-count {
     margin-left: auto;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     color: #6b7280;
 }
@@ -856,8 +910,8 @@ button.small {
     text-align: left;
     padding: 0;
     background: #fff;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
     cursor: pointer;
     overflow: hidden;
     font-family: inherit;
@@ -866,7 +920,7 @@ button.small {
 }
 
 .pc-card:hover {
-    border-color: #6366f1;
+    border-color: var(--accent);
     box-shadow: 0 2px 6px rgba(99,102,241,0.12);
     background: #fff;
 }
@@ -874,7 +928,7 @@ button.small {
 .pc-card:active { transform: translateY(1px); }
 
 .pc-card.caller {
-    border-color: #6366f1;
+    border-color: var(--accent);
     border-left-width: 4px;
 }
 
@@ -883,12 +937,12 @@ button.small {
     align-items: center;
     gap: 0.4rem;
     padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
     background: #f9fafb;
 }
 
 .pc-card-name {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-weight: 700;
     font-size: 0.92rem;
     color: #111827;
@@ -911,7 +965,7 @@ button.small {
 
 .pc-card-methods {
     padding: 0.55rem 0.75rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.74rem;
     color: #4b5563;
     line-height: 1.55;
@@ -927,7 +981,7 @@ button.small {
     border: 1.5px dashed #d1d5db;
     background: transparent;
     color: #6b7280;
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 1.5rem 0.75rem;
     cursor: pointer;
     font-family: inherit;
@@ -936,7 +990,7 @@ button.small {
 }
 
 .pc-add-tile:hover {
-    border-color: #6366f1;
+    border-color: var(--accent);
     background: #f5f6ff;
     color: #4338ca;
 }
@@ -956,7 +1010,7 @@ button.small {
 
 .modal {
     background: #fff;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     width: 100%;
     max-width: 720px;
     max-height: calc(100vh - 2rem);
@@ -970,7 +1024,7 @@ button.small {
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.25rem;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--border);
 }
 
 .modal-head h3 {
@@ -987,7 +1041,7 @@ button.small {
 
 .modal-foot {
     padding: 0.85rem 1.25rem;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     gap: 0.5rem;
@@ -1015,7 +1069,7 @@ button.small {
     margin-top: 0.2rem;
     width: 1rem;
     height: 1rem;
-    accent-color: #6366f1;
+    accent-color: var(--accent);
     cursor: pointer;
 }
 
@@ -1023,8 +1077,8 @@ button.small {
 
 .method-block {
     background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 0.65rem 0.75rem;
     display: flex;
     flex-direction: column;
@@ -1042,7 +1096,7 @@ button.small {
 .mb-head .mb-name {
     flex: 1;
     padding: 0.45rem 0.6rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9rem;
     font-weight: 600;
 }
@@ -1066,7 +1120,7 @@ button.small {
     color: #9ca3af;
     font-size: 0.82rem;
     font-style: italic;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
 }
 
 .mb-add-param {
@@ -1081,7 +1135,7 @@ button.small {
 }
 
 .mb-add-param:hover {
-    border-color: #6366f1;
+    border-color: var(--accent);
     color: #4338ca;
     background: #f5f6ff;
 }
@@ -1089,7 +1143,7 @@ button.small {
 .mb-output {
     flex: 1;
     padding: 0.4rem 0.6rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
 }
 
@@ -1099,7 +1153,7 @@ button.small {
     letter-spacing: 0.08em;
     font-weight: 700;
     padding: 0.18rem 0.45rem;
-    background: #6366f1;
+    background: var(--accent);
     color: #fff;
     border-radius: 4px;
 }
@@ -1111,7 +1165,7 @@ button.small {
     border-radius: 5px;
     background: #f3f4f6;
     color: #6b7280;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     font-size: 1rem;
     line-height: 1;
     display: inline-flex;
@@ -1181,7 +1235,7 @@ button.small {
     background: #f3f4f6;
     padding: 0.15rem 0.4rem;
     border-radius: 4px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
 }
 
 .io-tag.out {
@@ -1203,7 +1257,7 @@ button.small {
     align-items: center;
     gap: 0.2rem;
     background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 5px;
     padding: 0.15rem 0.25rem;
 }
@@ -1253,8 +1307,8 @@ button.small {
     flex: 1 0 11rem;
     min-width: 11rem;
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 0.5rem;
     display: flex;
     flex-direction: column;
@@ -1262,7 +1316,7 @@ button.small {
 }
 
 .lane.caller {
-    border-color: #6366f1;
+    border-color: var(--accent);
     background: #f5f6ff;
 }
 
@@ -1270,7 +1324,7 @@ button.small {
     padding: 0.4rem 0.55rem;
     border-radius: 6px;
     background: #f3f4f6;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.82rem;
     font-weight: 600;
     color: #1f2937;
@@ -1294,7 +1348,7 @@ button.small {
     letter-spacing: 0.08em;
     font-weight: 700;
     padding: 0.1rem 0.35rem;
-    background: #6366f1;
+    background: var(--accent);
     color: #fff;
     border-radius: 3px;
 }
@@ -1318,7 +1372,7 @@ button.small {
     color: #3730a3;
     border: 1px solid #c7d2fe;
     border-radius: 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.76rem;
     cursor: grab;
     user-select: none;
@@ -1338,7 +1392,7 @@ button.small {
     padding: 0.75rem;
     background: #fff;
     border: 1px dashed #d1d5db;
-    border-radius: 8px;
+    border-radius: var(--radius);
     color: #6b7280;
     font-size: 0.85rem;
     text-align: center;
@@ -1351,15 +1405,15 @@ button.small {
     align-items: center;
     padding: 0.55rem 0.75rem;
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
     font-size: 0.82rem;
     cursor: grab;
 }
 
 .call-row.dragging { opacity: 0.5; }
-.call-row.drop-above { border-top: 2px solid #6366f1; }
+.call-row.drop-above { border-top: 2px solid var(--accent); }
 
 .call-row .call-num {
     color: #9ca3af;
@@ -1431,7 +1485,7 @@ button.small {
     padding: 0.65rem 0.75rem;
     background: #fff;
     border: 1px solid #c7d2fe;
-    border-radius: 8px;
+    border-radius: var(--radius);
     font-size: 0.85rem;
 }
 
@@ -1445,9 +1499,9 @@ button.small {
 
 .add-form select {
     padding: 0.35rem 0.5rem;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-2);
     border-radius: 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.82rem;
     background: #fff;
     color: #1f2937;
@@ -1496,7 +1550,7 @@ button.small {
 .step-badge {
     width: 1.6rem;
     height: 1.6rem;
-    background: #6366f1;
+    background: var(--accent);
     color: #fff;
     border-radius: 50%;
     display: inline-flex;
@@ -1539,14 +1593,14 @@ button.small {
     align-items: center;
     flex-wrap: wrap;
     gap: 0.5rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.88rem;
 }
 
 .add-step-form select {
     padding: 0.4rem 0.5rem;
     background: #fff;
-    border: 1px solid #d1d5db;
+    border: 1px solid var(--border-2);
     border-radius: 6px;
     font-family: inherit;
     font-size: 0.85rem;
@@ -1623,7 +1677,7 @@ button.small {
     color: #888;
     font-size: 0.85rem;
     font-style: italic;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
 }
 
 .step-row {
@@ -1633,15 +1687,15 @@ button.small {
     align-items: center;
     padding: 0.55rem 0.75rem;
     background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     cursor: grab;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.86rem;
 }
 
 .step-row.dragging { opacity: 0.5; }
-.step-row.drop-above { border-top: 2px solid #6366f1; }
+.step-row.drop-above { border-top: 2px solid var(--accent); }
 
 .step-num {
     color: #9ca3af;
@@ -1711,8 +1765,8 @@ button.small {
             #fafaf7 19px,
             #e2e0d9 19px,
             #e2e0d9 20px);
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 0.5rem;
     overflow-x: auto;
     min-height: 180px;
@@ -1729,14 +1783,14 @@ button.small {
     font-style: italic;
     text-align: center;
     padding: 3.5rem 1rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
 }
 
 /* Step 3: Review surface (clean, document-feeling) */
 
 .review-block {
     background: #fff;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 1rem 1.25rem;
     margin-bottom: 1rem;
@@ -1764,7 +1818,7 @@ button.small {
 }
 
 .review-counts {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     color: #4b5563;
     font-size: 0.85rem;
     margin-bottom: 0.5rem;
@@ -1777,7 +1831,7 @@ button.small {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.85rem;
     color: #1f2937;
 }
@@ -1796,7 +1850,7 @@ button.small {
 
 .review-sequence {
     background: #fff;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0.75rem;
     overflow-x: auto;
@@ -1806,57 +1860,80 @@ button.small {
     color: #9ca3af;
 }
 
-/* Loop fragments in the steps list */
+/* Fragment rows in the steps list — color comes from --frag-color
+   (set inline per type: loop/while/foreach=indigo, alt=teal, opt=violet,
+   par=cyan). Legacy loop-start/loop-end class names alias to frag-start/end. */
 
 .step-row.loop-start,
 .step-row.loop-end {
-    background: #eef2ff;
-    border-color: #c7d2fe;
+    --frag-color: #4f46e5;
+}
+
+.step-row.frag-start,
+.step-row.frag-else,
+.step-row.frag-end,
+.step-row.loop-start,
+.step-row.loop-end {
+    background: color-mix(in srgb, var(--frag-color, #4f46e5) 6%, var(--surface));
+    border-color: color-mix(in srgb, var(--frag-color, #4f46e5) 35%, var(--border));
     cursor: default;
 }
 
+.step-row.frag-start .step-num,
+.step-row.frag-else .step-num,
+.step-row.frag-end .step-num,
 .step-row.loop-start .step-num,
 .step-row.loop-end .step-num {
-    color: #6366f1;
+    color: var(--frag-color, #4f46e5);
+    background: transparent;
     font-size: 1.05rem;
     font-weight: 700;
     text-align: center;
 }
 
+.step-row.frag-start .frag-tag,
+.step-row.frag-else .frag-tag,
+.step-row.frag-end .frag-tag,
 .step-row.loop-start .loop-tag,
 .step-row.loop-end .loop-tag {
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-size: 0.7rem;
     font-weight: 700;
-    color: #5b21b6;
-    background: #ede9fe;
-    border: 1px solid #ddd6fe;
-    border-radius: 4px;
+    color: var(--frag-color, #4f46e5);
+    background: color-mix(in srgb, var(--frag-color, #4f46e5) 12%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--frag-color, #4f46e5) 30%, transparent);
+    border-radius: var(--radius-sm);
     padding: 0.1rem 0.45rem;
     margin-right: 0.5rem;
 }
 
+.step-row.frag-start .frag-label,
+.step-row.frag-else .frag-label,
 .step-row.loop-start .loop-label {
     flex: 1;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 0.3rem 0.5rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem;
-    color: #312e81;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text);
     font-style: italic;
     min-width: 12rem;
 }
 
+.step-row.frag-start .frag-label:hover,
+.step-row.frag-else .frag-label:hover,
 .step-row.loop-start .loop-label:hover {
-    border-color: #c7d2fe;
+    border-color: color-mix(in srgb, var(--frag-color, #4f46e5) 40%, transparent);
 }
 
+.step-row.frag-start .frag-label:focus,
+.step-row.frag-else .frag-label:focus,
 .step-row.loop-start .loop-label:focus {
-    border-color: #6366f1;
-    background: #fff;
+    border-color: var(--frag-color, #4f46e5);
+    background: var(--surface);
     outline: none;
     font-style: normal;
 }
@@ -1893,47 +1970,78 @@ button.small {
     font-size: 0.85rem;
 }
 
-/* Composer secondary action strip (start loop / end loop) */
+/* Composer fragment-control strip — buttons to insert loop/while/foreach/
+   alt/opt/par fragments and to close them. Each button carries its frag
+   type's accent via data-frag-type and an inline color. */
 
 .as-secondary {
     margin-top: 0.6rem;
     padding-top: 0.6rem;
-    border-top: 1px dashed #e5e7eb;
+    border-top: 1px dashed var(--border);
     display: flex;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.4rem;
     align-items: center;
 }
 
-.as-loop-add,
-.as-loop-end-btn {
+.as-secondary-label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-3);
+    margin-right: 0.25rem;
+}
+
+.as-frag-add,
+.as-frag-else-btn,
+.as-frag-end-btn {
     background: transparent;
-    color: #5b21b6;
-    border: 1px solid #c7d2fe;
-    border-radius: 6px;
-    padding: 0.35rem 0.7rem;
-    font-size: 0.8rem;
+    color: var(--text-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
+    padding: 0.3rem 0.65rem;
+    font-size: var(--fs-sm);
     font-family: inherit;
     cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
-.as-loop-add:hover,
-.as-loop-end-btn:hover:not(:disabled) {
-    background: #eef2ff;
-    color: #4338ca;
-    border-color: #6366f1;
+.as-frag-add[data-frag-type="loop"],
+.as-frag-add[data-frag-type="while"],
+.as-frag-add[data-frag-type="foreach"] {
+    color: #4f46e5; border-color: color-mix(in srgb, #4f46e5 35%, transparent);
+}
+.as-frag-add[data-frag-type="alt"] {
+    color: #0e7490; border-color: color-mix(in srgb, #0e7490 35%, transparent);
+}
+.as-frag-add[data-frag-type="opt"] {
+    color: #7c3aed; border-color: color-mix(in srgb, #7c3aed 35%, transparent);
+}
+.as-frag-add[data-frag-type="par"] {
+    color: #0891b2; border-color: color-mix(in srgb, #0891b2 35%, transparent);
+}
+.as-frag-else-btn { color: #0e7490; border-color: color-mix(in srgb, #0e7490 35%, transparent); }
+.as-frag-end-btn  { color: var(--text-2); }
+
+.as-frag-add:hover,
+.as-frag-else-btn:hover,
+.as-frag-end-btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: currentColor;
 }
 
-.as-loop-end-btn:disabled {
-    color: #9ca3af;
-    border-color: #e5e7eb;
+.as-frag-end-btn:disabled {
+    color: var(--muted);
+    border-color: var(--border);
     cursor: not-allowed;
 }
 
-/* Inline mini-form for adding a loop label */
+/* Inline mini-form for entering a fragment label */
 
-.as-loop-form-strip { padding-top: 0.6rem; }
+.as-frag-form-strip { padding-top: 0.6rem; }
 
-.as-loop-form {
+.as-frag-form {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1941,54 +2049,53 @@ button.small {
     width: 100%;
 }
 
-.as-loop-form-label {
+.as-frag-form-label {
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-size: 0.7rem;
     font-weight: 700;
-    color: #5b21b6;
 }
 
-.as-loop-input {
+.as-frag-input {
     flex: 1;
     min-width: 12rem;
     padding: 0.4rem 0.6rem;
-    border: 1px solid #c7d2fe;
-    border-radius: 6px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem;
-    color: #1f2937;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text);
 }
 
-.as-loop-input:focus {
+.as-frag-input:focus {
     outline: none;
-    border-color: #6366f1;
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.15);
 }
 
-.as-loop-confirm {
+.as-frag-confirm {
     padding: 0.4rem 0.85rem;
-    font-size: 0.85rem;
-    background: #6366f1;
+    font-size: var(--fs-sm);
+    background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius);
     cursor: pointer;
 }
 
-.as-loop-confirm:hover { background: #4f46e5; }
+.as-frag-confirm:hover { background: var(--accent-hover); }
 
-.as-loop-cancel {
+.as-frag-cancel {
     padding: 0.4rem 0.7rem;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     background: transparent;
-    color: #6b7280;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     cursor: pointer;
 }
 
-.as-loop-cancel:hover { background: #f9fafb; color: #111827; }
+.as-frag-cancel:hover { background: var(--surface-2); color: var(--text); }
 
 /* Step 4: package input + DisC warning */
 
@@ -2001,7 +2108,7 @@ button.small {
 }
 
 .label-hint code {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem;
     background: #f3f4f6;
     padding: 0.05rem 0.3rem;
