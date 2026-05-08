@@ -77,6 +77,33 @@ InvoiceService <- InvoiceBuilder : Invoice
 
 The `' @package …` header is DisC's `target_placement` declaration — required by the `disc` skill before it will generate any code.
 
+## Testing
+
+A Playwright e2e suite lives in [`e2e/`](e2e/). It drives Chromium against a running app and verifies the wizard renders, the fragment composer (alt / opt / par / loop / while / for-each) inserts the right rows, and the emitted PlantUML contains the expected keywords. Fourteen tests, ~22s.
+
+You need **two terminals**: one to run the app, one to run the tests.
+
+**Terminal 1 — start the app and leave it running:**
+
+```sh
+./gradlew bootRun
+```
+
+Wait for `Started DesignIsCodeApplication`. Then in **Terminal 2**:
+
+```sh
+cd e2e
+npm install                       # first time only
+npx playwright install chromium   # first time only
+npx playwright test
+```
+
+When you're done, `Ctrl-C` Terminal 1 to stop the app.
+
+Headed mode (visible browser, useful for debugging) is `npx playwright test --headed`. Passing-run screenshots are committed at [e2e/screenshots/](e2e/screenshots/); failure artifacts (screenshot + trace) land in `e2e/test-results/` and are gitignored.
+
+> **Heads up if you're poking the app manually:** the wizard starts on **Step 1 (User Story)** — a textarea and a "Continue →" button. The participant cards, fragment buttons, and live SVG diagram only appear on **Step 2** after you click Continue.
+
 ## Stack
 
 - **Backend** — Spring Boot 4 (Java 21, Tomcat, Gradle).

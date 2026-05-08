@@ -4,16 +4,24 @@ Playwright-driven smoke tests for the wizard UI. Verifies that the demo seed ren
 
 ## Run
 
-```bash
-# 1. Start the Spring Boot app (from the repo root)
-./gradlew bootRun
+You need **two terminals**: `./gradlew bootRun` blocks until you Ctrl-C it.
 
-# 2. In another shell, run the suite
+**Terminal 1** (leave running):
+
+```bash
+./gradlew bootRun
+```
+
+Wait for `Started DesignIsCodeApplication`. Then in **Terminal 2**:
+
+```bash
 cd e2e
-npm install         # first time only
+npm install                       # first time only
 npx playwright install chromium   # first time only
 npx playwright test
 ```
+
+When done, Ctrl-C Terminal 1 to stop the app.
 
 Headed (visible browser) for debugging: `npm run test:headed`.
 
