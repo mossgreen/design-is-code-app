@@ -120,6 +120,10 @@ claude --dangerously-skip-permissions -p /design-is-code:disc <file>
 
 …and streams the CLI's output back into the wizard. The `claude` CLI and the `design-is-code` plugin are listed under [Requirements](#requirements). Without them, you can still copy the `.puml` and run DisC yourself anywhere the CLI is available.
 
+## Releasing
+
+See [RELEASE.md](RELEASE.md) — version bump, tag, GitHub Release, all in one screen of copy-paste commands.
+
 ## Status
 
 Early/POC. Single-user, localhost-only. No persistence — refreshing the browser loses your work.
