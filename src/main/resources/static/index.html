@@ -219,7 +219,21 @@
                     <button type="button" class="secondary small" id="copy-command">Copy command</button>
                     <span id="command-feedback" class="copy-feedback"></span>
                 </div>
-                <pre id="run-console" class="run-console hidden"></pre>
+                <div id="run-progress" class="run-progress hidden">
+                    <div class="run-head">
+                        <span class="run-status" id="run-status"><span class="run-status-dot"></span><span id="run-status-text">Running…</span> <span class="run-elapsed" id="run-elapsed">0:00</span></span>
+                        <button type="button" id="run-cancel" class="secondary small">Cancel</button>
+                    </div>
+                    <ol class="run-checklist" id="run-checklist" aria-label="DisC pipeline progress"></ol>
+                    <div class="run-activity">
+                        <span class="run-activity-label">Now:</span>
+                        <span class="run-activity-current" id="run-activity-current">—</span>
+                    </div>
+                    <details class="run-raw">
+                        <summary>Raw output</summary>
+                        <pre id="run-console" class="run-console"></pre>
+                    </details>
+                </div>
             </div>
 
             <div id="save-error" class="error hidden"></div>

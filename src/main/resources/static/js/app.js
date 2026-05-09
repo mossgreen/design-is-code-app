@@ -1460,8 +1460,138 @@ const saveEls = {
     error: document.getElementById('save-error'),
     commandFeedback: document.getElementById('command-feedback'),
     runBtn: document.getElementById('run-disc'),
-    runConsole: document.getElementById('run-console')
+    runConsole: document.getElementById('run-console'),
+    runPanel: document.getElementById('run-progress'),
+    runStatus: document.getElementById('run-status'),
+    runStatusText: document.getElementById('run-status-text'),
+    runElapsed: document.getElementById('run-elapsed'),
+    runChecklist: document.getElementById('run-checklist'),
+    runActivity: document.getElementById('run-activity-current'),
+    runCancel: document.getElementById('run-cancel')
 };
+
+// --- Step-checklist state for the "Run it for me" panel ---
+//
+// Pulled from /api/disc-steps on first use; cached so we don't refetch every
+// run. The fallback list mirrors the DisC v0.2.1 SKILL.md so users running
+// against a different skill version still see something sensible.
+const FALLBACK_DISC_STEPS = [
+    { n: 1, title: 'Validate Inputs' },
+    { n: 2, title: 'Classify' },
+    { n: 3, title: 'Discover Context' },
+    { n: 4, title: 'Generate' },
+    { n: 5, title: 'Quality Gate' },
+    { n: 6, title: 'Implement' },
+    { n: 7, title: 'Write Files' },
+    { n: 8, title: 'Report' }
+];
+let discSteps = null;
+async function loadDiscSteps() {
+    if (discSteps) return discSteps;
+    try {
+        const res = await fetch('/api/disc-steps');
+        const data = await res.json();
+        if (Array.isArray(data.steps) && data.steps.length > 0) {
+            discSteps = data.steps;
+        }
+    } catch {}
+    if (!discSteps || discSteps.length === 0) discSteps = FALLBACK_DISC_STEPS;
+    return discSteps;
+}
+
+function renderRunChecklist() {
+    if (!saveEls.runChecklist || !discSteps) return;
+    saveEls.runChecklist.innerHTML = discSteps.map(s => `
+        <li class="checklist-row" data-step="${s.n}">
+            <span class="checklist-dot" aria-hidden="true"></span>
+            <span class="checklist-num">${s.n}</span>
+            <span class="checklist-title">${escapeHtml(s.title)}</span>
+        </li>
+    `).join('');
+}
+
+let runState = null;   // { runId, abort, ticker, startedAt, currentStep }
+
+function resetRunState() {
+    if (runState && runState.ticker) clearInterval(runState.ticker);
+    runState = null;
+}
+
+function setRunStatus(kind, label) {
+    // kind: running | done | failed | cancelled
+    if (!saveEls.runStatus) return;
+    saveEls.runStatus.dataset.kind = kind;
+    saveEls.runStatusText.textContent = label;
+}
+
+function fmtElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function startElapsedTicker() {
+    const startedAt = Date.now();
+    saveEls.runElapsed.textContent = '0:00';
+    return setInterval(() => {
+        if (!runState) return;
+        saveEls.runElapsed.textContent = fmtElapsed(Date.now() - startedAt);
+    }, 1000);
+}
+
+function setStepActive(n) {
+    if (!saveEls.runChecklist) return;
+    const rows = saveEls.runChecklist.querySelectorAll('.checklist-row');
+    rows.forEach(row => {
+        const step = parseInt(row.dataset.step, 10);
+        row.classList.remove('active', 'done', 'pending');
+        if (step < n) row.classList.add('done');
+        else if (step === n) row.classList.add('active');
+        else row.classList.add('pending');
+    });
+}
+
+function markAllDone() {
+    if (!saveEls.runChecklist) return;
+    saveEls.runChecklist.querySelectorAll('.checklist-row').forEach(row => {
+        row.classList.remove('active', 'pending');
+        row.classList.add('done');
+    });
+}
+
+function appendRawLine(text) {
+    if (!saveEls.runConsole) return;
+    saveEls.runConsole.textContent += text + '\n';
+    saveEls.runConsole.scrollTop = saveEls.runConsole.scrollHeight;
+}
+
+function setActivity(text) {
+    if (saveEls.runActivity) saveEls.runActivity.textContent = text;
+}
+
+// Splits a streaming UTF-8 byte sequence into newline-delimited JSON events,
+// buffering partial lines across chunks. Returns parsed objects; raw strings
+// for any line that fails JSON.parse (the server already wraps unparseable
+// CLI lines in {event:"raw"}, so this branch is unlikely in practice).
+function makeNdjsonReader() {
+    let buf = '';
+    return {
+        push(chunk) {
+            buf += chunk;
+            const events = [];
+            let idx;
+            while ((idx = buf.indexOf('\n')) >= 0) {
+                const line = buf.slice(0, idx).trim();
+                buf = buf.slice(idx + 1);
+                if (!line) continue;
+                try { events.push(JSON.parse(line)); }
+                catch { events.push({ event: 'raw', text: line }); }
+            }
+            return events;
+        }
+    };
+}
 
 function refreshPackageWarning() {
     const v = state.targetPackage.trim();
@@ -1553,7 +1683,7 @@ saveEls.save.addEventListener('click', async () => {
         saveEls.resultCommand.textContent = `/design-is-code:disc ${data.relativePath}`;
         lastSavedRelativePath = data.relativePath;
         saveEls.runConsole.textContent = '';
-        saveEls.runConsole.classList.add('hidden');
+        if (saveEls.runPanel) saveEls.runPanel.classList.add('hidden');
         saveEls.result.classList.remove('hidden');
     } catch (err) {
         saveEls.error.textContent = err.message;
@@ -1567,11 +1697,30 @@ saveEls.save.addEventListener('click', async () => {
 saveEls.runBtn.addEventListener('click', async () => {
     if (!lastSavedRelativePath || !state.projectPath) return;
 
+    // Reset UI for a fresh run.
+    await loadDiscSteps();
+    renderRunChecklist();
+    setStepActive(0);  // all pending until the agent reports a Step
+    saveEls.runConsole.textContent = '';
+    saveEls.runActivity.textContent = '—';
+    saveEls.runPanel.classList.remove('hidden');
+    setRunStatus('running', 'Running…');
+
     saveEls.runBtn.disabled = true;
     const originalLabel = saveEls.runBtn.textContent;
     saveEls.runBtn.textContent = 'Running…';
-    saveEls.runConsole.textContent = '';
-    saveEls.runConsole.classList.remove('hidden');
+
+    const abort = new AbortController();
+    runState = {
+        runId: null,
+        abort,
+        ticker: startElapsedTicker(),
+        startedAt: Date.now(),
+        currentStep: 0
+    };
+
+    const reader = makeNdjsonReader();
+    let terminal = null;  // 'done' | 'cancelled' | 'failed'
 
     try {
         const response = await fetch('/api/run-disc', {
@@ -1580,30 +1729,116 @@ saveEls.runBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 projectPath: state.projectPath,
                 filePath: lastSavedRelativePath
-            })
+            }),
+            signal: abort.signal
         });
 
         if (!response.ok || !response.body) {
             const text = await response.text();
-            saveEls.runConsole.textContent += text || `Request failed (${response.status})`;
+            appendRawLine(text || `Request failed (${response.status})`);
+            terminal = 'failed';
             return;
         }
 
-        const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        const bodyReader = response.body.getReader();
         while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await bodyReader.read();
             if (done) break;
-            saveEls.runConsole.textContent += decoder.decode(value, { stream: true });
-            saveEls.runConsole.scrollTop = saveEls.runConsole.scrollHeight;
+            const events = reader.push(decoder.decode(value, { stream: true }));
+            for (const ev of events) {
+                const result = handleRunEvent(ev);
+                if (result) terminal = result;
+            }
         }
     } catch (err) {
-        saveEls.runConsole.textContent += `\n[error] ${err.message}\n`;
+        if (err && err.name === 'AbortError') {
+            terminal = terminal || 'cancelled';
+        } else {
+            appendRawLine(`[error] ${err.message}`);
+            terminal = terminal || 'failed';
+        }
     } finally {
+        // Defensive: if the server never emitted a terminal event, force one.
+        if (!terminal) terminal = 'failed';
+        if (terminal === 'done') {
+            markAllDone();
+            setRunStatus('done', '✓ Done');
+        } else if (terminal === 'cancelled') {
+            setRunStatus('cancelled', 'Cancelled');
+        } else {
+            setRunStatus('failed', '✗ Failed');
+        }
+        resetRunState();
         saveEls.runBtn.disabled = false;
         saveEls.runBtn.textContent = originalLabel;
     }
 });
+
+// Handle one parsed NDJSON event from the server. Returns a terminal-state
+// string ('done' | 'cancelled' | 'failed') if this event ends the run,
+// otherwise null. Pure UI-side dispatch — never touches the network.
+function handleRunEvent(ev) {
+    if (!ev || !ev.event) return null;
+    switch (ev.event) {
+        case 'runId':
+            if (runState) runState.runId = ev.runId;
+            return null;
+        case 'start':
+            appendRawLine('[start]');
+            return null;
+        case 'step': {
+            const n = parseInt(ev.n, 10);
+            if (n >= 1 && n <= 8 && runState && n > runState.currentStep) {
+                runState.currentStep = n;
+                setStepActive(n);
+            }
+            return null;
+        }
+        case 'tool': {
+            const tool = ev.tool || '?';
+            const summary = ev.summary || '';
+            setActivity(`⟳ ${tool}${summary ? ' · ' + summary : ''}`);
+            appendRawLine(`[tool] ${tool}${summary ? ' ' + summary : ''}`);
+            return null;
+        }
+        case 'text':
+            if (ev.text) appendRawLine(ev.text);
+            return null;
+        case 'raw':
+            if (ev.text) appendRawLine(ev.text);
+            return null;
+        case 'done': {
+            const exit = typeof ev.exit === 'number' ? ev.exit : 0;
+            if (ev.error) appendRawLine(`[error] ${ev.error}`);
+            appendRawLine(`[exit ${exit}]`);
+            if (ev.error || exit !== 0) return 'failed';
+            return 'done';
+        }
+        default:
+            return null;
+    }
+}
+
+if (saveEls.runCancel) {
+    saveEls.runCancel.addEventListener('click', async () => {
+        if (!runState) return;
+        const runId = runState.runId;
+        // Tell the server first (best effort), then abort the fetch so the
+        // reader loop unwinds promptly.
+        if (runId) {
+            try {
+                await fetch('/api/run-disc/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ runId })
+                });
+            } catch { /* server may have already exited */ }
+        }
+        try { runState.abort.abort(); } catch {}
+        // The finally{} block on the run handler will set the cancelled state.
+    });
+}
 
 saveEls.copyCommand.addEventListener('click', async () => {
     try {
