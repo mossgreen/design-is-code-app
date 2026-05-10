@@ -1128,6 +1128,93 @@ button.small {
     color: var(--text-2);
 }
 
+/* Pill state variants — same shape, different tint per state. */
+.plugin-pill[data-state="outdated"] {
+    background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+    border-color: color-mix(in srgb, var(--amber) 35%, var(--border));
+    color: var(--amber);
+}
+
+.plugin-pill[data-state="restart"] {
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* Update-available card — informational variant of .plugin-missing.
+   Same skeleton, accent-tinted (deep blue) instead of amber to read as
+   "FYI" not "warning." Run-it-for-me stays enabled while this is shown. */
+.plugin-update {
+    margin-top: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+}
+
+.plugin-update-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.45rem;
+    color: var(--text);
+    font-size: var(--fs-sm);
+}
+
+.plugin-update-icon {
+    color: var(--accent);
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.plugin-update-installed {
+    color: var(--text-3);
+    font-size: 0.78rem;
+}
+
+.plugin-update-body {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+}
+
+.plugin-update-link {
+    font-size: 0.78rem;
+    color: var(--accent);
+    text-decoration: none;
+}
+.plugin-update-link:hover { text-decoration: underline; }
+
+/* Re-check + Skip — text-style buttons. Quiet by design. Override the
+   default primary-button styling so they read as links/secondary
+   actions. Used in both the missing-state and update-available cards. */
+.plugin-recheck,
+.plugin-skip {
+    background: transparent;
+    color: var(--text-3);
+    border: none;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-family: inherit;
+    border-radius: var(--radius-sm);
+}
+
+.plugin-recheck:hover,
+.plugin-skip:hover {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.plugin-recheck:disabled {
+    color: var(--muted);
+    cursor: wait;
+}
+
 .preview-row.fragment {
     grid-template-columns: auto 1fr;
     gap: 0.6rem;

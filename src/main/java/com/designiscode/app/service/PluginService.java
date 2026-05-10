@@ -12,10 +12,16 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -25,13 +31,20 @@ import static com.designiscode.app.service.JsonEvents.event;
 import static com.designiscode.app.service.JsonEvents.rawLine;
 
 /**
- * Detects whether the design-is-code Claude Code plugin is installed and, on
- * request, drives the install via the {@code claude plugin …} CLI subcommands.
+ * Detects whether the design-is-code Claude Code plugin is installed, looks
+ * up the latest upstream version, and on request drives install/update via
+ * the {@code claude plugin …} CLI subcommands.
  *
  * <p>Source of truth for install status is
- * {@code ~/.claude/plugins/installed_plugins.json}, schema v2 — that file is
- * keyed by {@code <plugin>@<owner>-<repo>} and records the install path,
- * version, and timestamp.
+ * {@code ~/.claude/plugins/installed_plugins.json}, schema v2 — keyed by
+ * {@code <plugin>@<owner>-<repo>} with installPath/version/timestamp.
+ *
+ * <p>Source of truth for upstream version is
+ * {@code raw.githubusercontent.com/.../main/.claude-plugin/plugin.json}.
+ * GitHub's Releases API returns 404 for this repo (no Releases published,
+ * only tags), so we read the canonical {@code version} field from the
+ * plugin's own manifest. Cached in-memory for 15 minutes to keep page
+ * reloads from hammering GitHub.
  */
 @Service
 public class PluginService {
@@ -42,15 +55,27 @@ public class PluginService {
     /** GitHub repo for the marketplace ({@code claude plugin marketplace add <this>}). */
     public static final String MARKETPLACE_REPO = "mossgreen/design-is-code-plugin";
 
-    /** Plugin-id form Claude expects for {@code claude plugin install <this>}. */
+    /** Plugin-id form Claude expects for {@code claude plugin install/update <this>}. */
     public static final String PLUGIN_ID = "design-is-code@mossgreen-design-is-code";
 
     private static final Path INSTALLED_PLUGINS_JSON =
             Paths.get(System.getProperty("user.home"), ".claude", "plugins", "installed_plugins.json");
 
+    private static final URI UPSTREAM_PLUGIN_JSON = URI.create(
+            "https://raw.githubusercontent.com/mossgreen/design-is-code-plugin/main/.claude-plugin/plugin.json");
+
+    private static final Duration LATEST_VERSION_CACHE_TTL = Duration.ofMinutes(15);
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(5);
+
     private final ObjectMapper mapper = JsonMapper.builder().build();
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build();
     private final CancelRegistry cancelRegistry;
+
+    // In-memory cache of the upstream-version lookup. Volatile so reads from
+    // multiple request threads see the most recent write without locking.
+    private volatile String cachedLatestVersion;
+    private volatile Instant cachedLatestAt;
 
     public PluginService(CancelRegistry cancelRegistry) {
         this.cancelRegistry = cancelRegistry;
@@ -70,13 +95,46 @@ public class PluginService {
             String version = textOrNull(entry, "version");
             String installPath = textOrNull(entry, "installPath");
             if (version == null) return PluginStatus.missing();
-            return new PluginStatus(true, version, installPath);
+            String latest = latestVersionCachedOrFetch();
+            String latestAt = (cachedLatestAt != null) ? cachedLatestAt.toString() : null;
+            return new PluginStatus(true, version, installPath, latest, latestAt);
         } catch (JacksonException e) {
             return PluginStatus.missing();
         }
     }
 
-    // ---- install ----
+    /**
+     * Returns the cached upstream version if it's fresh; otherwise fetches it.
+     * On any fetch failure (timeout, 4xx/5xx, parse), returns null and does
+     * NOT crash — the wizard degrades to "no update available" rather than
+     * showing a broken state. Failure does not poison the cache; we'll retry
+     * on the next request.
+     */
+    private String latestVersionCachedOrFetch() {
+        Instant now = Instant.now();
+        if (cachedLatestVersion != null && cachedLatestAt != null
+                && Duration.between(cachedLatestAt, now).compareTo(LATEST_VERSION_CACHE_TTL) < 0) {
+            return cachedLatestVersion;
+        }
+        try {
+            HttpRequest req = HttpRequest.newBuilder(UPSTREAM_PLUGIN_JSON)
+                    .timeout(HTTP_TIMEOUT)
+                    .GET()
+                    .build();
+            HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() / 100 != 2) return null;
+            JsonNode body = mapper.readTree(res.body());
+            String v = textOrNull(body, "version");
+            if (v == null || v.isBlank()) return null;
+            cachedLatestVersion = v;
+            cachedLatestAt = now;
+            return v;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    // ---- install + update ----
 
     /**
      * Streams the plugin install in two steps (marketplace add → install) over
@@ -90,14 +148,24 @@ public class PluginService {
         executor.submit(() -> runInstall(runId, emitter));
     }
 
+    /**
+     * Streams a {@code claude plugin update} over the supplied emitter. Same
+     * event shape as {@link #install(ResponseBodyEmitter)}; on success a final
+     * text event surfaces the "restart Claude Code" requirement that the CLI
+     * itself notes.
+     */
+    public void update(ResponseBodyEmitter emitter) {
+        String runId = UUID.randomUUID().toString();
+        emit(emitter, event("runId", "runId", runId));
+        emit(emitter, event("start"));
+        executor.submit(() -> runUpdate(runId, emitter));
+    }
+
     public boolean cancel(String runId) {
         return cancelRegistry.cancel(runId);
     }
 
     private void runInstall(String runId, ResponseBodyEmitter emitter) {
-        // Two short commands. Marketplace-add is idempotent; install is the
-        // mutation we actually care about. We bail early if the first one
-        // fails so we don't try to install from an unregistered marketplace.
         int exit = -1;
         String terminalError = null;
         try {
@@ -112,6 +180,41 @@ public class PluginService {
         } catch (Exception e) {
             terminalError = e.getMessage();
         } finally {
+            // Bust the cache so the post-install status() call sees fresh data
+            // (in case the user updates from the same machine that pinned).
+            cachedLatestVersion = null;
+            cachedLatestAt = null;
+            cancelRegistry.unregister(runId);
+            try {
+                if (terminalError != null) {
+                    emit(emitter, event("done", "exit", exit, "error", terminalError));
+                } else {
+                    emit(emitter, event("done", "exit", exit));
+                }
+            } finally {
+                try { emitter.complete(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private void runUpdate(String runId, ResponseBodyEmitter emitter) {
+        int exit = -1;
+        String terminalError = null;
+        try {
+            exit = runCommand(runId, emitter, List.of(
+                    "claude", "plugin", "update", PLUGIN_ID));
+            if (exit == 0) {
+                // The CLI's `--help` text on `plugin update` says "(restart
+                // required to apply)" — surface that to the user explicitly so
+                // they don't wonder why the new behavior didn't kick in.
+                emit(emitter, event("text", "text",
+                        "⚠ Restart Claude Code for the new plugin to take effect."));
+            }
+        } catch (Exception e) {
+            terminalError = e.getMessage();
+        } finally {
+            cachedLatestVersion = null;
+            cachedLatestAt = null;
             cancelRegistry.unregister(runId);
             try {
                 if (terminalError != null) {

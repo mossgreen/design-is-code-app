@@ -235,6 +235,20 @@
                     <div class="plugin-missing-body">
                         <button type="button" id="install-plugin">Install plugin</button>
                         <span class="plugin-missing-hint">Runs <code>claude plugin install design-is-code@mossgreen-design-is-code --scope user</code></span>
+                        <button type="button" class="plugin-recheck" data-recheck title="Re-fetch plugin status">Re-check ↻</button>
+                    </div>
+                </div>
+                <div id="plugin-update" class="plugin-update hidden">
+                    <div class="plugin-update-head">
+                        <span class="plugin-update-icon" aria-hidden="true">ⓘ</span>
+                        <strong>DisC plugin <span id="plugin-update-latest"></span> is available</strong>
+                        <span class="plugin-update-installed">(you have <span id="plugin-update-current"></span>)</span>
+                    </div>
+                    <div class="plugin-update-body">
+                        <button type="button" id="update-plugin">Update plugin</button>
+                        <a id="plugin-update-changelog" class="plugin-update-link" href="#" target="_blank" rel="noopener">View changelog →</a>
+                        <button type="button" class="plugin-skip" id="plugin-skip-update">Skip for this session</button>
+                        <button type="button" class="plugin-recheck" data-recheck title="Re-fetch plugin status">Re-check ↻</button>
                     </div>
                 </div>
                 <div id="run-progress" class="run-progress hidden">

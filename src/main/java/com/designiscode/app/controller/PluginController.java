@@ -43,4 +43,17 @@ public class PluginController {
         boolean cancelled = pluginService.cancel(request == null ? null : request.runId());
         return ResponseEntity.ok(Map.of("cancelled", cancelled));
     }
+
+    @PostMapping(value = "/update-plugin", produces = MediaType.TEXT_PLAIN_VALUE)
+    public ResponseBodyEmitter updatePlugin() {
+        ResponseBodyEmitter emitter = new ResponseBodyEmitter(5L * 60L * 1000L);
+        pluginService.update(emitter);
+        return emitter;
+    }
+
+    @PostMapping(value = "/update-plugin/cancel", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> cancelUpdate(@RequestBody CancelRequest request) {
+        boolean cancelled = pluginService.cancel(request == null ? null : request.runId());
+        return ResponseEntity.ok(Map.of("cancelled", cancelled));
+    }
 }

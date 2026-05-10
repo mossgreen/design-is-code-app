@@ -1470,8 +1470,20 @@ const saveEls = {
     runCancel: document.getElementById('run-cancel'),
     pluginPill: document.getElementById('plugin-pill'),
     pluginMissing: document.getElementById('plugin-missing'),
-    installBtn: document.getElementById('install-plugin')
+    installBtn: document.getElementById('install-plugin'),
+    pluginUpdate: document.getElementById('plugin-update'),
+    pluginUpdateLatest: document.getElementById('plugin-update-latest'),
+    pluginUpdateCurrent: document.getElementById('plugin-update-current'),
+    pluginUpdateChangelog: document.getElementById('plugin-update-changelog'),
+    updateBtn: document.getElementById('update-plugin'),
+    skipUpdateBtn: document.getElementById('plugin-skip-update')
 };
+
+// Session-storage key tracking which "update available" version the user
+// already dismissed via the Skip button. If a NEWER version comes out later
+// in the session, the prompt re-appears (we only suppress the exact version
+// the user said no to).
+const SKIPPED_UPDATE_KEY = 'disc-plugin-skipped-update';
 
 // Cached plugin status — refreshed on Step 4 enter and after a successful
 // install. Shape: { installed: boolean, version: string|null, installPath: string|null }.
@@ -1489,18 +1501,62 @@ async function refreshPluginStatus() {
 
 function renderPluginStatus() {
     if (!saveEls.pluginPill || !saveEls.pluginMissing) return;
-    if (pluginStatus && pluginStatus.installed) {
-        saveEls.pluginPill.textContent = `DisC plugin v${pluginStatus.version} ✓`;
-        saveEls.pluginPill.classList.remove('hidden');
-        saveEls.pluginMissing.classList.add('hidden');
-        if (saveEls.runBtn) saveEls.runBtn.disabled = false;
-        if (saveEls.runBtn) saveEls.runBtn.title = '';
-    } else {
+
+    // Three branches: not installed → install prompt; installed and outdated
+    // → update prompt (Run still enabled, the old plugin still works);
+    // installed and current (or unable to check upstream) → quiet pill.
+    if (!pluginStatus || !pluginStatus.installed) {
         saveEls.pluginPill.classList.add('hidden');
+        saveEls.pluginPill.removeAttribute('data-state');
         saveEls.pluginMissing.classList.remove('hidden');
-        if (saveEls.runBtn) saveEls.runBtn.disabled = true;
-        if (saveEls.runBtn) saveEls.runBtn.title = 'Install the design-is-code plugin first';
+        if (saveEls.pluginUpdate) saveEls.pluginUpdate.classList.add('hidden');
+        if (saveEls.runBtn) {
+            saveEls.runBtn.disabled = true;
+            saveEls.runBtn.title = 'Install the design-is-code plugin first';
+        }
+        return;
     }
+
+    // Installed. Now decide between "current" and "outdated."
+    const installed = pluginStatus.version;
+    const latest = pluginStatus.latestVersion;
+    const skipped = sessionStorage.getItem(SKIPPED_UPDATE_KEY);
+    const outdated = latest && installed && latest !== installed && skipped !== latest;
+
+    saveEls.pluginPill.classList.remove('hidden');
+    saveEls.pluginMissing.classList.add('hidden');
+    if (saveEls.runBtn) {
+        saveEls.runBtn.disabled = false;
+        saveEls.runBtn.title = '';
+    }
+
+    if (outdated) {
+        saveEls.pluginPill.textContent = `DisC plugin v${installed} → v${latest} ↻`;
+        saveEls.pluginPill.dataset.state = 'outdated';
+        if (saveEls.pluginUpdate) {
+            saveEls.pluginUpdate.classList.remove('hidden');
+            saveEls.pluginUpdateLatest.textContent = `v${latest}`;
+            saveEls.pluginUpdateCurrent.textContent = `v${installed}`;
+            // Tag-page link works even when no GitHub Release exists for the version.
+            saveEls.pluginUpdateChangelog.href =
+                `https://github.com/mossgreen/design-is-code-plugin/releases/tag/v${latest}`;
+        }
+    } else {
+        saveEls.pluginPill.textContent = `DisC plugin v${installed} ✓`;
+        saveEls.pluginPill.dataset.state = 'current';
+        if (saveEls.pluginUpdate) saveEls.pluginUpdate.classList.add('hidden');
+    }
+}
+
+function flashRestartRequired(newVersion) {
+    if (!saveEls.pluginPill) return;
+    saveEls.pluginPill.textContent = `DisC plugin updated to v${newVersion} — restart Claude Code`;
+    saveEls.pluginPill.dataset.state = 'restart';
+    saveEls.pluginPill.classList.remove('hidden');
+    setTimeout(() => {
+        // Refresh status — the new pill shape will replace this flash.
+        refreshPluginStatus();
+    }, 8000);
 }
 
 // --- Step-checklist state for the "Run it for me" panel ---
@@ -1879,81 +1935,140 @@ if (saveEls.runCancel) {
     });
 }
 
-if (saveEls.installBtn) {
-    saveEls.installBtn.addEventListener('click', async () => {
-        // Reuse the run-progress panel in "install" mode — the 8-step DisC
-        // checklist is irrelevant for a plugin install (CSS hides it).
-        saveEls.runConsole.textContent = '';
-        saveEls.runActivity.textContent = '—';
-        saveEls.runPanel.dataset.mode = 'install';
-        saveEls.runPanel.classList.remove('hidden');
-        setRunStatus('running', 'Installing plugin…');
-        saveEls.installBtn.disabled = true;
-        const originalLabel = saveEls.installBtn.textContent;
-        saveEls.installBtn.textContent = 'Installing…';
+// Shared streaming flow for the install + update plugin operations. Both
+// reuse the run-progress panel in install-mode (DisC checklist hidden via
+// CSS), and both terminate by re-fetching plugin status. The on-success
+// callback is the only thing that differs (update flashes the restart hint).
+async function streamPluginAction({ button, fetchUrl, cancelUrl, runningLabel, busyLabel, doneLabel, failLabel, onSuccess }) {
+    saveEls.runConsole.textContent = '';
+    saveEls.runActivity.textContent = '—';
+    saveEls.runPanel.dataset.mode = 'install';
+    saveEls.runPanel.classList.remove('hidden');
+    setRunStatus('running', runningLabel);
+    button.disabled = true;
+    const originalLabel = button.textContent;
+    button.textContent = busyLabel;
 
-        const abort = new AbortController();
-        runState = {
-            runId: null,
-            abort,
-            ticker: startElapsedTicker(),
-            startedAt: Date.now(),
-            currentStep: 0,
-            cancelUrl: '/api/install-plugin/cancel'
-        };
+    const abort = new AbortController();
+    runState = {
+        runId: null,
+        abort,
+        ticker: startElapsedTicker(),
+        startedAt: Date.now(),
+        currentStep: 0,
+        cancelUrl
+    };
 
-        const reader = makeNdjsonReader();
-        let terminal = null;
+    const reader = makeNdjsonReader();
+    let terminal = null;
 
-        try {
-            const response = await fetch('/api/install-plugin', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                signal: abort.signal
-            });
-            if (!response.ok || !response.body) {
-                appendRawLine(`Request failed (${response.status})`);
-                terminal = 'failed';
-                return;
-            }
-            const decoder = new TextDecoder();
-            const bodyReader = response.body.getReader();
-            while (true) {
-                const { done, value } = await bodyReader.read();
-                if (done) break;
-                const events = reader.push(decoder.decode(value, { stream: true }));
-                for (const ev of events) {
-                    const result = handleRunEvent(ev);
-                    if (result) terminal = result;
-                }
-            }
-        } catch (err) {
-            if (err && err.name === 'AbortError') {
-                terminal = terminal || 'cancelled';
-            } else {
-                appendRawLine(`[error] ${err.message}`);
-                terminal = terminal || 'failed';
-            }
-        } finally {
-            if (!terminal) terminal = 'failed';
-            if (terminal === 'done') {
-                setRunStatus('done', '✓ Installed');
-                // Re-fetch status so the pill swaps in and the Run button enables.
-                refreshPluginStatus();
-            } else if (terminal === 'cancelled') {
-                setRunStatus('cancelled', 'Cancelled');
-            } else {
-                setRunStatus('failed', '✗ Install failed');
-            }
-            // Clear install-mode so the next DisC run shows the checklist again.
-            // Keep the panel visible so the user can read the install log.
-            delete saveEls.runPanel.dataset.mode;
-            resetRunState();
-            saveEls.installBtn.disabled = false;
-            saveEls.installBtn.textContent = originalLabel;
+    try {
+        const response = await fetch(fetchUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: abort.signal
+        });
+        if (!response.ok || !response.body) {
+            appendRawLine(`Request failed (${response.status})`);
+            terminal = 'failed';
+            return;
         }
+        const decoder = new TextDecoder();
+        const bodyReader = response.body.getReader();
+        while (true) {
+            const { done, value } = await bodyReader.read();
+            if (done) break;
+            const events = reader.push(decoder.decode(value, { stream: true }));
+            for (const ev of events) {
+                const result = handleRunEvent(ev);
+                if (result) terminal = result;
+            }
+        }
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            terminal = terminal || 'cancelled';
+        } else {
+            appendRawLine(`[error] ${err.message}`);
+            terminal = terminal || 'failed';
+        }
+    } finally {
+        if (!terminal) terminal = 'failed';
+        if (terminal === 'done') {
+            setRunStatus('done', doneLabel);
+            if (typeof onSuccess === 'function') onSuccess();
+            else refreshPluginStatus();
+        } else if (terminal === 'cancelled') {
+            setRunStatus('cancelled', 'Cancelled');
+        } else {
+            setRunStatus('failed', failLabel);
+        }
+        delete saveEls.runPanel.dataset.mode;
+        resetRunState();
+        button.disabled = false;
+        button.textContent = originalLabel;
+    }
+}
+
+if (saveEls.installBtn) {
+    saveEls.installBtn.addEventListener('click', () => streamPluginAction({
+        button: saveEls.installBtn,
+        fetchUrl: '/api/install-plugin',
+        cancelUrl: '/api/install-plugin/cancel',
+        runningLabel: 'Installing plugin…',
+        busyLabel: 'Installing…',
+        doneLabel: '✓ Installed',
+        failLabel: '✗ Install failed'
+    }));
+}
+
+if (saveEls.updateBtn) {
+    saveEls.updateBtn.addEventListener('click', () => {
+        // Capture the version we're updating TO so the post-success flash
+        // can name it. After streamPluginAction's onSuccess runs, the
+        // pluginStatus may have been refreshed with this version.
+        const targetVersion = pluginStatus && pluginStatus.latestVersion;
+        return streamPluginAction({
+            button: saveEls.updateBtn,
+            fetchUrl: '/api/update-plugin',
+            cancelUrl: '/api/update-plugin/cancel',
+            runningLabel: 'Updating plugin…',
+            busyLabel: 'Updating…',
+            doneLabel: '✓ Updated',
+            failLabel: '✗ Update failed',
+            onSuccess: () => {
+                // Surface the restart-required hint, then re-fetch status so
+                // the pill settles to the new installed version.
+                if (targetVersion) flashRestartRequired(targetVersion);
+                else refreshPluginStatus();
+            }
+        });
     });
 }
+
+if (saveEls.skipUpdateBtn) {
+    saveEls.skipUpdateBtn.addEventListener('click', () => {
+        // Suppress the prompt for THIS upstream version only — if a newer
+        // one ships during the same session, the prompt will re-appear.
+        const v = pluginStatus && pluginStatus.latestVersion;
+        if (v) sessionStorage.setItem(SKIPPED_UPDATE_KEY, v);
+        renderPluginStatus();
+    });
+}
+
+// "Re-check ↻" buttons in both the missing-state and update-available cards.
+// Each one re-fires the status endpoint and re-renders. Useful when the user
+// installed/updated the plugin in a separate terminal.
+document.querySelectorAll('[data-recheck]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Re-checking…';
+        refreshPluginStatus().finally(() => {
+            btn.disabled = false;
+            btn.textContent = original;
+        });
+    });
+});
 
 saveEls.copyCommand.addEventListener('click', async () => {
     try {

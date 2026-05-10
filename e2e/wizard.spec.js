@@ -310,7 +310,8 @@ test.describe('DisC wizard', () => {
         const response = await page.request.get('/api/disc-plugin-status');
         expect(response.ok()).toBeTruthy();
         const body = await response.json();
-        // Shape: { installed: boolean, version: string|null, installPath: string|null }
+        // Shape: { installed: boolean, version: string|null, installPath: string|null,
+        //          latestVersion: string|null, latestCheckedAt: string|null }
         expect(typeof body.installed).toBe('boolean');
         if (body.installed) {
             expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
@@ -320,6 +321,51 @@ test.describe('DisC wizard', () => {
             expect(body.version).toBeNull();
             expect(body.installPath).toBeNull();
         }
+    });
+
+    test('17. /api/disc-plugin-status includes latestVersion fields when installed', async ({ page }) => {
+        const response = await page.request.get('/api/disc-plugin-status');
+        const body = await response.json();
+        // Both fields must be PRESENT (not undefined) regardless of value.
+        // Either populated (network reached GitHub) or null (degraded mode).
+        expect('latestVersion' in body).toBeTruthy();
+        expect('latestCheckedAt' in body).toBeTruthy();
+        if (body.installed && body.latestVersion !== null) {
+            expect(body.latestVersion).toMatch(/^\d+\.\d+\.\d+/);
+            // ISO-8601 timestamp (Java Instant.toString() format).
+            expect(body.latestCheckedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+        }
+    });
+
+    test('18. re-check button refreshes status without page reload', async ({ page }) => {
+        await gotoApp(page);
+        await gotoDesigner(page);
+        await page.locator('#flow-next').click();
+        await page.locator('#preview-next').click();
+        await expect(page.locator('#panel-4')).toBeVisible();
+
+        // Wait for either pill or missing/update card to render. One of the
+        // visible cards (missing OR update) carries the [data-recheck]
+        // button. If the plugin is installed AND current AND no update
+        // available, neither card is shown — that's fine; skip the rest.
+        await page.waitForTimeout(500);
+        const recheckBtns = page.locator('[data-recheck]:visible');
+        const count = await recheckBtns.count();
+        if (count === 0) {
+            test.info().annotations.push({
+                type: 'note',
+                description: 'No re-check button visible — plugin is installed and current. Skipping click.'
+            });
+            return;
+        }
+
+        // Capture the current location so we can assert it didn't change.
+        const before = page.url();
+        await recheckBtns.first().click();
+        // The button is briefly disabled with "Re-checking…" text — wait
+        // for it to come back, then assert no navigation happened.
+        await expect(recheckBtns.first()).toBeEnabled({ timeout: 5000 });
+        expect(page.url()).toBe(before);
     });
 
 });
