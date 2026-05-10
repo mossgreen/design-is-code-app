@@ -410,6 +410,20 @@ button.small {
     margin-top: 1.25rem;
 }
 
+/* Step 4 footer: Back on the left, primary action on the right.
+   Same .actions row, but with space-between to split them. */
+.actions.actions-split {
+    justify-content: space-between;
+}
+
+/* Step 4 export row — sits directly under the puml preview, hosts only
+   the Export-to-project button. Standalone (not in the footer) because
+   Step 4 has two sequential primary actions (Export, then Run-it-for-me)
+   and the second only appears after the first runs. */
+.export-row {
+    margin-top: 0.9rem;
+}
+
 .field { margin-bottom: 1.25rem; }
 
 .field label {
@@ -760,12 +774,8 @@ button.small {
 
 /* --- Step 5: output --- */
 
-.output-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-}
+/* .output-actions removed — copy now lives as an icon inside .puml-block,
+   and Save/Export moved to the bottom .actions-split row. */
 
 .copy-feedback {
     font-size: 0.82rem;
@@ -784,6 +794,55 @@ button.small {
     max-height: 520px;
     overflow-y: auto;
     margin: 0;
+}
+
+/* PlantUML preview block — wraps #output so the copy icon can absolute-
+   position to the top-right corner, GitHub/VS-Code-style. */
+.puml-block {
+    position: relative;
+}
+
+.puml-block .puml-copy {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 1;
+    width: 1.85rem;
+    height: 1.85rem;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: #cbd5e1;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.puml-block .puml-copy:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.puml-block .puml-copy svg {
+    width: 1rem;
+    height: 1rem;
+    display: block;
+}
+
+.puml-block .puml-copy-feedback {
+    position: absolute;
+    top: 0.7rem;
+    right: 2.6rem;
+    font-size: 0.75rem;
+    color: #34d399;
+    background: rgba(15, 23, 42, 0.7);
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-sm);
+    pointer-events: none;
 }
 
 .save-result {
@@ -996,6 +1055,78 @@ button.small {
 }
 .run-raw summary:hover { color: var(--text); }
 .run-raw[open] summary { color: var(--text); margin-bottom: 0.4rem; }
+
+/* When the run-progress panel is showing a plugin install (not a DisC run),
+   hide the 8-step DisC checklist + activity line — they're not meaningful. */
+.run-progress[data-mode="install"] .run-checklist,
+.run-progress[data-mode="install"] .run-activity {
+    display: none;
+}
+.run-progress[data-mode="install"] .run-raw[open] {
+    margin-top: 0;
+}
+
+/* Plugin status pill — sits next to the Run button when the plugin is
+   installed. Slim, neutral, mono version number for visual quietness. */
+.plugin-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.55rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+/* Empty state when the plugin is missing. Replaces the silent failure path
+   the user used to hit, with a clear inline action. */
+.plugin-missing {
+    margin-top: 0.6rem;
+    padding: 0.7rem 0.9rem;
+    background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--border));
+    border-left: 3px solid var(--amber);
+    border-radius: var(--radius);
+}
+
+.plugin-missing-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.45rem;
+    color: var(--text);
+    font-size: var(--fs-sm);
+}
+
+.plugin-missing-icon {
+    color: var(--amber);
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.plugin-missing-body {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+}
+
+.plugin-missing-hint {
+    font-size: 0.78rem;
+    color: var(--text-3);
+}
+
+.plugin-missing-hint code {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.1rem 0.35rem;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+}
 
 .preview-row.fragment {
     grid-template-columns: auto 1fr;

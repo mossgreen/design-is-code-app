@@ -288,4 +288,38 @@ test.describe('DisC wizard', () => {
         await page.screenshot({ path: path.join(SCREENSHOT_DIR, '14-step2-fragments.png'), fullPage: true });
     });
 
+    test('15. plugin status: pill or missing-state visible on step 4', async ({ page }) => {
+        await gotoApp(page);
+        await gotoDesigner(page);
+        await page.locator('#flow-next').click();
+        await page.locator('#preview-next').click();
+        await expect(page.locator('#panel-4')).toBeVisible();
+
+        // The Step 4 enter triggers /api/disc-plugin-status. Wait for one of
+        // the two outcome elements to become visible — we don't assert which,
+        // because that depends on whether the plugin is installed on this
+        // test machine.
+        await expect(async () => {
+            const pillVisible = await page.locator('#plugin-pill:not(.hidden)').count();
+            const missingVisible = await page.locator('#plugin-missing:not(.hidden)').count();
+            expect(pillVisible + missingVisible).toBeGreaterThan(0);
+        }).toPass({ timeout: 5000 });
+    });
+
+    test('16. /api/disc-plugin-status returns the documented shape', async ({ page }) => {
+        const response = await page.request.get('/api/disc-plugin-status');
+        expect(response.ok()).toBeTruthy();
+        const body = await response.json();
+        // Shape: { installed: boolean, version: string|null, installPath: string|null }
+        expect(typeof body.installed).toBe('boolean');
+        if (body.installed) {
+            expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
+            expect(typeof body.installPath).toBe('string');
+            expect(body.installPath.length).toBeGreaterThan(0);
+        } else {
+            expect(body.version).toBeNull();
+            expect(body.installPath).toBeNull();
+        }
+    });
+
 });

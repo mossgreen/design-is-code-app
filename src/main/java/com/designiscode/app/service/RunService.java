@@ -4,6 +4,9 @@ import com.designiscode.app.dto.RunRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
+import static com.designiscode.app.service.JsonEvents.event;
+import static com.designiscode.app.service.JsonEvents.rawLine;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -129,10 +132,10 @@ public class RunService {
             // the emitter. Without this, the wizard's "Running…" state can wedge.
             try {
                 if (terminalError != null) {
-                    emit(emitter, jsonEvent("done", "exit", -1, "error", terminalError));
+                    emit(emitter, event("done", "exit", -1, "error", terminalError));
                 } else {
                     // exit==0 normal; exit!=0 the agent itself reported a failure.
-                    emit(emitter, jsonEvent("done", "exit", exit));
+                    emit(emitter, event("done", "exit", exit));
                 }
             } finally {
                 try {
@@ -164,48 +167,12 @@ public class RunService {
     }
 
     private void emitErrorAndComplete(ResponseBodyEmitter emitter, String message) {
-        emit(emitter, jsonEvent("done", "exit", -1, "error", message));
+        emit(emitter, event("done", "exit", -1, "error", message));
         try {
             emitter.complete();
         } catch (Exception ignored) {
         }
     }
 
-    private static String rawLine(String text) {
-        return "{\"event\":\"raw\",\"text\":" + jsonString(text) + "}";
-    }
-
-    /** Hand-rolled JSON event builder to avoid depending on ObjectMapper here. */
-    private static String jsonEvent(String name, Object... kv) {
-        StringBuilder sb = new StringBuilder("{\"event\":").append(jsonString(name));
-        for (int i = 0; i + 1 < kv.length; i += 2) {
-            sb.append(',').append(jsonString(String.valueOf(kv[i]))).append(':');
-            Object v = kv[i + 1];
-            if (v instanceof Number) sb.append(v);
-            else if (v == null) sb.append("null");
-            else sb.append(jsonString(String.valueOf(v)));
-        }
-        return sb.append('}').toString();
-    }
-
-    private static String jsonString(String s) {
-        if (s == null) return "null";
-        StringBuilder sb = new StringBuilder(s.length() + 2);
-        sb.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\r' -> sb.append("\\r");
-                case '\t' -> sb.append("\\t");
-                default -> {
-                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
-                    else sb.append(c);
-                }
-            }
-        }
-        return sb.append('"').toString();
-    }
+    // JSON helpers moved to JsonEvents; see static imports at top.
 }

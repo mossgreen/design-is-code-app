@@ -154,7 +154,7 @@
 
             <datalist id="types-datalist"></datalist>
 
-            <div class="actions">
+            <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="1">← Back</button>
                 <button type="button" id="flow-next">Continue →</button>
             </div>
@@ -179,7 +179,7 @@
                 <div id="review-sequence" class="review-sequence"></div>
             </div>
 
-            <div class="actions">
+            <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="2">← Back to Designer</button>
                 <button type="button" id="preview-next">Looks right — generate →</button>
             </div>
@@ -200,13 +200,20 @@
                 <input type="text" id="puml-filename" placeholder="generate-invoice.puml" autocomplete="off">
             </div>
 
-            <div class="output-actions">
-                <button type="button" id="save-to-project">Save to project →</button>
-                <button type="button" class="secondary small" id="copy-output">Copy .puml</button>
-                <span id="copy-feedback" class="copy-feedback"></span>
+            <div class="puml-block">
+                <button type="button" id="copy-output" class="puml-copy" aria-label="Copy .puml" title="Copy .puml to clipboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="11" height="11" rx="2"/>
+                        <path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+                    </svg>
+                </button>
+                <span id="copy-feedback" class="copy-feedback puml-copy-feedback"></span>
+                <pre id="output"></pre>
             </div>
 
-            <pre id="output"></pre>
+            <div class="export-row">
+                <button type="button" id="save-to-project">Export to project →</button>
+            </div>
 
             <div id="save-result" class="save-result hidden">
                 <div class="save-result-head">
@@ -218,6 +225,17 @@
                     <button type="button" id="run-disc">Run it for me →</button>
                     <button type="button" class="secondary small" id="copy-command">Copy command</button>
                     <span id="command-feedback" class="copy-feedback"></span>
+                    <span id="plugin-pill" class="plugin-pill hidden" title="design-is-code Claude Code plugin"></span>
+                </div>
+                <div id="plugin-missing" class="plugin-missing hidden">
+                    <div class="plugin-missing-head">
+                        <span class="plugin-missing-icon" aria-hidden="true">⚠</span>
+                        <strong>design-is-code plugin is not installed in Claude Code.</strong>
+                    </div>
+                    <div class="plugin-missing-body">
+                        <button type="button" id="install-plugin">Install plugin</button>
+                        <span class="plugin-missing-hint">Runs <code>claude plugin install design-is-code@mossgreen-design-is-code --scope user</code></span>
+                    </div>
                 </div>
                 <div id="run-progress" class="run-progress hidden">
                     <div class="run-head">

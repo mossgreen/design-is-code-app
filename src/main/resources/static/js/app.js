@@ -1467,8 +1467,41 @@ const saveEls = {
     runElapsed: document.getElementById('run-elapsed'),
     runChecklist: document.getElementById('run-checklist'),
     runActivity: document.getElementById('run-activity-current'),
-    runCancel: document.getElementById('run-cancel')
+    runCancel: document.getElementById('run-cancel'),
+    pluginPill: document.getElementById('plugin-pill'),
+    pluginMissing: document.getElementById('plugin-missing'),
+    installBtn: document.getElementById('install-plugin')
 };
+
+// Cached plugin status — refreshed on Step 4 enter and after a successful
+// install. Shape: { installed: boolean, version: string|null, installPath: string|null }.
+let pluginStatus = null;
+
+async function refreshPluginStatus() {
+    try {
+        const res = await fetch('/api/disc-plugin-status');
+        pluginStatus = await res.json();
+    } catch {
+        pluginStatus = { installed: false, version: null, installPath: null };
+    }
+    renderPluginStatus();
+}
+
+function renderPluginStatus() {
+    if (!saveEls.pluginPill || !saveEls.pluginMissing) return;
+    if (pluginStatus && pluginStatus.installed) {
+        saveEls.pluginPill.textContent = `DisC plugin v${pluginStatus.version} ✓`;
+        saveEls.pluginPill.classList.remove('hidden');
+        saveEls.pluginMissing.classList.add('hidden');
+        if (saveEls.runBtn) saveEls.runBtn.disabled = false;
+        if (saveEls.runBtn) saveEls.runBtn.title = '';
+    } else {
+        saveEls.pluginPill.classList.add('hidden');
+        saveEls.pluginMissing.classList.remove('hidden');
+        if (saveEls.runBtn) saveEls.runBtn.disabled = true;
+        if (saveEls.runBtn) saveEls.runBtn.title = 'Install the design-is-code plugin first';
+    }
+}
 
 // --- Step-checklist state for the "Run it for me" panel ---
 //
@@ -1646,6 +1679,10 @@ function enterStep4() {
     }
     saveEls.result.classList.add('hidden');
     saveEls.error.classList.add('hidden');
+    // Plugin status drives whether the Run button is enabled. Always refresh
+    // on enter — the user might have installed the plugin in a separate
+    // terminal between visits.
+    refreshPluginStatus();
 }
 
 saveEls.save.addEventListener('click', async () => {
@@ -1716,7 +1753,8 @@ saveEls.runBtn.addEventListener('click', async () => {
         abort,
         ticker: startElapsedTicker(),
         startedAt: Date.now(),
-        currentStep: 0
+        currentStep: 0,
+        cancelUrl: '/api/run-disc/cancel'
     };
 
     const reader = makeNdjsonReader();
@@ -1825,10 +1863,11 @@ if (saveEls.runCancel) {
         if (!runState) return;
         const runId = runState.runId;
         // Tell the server first (best effort), then abort the fetch so the
-        // reader loop unwinds promptly.
-        if (runId) {
+        // reader loop unwinds promptly. cancelUrl varies by run mode (DisC
+        // vs plugin install) so we pick whichever is active.
+        if (runId && runState.cancelUrl) {
             try {
-                await fetch('/api/run-disc/cancel', {
+                await fetch(runState.cancelUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ runId })
@@ -1837,6 +1876,82 @@ if (saveEls.runCancel) {
         }
         try { runState.abort.abort(); } catch {}
         // The finally{} block on the run handler will set the cancelled state.
+    });
+}
+
+if (saveEls.installBtn) {
+    saveEls.installBtn.addEventListener('click', async () => {
+        // Reuse the run-progress panel in "install" mode — the 8-step DisC
+        // checklist is irrelevant for a plugin install (CSS hides it).
+        saveEls.runConsole.textContent = '';
+        saveEls.runActivity.textContent = '—';
+        saveEls.runPanel.dataset.mode = 'install';
+        saveEls.runPanel.classList.remove('hidden');
+        setRunStatus('running', 'Installing plugin…');
+        saveEls.installBtn.disabled = true;
+        const originalLabel = saveEls.installBtn.textContent;
+        saveEls.installBtn.textContent = 'Installing…';
+
+        const abort = new AbortController();
+        runState = {
+            runId: null,
+            abort,
+            ticker: startElapsedTicker(),
+            startedAt: Date.now(),
+            currentStep: 0,
+            cancelUrl: '/api/install-plugin/cancel'
+        };
+
+        const reader = makeNdjsonReader();
+        let terminal = null;
+
+        try {
+            const response = await fetch('/api/install-plugin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: abort.signal
+            });
+            if (!response.ok || !response.body) {
+                appendRawLine(`Request failed (${response.status})`);
+                terminal = 'failed';
+                return;
+            }
+            const decoder = new TextDecoder();
+            const bodyReader = response.body.getReader();
+            while (true) {
+                const { done, value } = await bodyReader.read();
+                if (done) break;
+                const events = reader.push(decoder.decode(value, { stream: true }));
+                for (const ev of events) {
+                    const result = handleRunEvent(ev);
+                    if (result) terminal = result;
+                }
+            }
+        } catch (err) {
+            if (err && err.name === 'AbortError') {
+                terminal = terminal || 'cancelled';
+            } else {
+                appendRawLine(`[error] ${err.message}`);
+                terminal = terminal || 'failed';
+            }
+        } finally {
+            if (!terminal) terminal = 'failed';
+            if (terminal === 'done') {
+                setRunStatus('done', '✓ Installed');
+                // Re-fetch status so the pill swaps in and the Run button enables.
+                refreshPluginStatus();
+            } else if (terminal === 'cancelled') {
+                setRunStatus('cancelled', 'Cancelled');
+            } else {
+                setRunStatus('failed', '✗ Install failed');
+            }
+            // Clear install-mode so the next DisC run shows the checklist again.
+            // Keep the panel visible so the user can read the install log.
+            delete saveEls.runPanel.dataset.mode;
+            resetRunState();
+            saveEls.installBtn.disabled = false;
+            saveEls.installBtn.textContent = originalLabel;
+        }
     });
 }
 
