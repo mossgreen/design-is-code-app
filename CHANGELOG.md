@@ -5,6 +5,57 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.3.0] - 2026-05-10
+
+Public-ready polish: the wizard no longer auto-fills with demo data, you
+can pick which Claude model runs DisC, and the "Run it for me" pipeline
+streams progress live with an 8-step checklist and a working Cancel
+button. Plus a Claude Code plugin pre-flight that catches "DisC isn't
+installed" before you hit run, and surfaces updates when they're available.
+
+### Added
+- **Live DisC run console.** "Run it for me" now streams the subprocess's
+  stream-json output back into the wizard as it happens: an 8-step
+  checklist (init → tests → green → impl → coverage …) ticks through in
+  real time, the elapsed timer updates each second, and a Cancel button
+  cleanly tears down the spawned `claude` process.
+- **Model picker on Step 4.** Pick Sonnet 4.6 (default), Opus 4.7, or
+  Haiku 4.5 next to the "Run it for me" button. The selection is passed
+  to the spawned subprocess as `--model <id>` against a server-side
+  allowlist; no other models are accepted. Doesn't affect the slash
+  command you copy for interactive use.
+- **DisC plugin pre-flight.** Before the wizard offers "Run it for me"
+  it checks whether `design-is-code` is installed in your Claude Code
+  config and which version. If missing, an inline "Install plugin"
+  banner runs `claude plugin install …` for you. If outdated, an
+  "Update plugin" banner shows the new version + changelog link and
+  installs the upgrade with one click.
+- **"Load demo data" button** in the header (next to the Connect-project
+  chip). Click it to seed the same end-to-end "generate invoice"
+  example that used to load automatically.
+- **Multi-modal input affordances** on Step 2's Participants and Steps
+  section heads — greyed-out text/image/voice/video icons signaling the
+  natural-language / multi-modal input paths planned for a later release.
+- **Release runbook** ([`RELEASE.md`](./RELEASE.md)) — a checklist the
+  AI agent follows when you say "release it."
+
+### Changed
+- **Wizard starts blank.** Story textarea, participants list, sequence
+  steps, target package, and project chip all start empty on page load.
+  This makes the app usable for someone other than the author. Use the
+  new "Load demo data" button to get the previous behavior.
+- **Step 4 layout** tightened around the run-result panel — model picker,
+  copy-command button, plugin pill, and run controls now sit on a single
+  wrapping row instead of stacking.
+
+### Breaking
+- The page no longer auto-prefills with the invoice example or
+  auto-connects to `/Users/mossgu/Downloads/demo`. If you relied on a
+  full-screen demo on page load (e.g. screencasts, screenshots), click
+  "Load demo data" first or revert to v0.2.0.
+
+[v0.3.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.3.0
+
 ## [v0.2.0] - 2026-05-09
 
 Branching support: sequences can now express the full PlantUML control-flow

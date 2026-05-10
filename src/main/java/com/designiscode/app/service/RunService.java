@@ -15,7 +15,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,6 +37,15 @@ public class RunService {
 
     private static final String DISC_SLASH_COMMAND = "/design-is-code:disc";
     private static final int READER_BUFFER_BYTES = 1 << 16;  // 64 KB
+
+    // Allowlist of model IDs the wizard may request. Anything else is dropped
+    // and we fall back to Claude Code's configured default — never pass an
+    // unvalidated string to the subprocess.
+    private static final Set<String> ALLOWED_MODELS = Set.of(
+            "claude-sonnet-4-6",
+            "claude-opus-4-7",
+            "claude-haiku-4-5"
+    );
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final StreamJsonMapper streamJsonMapper;
@@ -75,13 +86,19 @@ public class RunService {
         emit(emitter, "{\"event\":\"runId\",\"runId\":\"" + runId + "\"}");
 
         String slashCommand = DISC_SLASH_COMMAND + " " + relPath;
-        List<String> cmd = List.of(
+        List<String> cmd = new ArrayList<>(List.of(
                 "claude",
                 "--dangerously-skip-permissions",
                 "--output-format", "stream-json",
-                "--verbose",
-                "-p", slashCommand
-        );
+                "--verbose"
+        ));
+        String requestedModel = request.model();
+        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
+            cmd.add("--model");
+            cmd.add(requestedModel);
+        }
+        cmd.add("-p");
+        cmd.add(slashCommand);
 
         executor.submit(() -> runProcess(runId, cmd, projectRoot.toFile(), emitter));
     }

@@ -875,6 +875,24 @@ button.small {
     flex-wrap: wrap;
 }
 
+.run-model-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    color: #6b7280;
+}
+
+.run-model-picker select {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: #1f2937;
+    cursor: pointer;
+}
+
 .run-console {
     margin: 0;
     padding: 0.9rem 1rem;
@@ -1272,6 +1290,24 @@ button.small {
     font-family: var(--font-mono);
     font-size: 0.78rem;
     color: #6b7280;
+}
+
+.section-head .input-modes-section {
+    margin-left: auto;
+    gap: 0.3rem;
+}
+
+.section-head .input-modes-section .mode-btn {
+    padding: 0.3rem;
+}
+
+.section-head .input-modes-section .mode-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.section-head .input-modes-section + .section-count {
+    margin-left: 0;
 }
 
 .hint.inline {
@@ -2510,4 +2546,11 @@ button.small {
     background: #fffbeb;
     border: 1px solid #fde68a;
     color: #92400e;
+}
+
+.header-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
 }

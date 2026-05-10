@@ -1817,12 +1817,14 @@ saveEls.runBtn.addEventListener('click', async () => {
     let terminal = null;  // 'done' | 'cancelled' | 'failed'
 
     try {
+        const modelSelect = document.getElementById('run-model');
         const response = await fetch('/api/run-disc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 projectPath: state.projectPath,
-                filePath: lastSavedRelativePath
+                filePath: lastSavedRelativePath,
+                model: modelSelect ? modelSelect.value : null
             }),
             signal: abort.signal
         });
@@ -2091,17 +2093,18 @@ document.getElementById('copy-output').addEventListener('click', async () => {
 });
 
 // --- Demo prefill ---
-// Seeded with the "generate invoice" example so a blank-slate run of the
-// wizard produces a valid PlantUML diagram end-to-end. Everything below is
-// just default input values — the user can edit any field.
+// Wired to the "Load demo data" button on Step 1. Seeds the wizard with the
+// "generate invoice" example so users can see a complete end-to-end run
+// without typing. By default (no click) every field starts empty.
 
 const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
 
-(function initDemo() {
+function loadDemoData() {
     storyInput.value =
         "As accounting, I want to generate an invoice for a customer that " +
         "includes every order they've placed, so we can bill them in one go.";
 
+    state.userStory = storyInput.value;
     state.targetPackage = 'com.example.invoice';
 
     const invoiceService = makeParticipant('InvoiceService');
@@ -2131,13 +2134,15 @@ const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
         { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: build.id }
     ];
 
-    // Default target project + auto-connect so the save-to-project step
-    // "just works" with no manual path entry. If the path doesn't exist
-    // the scan shows an error and the user can edit the path chip.
+    renderParticipants();
+    renderSequence();
+
     els.pathInput.value = DEMO_PROJECT_PATH;
     state.projectPath = DEMO_PROJECT_PATH;
     els.chip.classList.add('connected');
     els.chipLabel.textContent = shortProjectName(DEMO_PROJECT_PATH);
     els.chip.title = DEMO_PROJECT_PATH;
     runScan(DEMO_PROJECT_PATH);
-})();
+}
+
+document.getElementById('load-demo-btn').addEventListener('click', loadDemoData);
