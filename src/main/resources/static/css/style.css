@@ -2555,6 +2555,11 @@ button.small {
     gap: 0.5rem;
 }
 
+.demo-buttons {
+    display: flex;
+    gap: 0.4rem;
+}
+
 /* --- Decision-table chip on step rows --- */
 
 .step-row.has-dt {

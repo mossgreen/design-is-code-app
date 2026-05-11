@@ -2538,7 +2538,72 @@ document.addEventListener('keydown', (e) => {
 
 const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
 
-function loadDemoData() {
+function applyDemoProjectPath() {
+    els.pathInput.value = DEMO_PROJECT_PATH;
+    state.projectPath = DEMO_PROJECT_PATH;
+    els.chip.classList.add('connected');
+    els.chipLabel.textContent = shortProjectName(DEMO_PROJECT_PATH);
+    els.chip.title = DEMO_PROJECT_PATH;
+    runScan(DEMO_PROJECT_PATH);
+}
+
+// Minimum-viable example: 3 participants, 2 CALL steps, 1 decision table.
+// Teaches the wizard's core concepts without loops/factories/mutators.
+function loadSimpleDemo() {
+    storyInput.value =
+        "As a returning customer, I want my tier-based discount applied to " +
+        "every order so the price I'm shown is the price I pay.";
+
+    state.userStory = storyInput.value;
+    state.targetPackage = 'com.disc.decision';
+
+    const pricingService = makeParticipant('PricingService');
+    const price = makeMethod('price', [
+        { name: 'customerId', type: 'UUID' },
+        { name: 'amount', type: 'BigDecimal' }
+    ], 'BigDecimal');
+    pricingService.methods.push(price);
+
+    const customerRepository = makeParticipant('CustomerRepository');
+    const findCustomer = makeMethod('findById', [{ name: 'customerId', type: 'UUID' }], 'Customer');
+    customerRepository.methods.push(findCustomer);
+
+    const discountCalculator = makeParticipant('DiscountCalculator');
+    const calculateDiscount = makeMethod('calculate', [
+        { name: 'amount', type: 'BigDecimal' },
+        { name: 'tier', type: 'Tier' }
+    ], 'BigDecimal');
+    discountCalculator.methods.push(calculateDiscount);
+
+    state.participants = [pricingService, customerRepository, discountCalculator];
+
+    const discountDT = {
+        config: {
+            rounding: 'HALF_UP',
+            scale: 2,
+            nullHandling: 'throw',
+            exceptionType: 'java.lang.IllegalArgumentException'
+        },
+        rows: [
+            { values: ['100.00', 'STANDARD'],  expected: '0.00' },
+            { values: ['100.00', 'GOLD'],      expected: '10.00' },
+            { values: ['100.00', 'PLATINUM'],  expected: '20.00' },
+            { values: ['0.00',   'GOLD'],      expected: '0.00' },
+            { values: ['-10.00', 'STANDARD'],  expected: 'throws: IllegalArgumentException' }
+        ]
+    };
+
+    state.sequence = [
+        { id: newId(), kind: STEP_KIND.CALL, callerId: pricingService.id, calleeId: customerRepository.id, methodId: findCustomer.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: pricingService.id, calleeId: discountCalculator.id, methodId: calculateDiscount.id, decisionTable: discountDT }
+    ];
+
+    renderParticipants();
+    renderSequence();
+    applyDemoProjectPath();
+}
+
+function loadComplexDemo() {
     storyInput.value =
         "As a customer, I want to place an order for one or more products in a " +
         "single checkout, so that I receive everything I need in one delivery " +
@@ -2677,13 +2742,8 @@ function loadDemoData() {
 
     renderParticipants();
     renderSequence();
-
-    els.pathInput.value = DEMO_PROJECT_PATH;
-    state.projectPath = DEMO_PROJECT_PATH;
-    els.chip.classList.add('connected');
-    els.chipLabel.textContent = shortProjectName(DEMO_PROJECT_PATH);
-    els.chip.title = DEMO_PROJECT_PATH;
-    runScan(DEMO_PROJECT_PATH);
+    applyDemoProjectPath();
 }
 
-document.getElementById('load-demo-btn').addEventListener('click', loadDemoData);
+document.getElementById('load-simple-demo-btn').addEventListener('click', loadSimpleDemo);
+document.getElementById('load-complex-demo-btn').addEventListener('click', loadComplexDemo);
