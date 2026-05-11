@@ -279,7 +279,8 @@
 
             <div class="field">
                 <label for="puml-package">Target package <span class="label-hint">DisC needs this — emitted as <code>' @package …</code> in the .puml header</span></label>
-                <input type="text" id="puml-package" placeholder="com.example.invoice" autocomplete="off">
+                <input type="text" id="puml-package" list="packages-datalist" placeholder="com.example.invoice" autocomplete="off">
+                <datalist id="packages-datalist"></datalist>
                 <div id="package-warn" class="package-warn hidden"></div>
             </div>
 

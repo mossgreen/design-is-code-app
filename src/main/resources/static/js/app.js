@@ -214,7 +214,52 @@ function populateTypesDatalist() {
     step2Els.typesDatalist.innerHTML = [...new Set(items)]
         .map(t => `<option value="${escapeHtml(t)}">`)
         .join('');
+    populatePackagesDatalist();
 }
+
+// Populate the Step 4 target-package autocomplete from the unique
+// packageName values scanned in the connected project. Free-typing still
+// works — this just lets the user pick from packages that already exist.
+//
+// The list is also persisted to localStorage so it survives a page reload:
+// when the user reopens the wizard before reconnecting a project, the
+// dropdown still shows the packages from the last scan.
+const PACKAGES_STORAGE_KEY = 'disc.lastScanPackages.v1';
+
+function populatePackagesDatalist() {
+    const dl = document.getElementById('packages-datalist');
+    if (!dl) return;
+    const scan = state.scanResult;
+    let packages;
+    if (scan) {
+        const set = new Set();
+        for (const list of [scan.classes, scan.interfaces, scan.dataTypes]) {
+            if (!list) continue;
+            for (const t of list) {
+                if (t && t.packageName) set.add(t.packageName);
+            }
+        }
+        packages = [...set].sort();
+        try { localStorage.setItem(PACKAGES_STORAGE_KEY, JSON.stringify(packages)); }
+        catch (_) { /* private mode / quota — non-fatal */ }
+    } else {
+        // No live scan — fall back to the last persisted list so the dropdown
+        // still helps after a reload before the user reconnects.
+        try {
+            const raw = localStorage.getItem(PACKAGES_STORAGE_KEY);
+            packages = raw ? JSON.parse(raw) : [];
+        } catch (_) {
+            packages = [];
+        }
+    }
+    dl.innerHTML = (packages || [])
+        .map(p => `<option value="${escapeHtml(p)}">`)
+        .join('');
+}
+
+// On page load, hydrate the package dropdown from localStorage so it's
+// useful immediately — before any scan has had a chance to run.
+populatePackagesDatalist();
 
 // --- Participant model ---
 
@@ -309,9 +354,7 @@ function renderParticipants() {
 
         card.innerHTML = `
             <div class="pc-card-head">
-                ${idx === 0 ? '<span class="caller-badge" title="Caller of the main chain">CALLER</span>' : ''}
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
-                ${p.implByDefault ? '<span class="impl-badge" title="A default implementation will be generated">IMPL</span>' : ''}
             </div>
             <div class="pc-card-methods">
                 ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
