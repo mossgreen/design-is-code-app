@@ -524,12 +524,27 @@ let addStepDraft = null;  // { callerId, calleeId, methodId }
 function ensureAddStepDraft() {
     if (!addStepDraft) {
         addStepDraft = { callerId: '', calleeId: '', methodId: '' };
-        return;
     }
     // Re-validate against current participants — drop refs to deleted entities.
     if (addStepDraft.callerId && !findParticipant(addStepDraft.callerId)) addStepDraft.callerId = '';
     if (addStepDraft.calleeId && !findParticipant(addStepDraft.calleeId)) addStepDraft.calleeId = '';
     if (addStepDraft.methodId && !findMethod(addStepDraft.calleeId, addStepDraft.methodId)) addStepDraft.methodId = '';
+
+    // Smart caller default: when no caller is set, prefill from the last CALL
+    // step's caller (the common "same orchestrator throughout" case). Falls
+    // back to the first participant when no calls exist yet.
+    if (!addStepDraft.callerId) {
+        for (let i = state.sequence.length - 1; i >= 0; i--) {
+            const s = state.sequence[i];
+            if (s.kind === STEP_KIND.CALL && findParticipant(s.callerId)) {
+                addStepDraft.callerId = s.callerId;
+                break;
+            }
+        }
+        if (!addStepDraft.callerId && state.participants.length > 0) {
+            addStepDraft.callerId = state.participants[0].id;
+        }
+    }
 }
 
 // How many fragment-start markers are currently unmatched. Used to disable
@@ -559,6 +574,175 @@ function currentOpenFragType() {
 // Shape: { type: 'loop'|'while'|'foreach'|'alt'|'opt'|'par', label: '' }
 let fragFormOpen = null;
 
+// Where the next "Add step" insertion should land. 'append' = push to end.
+// A number = splice at that index. Set by clicking an insert-wedge between
+// existing rows; reset to 'append' after the step is added.
+let composerInsertAt = 'append';
+
+// Currently-open inline popover element (caller/callee/method picker), or null.
+// Only one popover is open at a time; opening a new one closes the previous.
+let openStepPopover = null;
+
+function closeStepPopover() {
+    if (openStepPopover && openStepPopover.parentNode) {
+        openStepPopover.parentNode.removeChild(openStepPopover);
+    }
+    openStepPopover = null;
+}
+
+// Open a pill popover anchored under `anchorEl`, listing `options` (array of
+// { value, label, sig? }). When the user picks one, calls `onPick(value)`.
+function openPillPopover(anchorEl, options, currentValue, onPick, emptyText) {
+    closeStepPopover();
+    const pop = document.createElement('div');
+    pop.className = 'step-pill-popover';
+    if (!options.length) {
+        const e = document.createElement('div');
+        e.className = 'pop-empty';
+        e.textContent = emptyText || 'No choices available';
+        pop.appendChild(e);
+    } else {
+        for (const opt of options) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'pop-option';
+            if (opt.value === currentValue) b.classList.add('active');
+            b.innerHTML = `<span>${escapeHtml(opt.label)}</span>${opt.sig ? `<span class="pop-sig">${escapeHtml(opt.sig)}</span>` : ''}`;
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onPick(opt.value);
+                closeStepPopover();
+            });
+            pop.appendChild(b);
+        }
+    }
+
+    document.body.appendChild(pop);
+
+    // Position under the anchor. Account for scroll: position is page-relative.
+    const r = anchorEl.getBoundingClientRect();
+    const top = r.bottom + window.scrollY + 4;
+    let left = r.left + window.scrollX;
+    // Keep within viewport horizontally.
+    const popW = pop.offsetWidth;
+    const overflow = (left + popW) - (window.scrollX + document.documentElement.clientWidth - 8);
+    if (overflow > 0) left -= overflow;
+    pop.style.top = `${top}px`;
+    pop.style.left = `${Math.max(8, left)}px`;
+
+    openStepPopover = pop;
+
+    // Outside-click + Esc dismissal. Wait one tick so the click that opened
+    // this popover doesn't immediately close it.
+    setTimeout(() => {
+        const onDocClick = (e) => {
+            if (!pop.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) {
+                closeStepPopover();
+                document.removeEventListener('mousedown', onDocClick);
+                document.removeEventListener('keydown', onKey);
+            }
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                closeStepPopover();
+                document.removeEventListener('mousedown', onDocClick);
+                document.removeEventListener('keydown', onKey);
+            }
+        };
+        document.addEventListener('mousedown', onDocClick);
+        document.addEventListener('keydown', onKey);
+    }, 0);
+}
+
+function openCallerPopover(stepId, anchorEl) {
+    const step = state.sequence.find(s => s.id === stepId);
+    if (!step) return;
+    const options = state.participants.map(p => ({
+        value: p.id,
+        label: p.name || '(unnamed)'
+    }));
+    openPillPopover(anchorEl, options, step.callerId, (value) => {
+        step.callerId = value;
+        // If callee == new caller, clear callee (a participant can't call itself).
+        if (step.calleeId === value) { step.calleeId = ''; step.methodId = ''; }
+        renderSequence();
+    }, 'No participants defined');
+}
+
+function openCalleePopover(stepId, anchorEl) {
+    const step = state.sequence.find(s => s.id === stepId);
+    if (!step) return;
+    const options = state.participants
+        .filter(p => p.id !== step.callerId)
+        .map(p => ({
+            value: p.id,
+            label: p.name || '(unnamed)',
+            sig: (p.methods || []).length === 0 ? 'no methods' : ''
+        }));
+    openPillPopover(anchorEl, options, step.calleeId, (value) => {
+        step.calleeId = value;
+        // Drop methodId if the new callee doesn't expose the current method.
+        if (!findMethod(value, step.methodId)) step.methodId = '';
+        renderSequence();
+    }, 'Add another participant first');
+}
+
+function openMethodPopover(stepId, anchorEl) {
+    const step = state.sequence.find(s => s.id === stepId);
+    if (!step) return;
+    const callee = findParticipant(step.calleeId);
+    const options = (callee ? callee.methods : []).map(m => ({
+        value: m.id,
+        label: m.name || '?',
+        sig: methodPreviewSignature(m)
+    }));
+    openPillPopover(anchorEl, options, step.methodId, (value) => {
+        step.methodId = value;
+        renderSequence();
+    }, callee ? `${callee.name} has no methods yet` : 'Pick a callee first');
+}
+
+// Build a hover-target wedge between two rows. Clicking it relocates the
+// composer to splice at `insertIndex` instead of appending. The "active"
+// wedge (matching the current composerInsertAt) gets a stronger visual.
+function makeInsertWedge(insertIndex) {
+    const wedge = document.createElement('div');
+    wedge.className = 'step-insert-wedge';
+    wedge.dataset.insertAt = String(insertIndex);
+    if (composerInsertAt === insertIndex) wedge.classList.add('is-target');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wedge-btn';
+    btn.textContent = '+ insert here';
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Toggle: clicking the active wedge again returns to append-mode.
+        composerInsertAt = (composerInsertAt === insertIndex) ? 'append' : insertIndex;
+        renderSequence();
+    });
+    wedge.appendChild(btn);
+    return wedge;
+}
+
+// Deep-clone a step including its decisionTable rows + config. Used by the
+// row-level duplicate button. Fragment steps are also cloneable.
+function duplicateStepAt(index) {
+    const orig = state.sequence[index];
+    if (!orig) return;
+    const copy = { ...orig, id: newId() };
+    if (orig.decisionTable) {
+        copy.decisionTable = {
+            config: { ...orig.decisionTable.config },
+            rows: (orig.decisionTable.rows || []).map(r => ({
+                values: (r.values || []).slice(),
+                expected: r.expected || ''
+            }))
+        };
+    }
+    state.sequence.splice(index + 1, 0, copy);
+    renderSequence();
+}
+
 function renderSequence() {
     renderSteps();
     renderAddStep();
@@ -586,7 +770,13 @@ function renderSteps() {
     // and frag-else rows know which fragment they belong to.
     const fragStack = [];
 
-    state.sequence.forEach(step => {
+    state.sequence.forEach((step, stepIdx) => {
+        // Insert a wedge BEFORE this row when it's not the first step. The wedge's
+        // "data-insert-at" matches the index this step currently occupies — clicking
+        // it relocates the composer to that position.
+        if (stepIdx > 0) {
+            board.appendChild(makeInsertWedge(stepIdx));
+        }
         if (isFragStart(step)) {
             const type = effectiveFragType(step);
             const meta = fragMeta(type);
@@ -684,20 +874,21 @@ function renderSteps() {
         if (!caller || !callee || !method) return;
 
         callIdx++;
-        const callerName = escapeHtml(caller.name || '(unnamed)');
-        const calleeName = escapeHtml(callee.name || '(unnamed)');
+        const callerName = caller.name || '(unnamed)';
+        const calleeName = callee.name || '(unnamed)';
         const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
         const methodCall = `.${method.name || '?'}(${inputArgs})`;
         const ret = returnLabelFor(method);
         const created = creates.get(call.id);
 
-        let returnLine;
+        // Inline trailing return suffix on the same line as the call.
+        let retSuffix;
         if (created) {
-            returnLine = `<div class="step-line return create"><span class="dir">↪</span><span class="payload create-payload">creates ${escapeHtml(created.name)}</span></div>`;
+            retSuffix = `<span class="ret-suffix create"><span class="ret-arrow">↪</span><span class="payload">creates ${escapeHtml(created.name)}</span></span>`;
         } else if (ret) {
-            returnLine = `<div class="step-line return"><span class="dir">↩</span><span class="who from">${calleeName}</span><span class="arrow">→</span><span class="who to">${callerName}</span><span class="payload">${escapeHtml(ret)}</span></div>`;
+            retSuffix = `<span class="ret-suffix"><span class="ret-arrow">→</span><span class="payload">${escapeHtml(ret)}</span></span>`;
         } else {
-            returnLine = `<div class="step-line return leaf"><span class="dir">⤬</span><span class="payload">no return (void)</span></div>`;
+            retSuffix = `<span class="ret-suffix leaf"><span class="payload">void</span></span>`;
         }
 
         const dt = call.decisionTable;
@@ -719,18 +910,23 @@ function renderSteps() {
         row.draggable = true;
         row.dataset.id = call.id;
         row.innerHTML = `
+            <span class="step-grip" aria-hidden="true" title="Drag to reorder">⠿</span>
             <span class="step-num">${callIdx}</span>
             <div class="step-lines">
                 <div class="step-line call">
-                    <span class="who from">${callerName}</span>
+                    <button type="button" class="step-pill who from" data-role="caller" title="Change caller">${escapeHtml(callerName)}</button>
                     <span class="arrow">→</span>
-                    <span class="who to">${calleeName}</span>
-                    <span class="step-method">${escapeHtml(methodCall)}</span>
+                    <button type="button" class="step-pill who to" data-role="callee" title="Change callee">${escapeHtml(calleeName)}</button>
+                    <span class="as-dot">.</span>
+                    <button type="button" class="step-pill step-method" data-role="method" title="Change method">${escapeHtml(methodCall)}</button>
+                    ${retSuffix}
                 </div>
-                ${returnLine}
             </div>
-            ${dtChip}
-            <button type="button" class="icon-btn step-remove" title="Remove step">×</button>
+            <div class="step-actions">
+                ${dtChip}
+                <button type="button" class="step-duplicate" title="Duplicate this step">⎘</button>
+                <button type="button" class="icon-btn step-remove" title="Remove step">×</button>
+            </div>
         `;
 
         row.addEventListener('dragstart', (e) => { dragCallId = call.id; e.dataTransfer.effectAllowed = 'move'; });
@@ -758,13 +954,40 @@ function renderSteps() {
             renderSequence();
         });
 
+        row.querySelector('.step-duplicate').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = state.sequence.findIndex(s => s.id === call.id);
+            if (idx >= 0) duplicateStepAt(idx);
+        });
+
         row.querySelector('.dt-chip').addEventListener('click', (e) => {
             e.stopPropagation();
             openDecisionTableModal(call.id);
         });
 
+        // Click-to-edit pills: caller, callee, method.
+        row.querySelectorAll('.step-pill').forEach(pill => {
+            pill.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const role = pill.dataset.role;
+                if (role === 'caller') openCallerPopover(call.id, pill);
+                else if (role === 'callee') openCalleePopover(call.id, pill);
+                else if (role === 'method') openMethodPopover(call.id, pill);
+            });
+            // Prevent drag from starting when the user is interacting with a pill.
+            pill.addEventListener('mousedown', (e) => e.stopPropagation());
+            pill.draggable = false;
+        });
+
         board.appendChild(row);
     });
+
+    // Trailing wedge: between the last row and the composer, so users can
+    // also "insert at end" via the wedge UI (or just keep using the composer
+    // which lives below). Skipped when there are no rows.
+    if (state.sequence.length > 0) {
+        board.appendChild(makeInsertWedge(state.sequence.length));
+    }
 }
 
 function renderAddStep() {
@@ -772,9 +995,27 @@ function renderAddStep() {
     const existing = step2Els.stepsBoard.querySelector('.add-step-panel');
     if (existing) existing.remove();
 
+    // Snap a stale insert-index back to "append" if the sequence shrunk.
+    if (typeof composerInsertAt === 'number' && composerInsertAt > state.sequence.length) {
+        composerInsertAt = 'append';
+    }
+
+    const board = step2Els.stepsBoard;
     const panel = document.createElement('div');
     panel.className = 'add-step-panel';
-    step2Els.stepsBoard.appendChild(panel);
+    // When the user clicked a wedge between rows, splice the composer in at
+    // that wedge's position rather than appending to the end.
+    if (typeof composerInsertAt === 'number') {
+        panel.classList.add('inline-insert');
+        const wedge = board.querySelector(`.step-insert-wedge[data-insert-at="${composerInsertAt}"]`);
+        if (wedge && wedge.parentNode === board) {
+            board.insertBefore(panel, wedge.nextSibling);
+        } else {
+            board.appendChild(panel);
+        }
+    } else {
+        board.appendChild(panel);
+    }
 
     if (state.participants.length < 2) {
         const msg = document.createElement('div');
@@ -788,7 +1029,12 @@ function renderAddStep() {
 
     ensureAddStepDraft();
 
-    const stepNum = state.sequence.length + 1;
+    // Composer's "Step N" reflects where the next add will land.
+    // For numeric insert mode, that's the wedge's index + 1 (1-based for display);
+    // for append mode, it's after the last step.
+    const stepNum = typeof composerInsertAt === 'number'
+        ? composerInsertAt + 1
+        : state.sequence.length + 1;
     const callerOptions = ['<option value="">caller</option>']
         .concat(state.participants.map(p =>
             `<option value="${p.id}" ${p.id === addStepDraft.callerId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
@@ -972,16 +1218,25 @@ function renderAddStep() {
     form.addEventListener('submit', (e) => {
         e.preventDefault();
         if (!addStepDraft.callerId || !addStepDraft.calleeId || !addStepDraft.methodId) return;
-        state.sequence.push({
+        const newStep = {
             id: newId(),
             kind: STEP_KIND.CALL,
             callerId: addStepDraft.callerId,
             calleeId: addStepDraft.calleeId,
             methodId: addStepDraft.methodId
-        });
-        // Clear the draft after add — next step starts fresh, matching the
-        // progressive "who is calling?" prompt.
-        addStepDraft = { callerId: '', calleeId: '', methodId: '' };
+        };
+        if (typeof composerInsertAt === 'number' && composerInsertAt >= 0 && composerInsertAt <= state.sequence.length) {
+            state.sequence.splice(composerInsertAt, 0, newStep);
+        } else {
+            state.sequence.push(newStep);
+        }
+        // Reset to append-mode after each add so the next step lands at the end
+        // unless the user clicks another wedge.
+        composerInsertAt = 'append';
+        // Clear callee/method after add but KEEP the caller — the smart-default
+        // logic in ensureAddStepDraft will pick the same one back up. Setting
+        // it blank here would force a re-pick of the same value.
+        addStepDraft = { callerId: addStepDraft.callerId, calleeId: '', methodId: '' };
         renderSequence();
         // Refocus the caller in the freshly-rendered composer so the next
         // step is one keystroke away. No scroll — the live diagram below
@@ -1201,19 +1456,38 @@ function renderSequenceDiagram(steps, container) {
         return;
     }
 
-    // Box width per lifeline: fit the name with horizontal padding, with a
-    // floor so short names don't look cramped. Approx 8px per char at the
-    // 13px/700 font we draw with — close enough; SVG has no metrics API.
+    // Measure each lifeline name with the real 13px/700 font using a
+    // throwaway off-screen SVG. Box width = measured text width + 24px
+    // horizontal padding (12px each side), with a 100px floor so short
+    // names don't look cramped. Robust to font + browser-zoom variation.
     const HEAD_BOX_MIN = 100;
-    const HEAD_BOX_PAD = 18;
-    const headBoxWidth = (name) => Math.max(HEAD_BOX_MIN, (name || '').length * 8 + HEAD_BOX_PAD);
+    const headBoxWidth = {};
+    {
+        const probe = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        probe.style.position = 'fixed';
+        probe.style.left = '-9999px';
+        probe.style.top = '0';
+        document.body.appendChild(probe);
+        for (const name of lifelines) {
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('font-size', '13');
+            t.setAttribute('font-weight', '700');
+            t.textContent = name;
+            probe.appendChild(t);
+            let mw;
+            try { mw = t.getBBox().width; }
+            catch (_) { mw = (name || '').length * 8; }
+            headBoxWidth[name] = Math.max(HEAD_BOX_MIN, Math.ceil(mw) + 24);
+        }
+        document.body.removeChild(probe);
+    }
 
     // Column spacing: must keep every adjacent pair's boxes apart with a gap.
     // Center-to-center distance ≥ (leftBox/2 + rightBox/2 + gap).
     const COL_GAP = 36;
     let colW = 150;
     for (let i = 1; i < lifelines.length; i++) {
-        const need = headBoxWidth(lifelines[i - 1]) / 2 + headBoxWidth(lifelines[i]) / 2 + COL_GAP;
+        const need = headBoxWidth[lifelines[i - 1]] / 2 + headBoxWidth[lifelines[i]] / 2 + COL_GAP;
         if (need > colW) colW = need;
     }
     colW = Math.ceil(colW);
@@ -1366,11 +1640,11 @@ function renderSequenceDiagram(steps, container) {
         }
     }
 
-    // Lifeline heads + dashed verticals.
+    // Lifeline heads + dashed verticals. Uses the pre-measured box widths.
     for (const name of lifelines) {
         const x = xOf(name);
         const y = headY[name];
-        const boxW = headBoxWidth(name);
+        const boxW = headBoxWidth[name];
         svg.appendChild(el('rect', { x: x - boxW / 2, y: y, width: boxW, height: headH, fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': '1.5', rx: '3' }));
         svg.appendChild(el('text', { x, y: y + 19, 'text-anchor': 'middle', 'font-size': '13', fill: '#1a1a1a', 'font-weight': '700' }, name));
         svg.appendChild(el('line', { x1: x, y1: y + headH, x2: x, y2: h - 8, stroke: '#444444', 'stroke-width': '1', 'stroke-dasharray': '4 4' }));

@@ -2100,10 +2100,10 @@ button.small {
 
 .step-row {
     display: grid;
-    grid-template-columns: 2rem 1fr auto;
-    gap: 0.6rem;
+    grid-template-columns: 1.1rem 1.6rem 1fr auto;
+    gap: 0.5rem;
     align-items: center;
-    padding: 0.55rem 0.75rem;
+    padding: 0.5rem 0.75rem;
     background: #fff;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -2111,6 +2111,21 @@ button.small {
     font-family: var(--font-mono);
     font-size: 0.86rem;
 }
+
+.step-grip {
+    color: var(--text-3);
+    font-size: 0.95rem;
+    line-height: 1;
+    text-align: center;
+    user-select: none;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.step-row:hover .step-grip { opacity: 1; }
+.step-row.dragging .step-grip,
+.step-row:active .step-grip { cursor: grabbing; }
 
 .step-row.dragging { opacity: 0.5; }
 .step-row.drop-above { border-top: 2px solid var(--accent); }
@@ -2168,6 +2183,232 @@ button.small {
     color: inherit;
     padding: 0;
     font-weight: normal;
+}
+
+/* --- Inline return suffix on the same line as the call --- */
+
+.step-line .ret-suffix {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-left: 0.4rem;
+    color: #166534;
+    font-size: 0.82rem;
+}
+
+.step-line .ret-suffix .ret-arrow { color: #6b7280; font-weight: 700; }
+
+.step-line .ret-suffix .payload {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.step-line .ret-suffix.create .payload {
+    background: var(--accent-soft);
+    border-color: var(--accent-border);
+    color: var(--accent);
+}
+
+.step-line .ret-suffix.leaf {
+    color: #9ca3af;
+    font-style: italic;
+    font-size: 0.78rem;
+}
+
+.step-line .ret-suffix.leaf .payload {
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 0;
+    font-weight: normal;
+}
+
+/* --- Click-to-edit pills on CALL rows --- */
+
+.step-pill {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 0.05rem 0.15rem;
+    font: inherit;
+    cursor: pointer;
+    border-bottom: 1px dotted transparent;
+    border-radius: 2px;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.step-pill:hover {
+    background: var(--surface-2);
+    border-bottom-color: var(--border-2);
+}
+
+.step-pill:focus {
+    outline: none;
+    background: var(--accent-soft);
+    border-bottom-color: var(--accent);
+}
+
+.step-pill.who.from { color: #4338ca; font-weight: 700; }
+.step-pill.who.to { color: #047857; font-weight: 700; }
+.step-pill.step-method { color: #9a3412; font-weight: 600; }
+.step-pill.step-method.placeholder { color: var(--text-3); font-style: italic; font-weight: 500; }
+
+/* --- Pill popover --- */
+
+.step-pill-popover {
+    position: absolute;
+    z-index: 60;
+    min-width: 9rem;
+    max-width: 18rem;
+    max-height: 16rem;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 0.25rem;
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+}
+
+.step-pill-popover .pop-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 0.35rem 0.55rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text);
+    font: inherit;
+    white-space: nowrap;
+}
+
+.step-pill-popover .pop-option:hover,
+.step-pill-popover .pop-option.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.step-pill-popover .pop-empty {
+    padding: 0.45rem 0.55rem;
+    color: var(--text-3);
+    font-style: italic;
+}
+
+.step-pill-popover .pop-option .pop-sig {
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    margin-left: 0.4rem;
+}
+
+/* --- Step actions: duplicate + remove, hover-only --- */
+
+.step-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.step-row .step-duplicate,
+.step-row .step-remove {
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.step-row:hover .step-duplicate,
+.step-row:hover .step-remove,
+.step-row:focus-within .step-duplicate,
+.step-row:focus-within .step-remove {
+    opacity: 1;
+}
+
+.step-duplicate {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-3);
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0.25rem 0.4rem;
+    border-radius: var(--radius-sm);
+}
+
+.step-duplicate:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* --- Insert-here wedge between adjacent step rows --- */
+
+.step-insert-wedge {
+    height: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: height 0.15s ease;
+    cursor: pointer;
+}
+
+.step-insert-wedge::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 1px;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.step-insert-wedge .wedge-btn {
+    position: relative;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 0 0.5rem;
+    font-size: 0.7rem;
+    line-height: 1.4rem;
+    height: 1.4rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.step-insert-wedge:hover {
+    height: 24px;
+}
+
+.step-insert-wedge:hover::before,
+.step-insert-wedge:hover .wedge-btn {
+    opacity: 1;
+}
+
+.step-insert-wedge.is-target {
+    height: 24px;
+}
+
+.step-insert-wedge.is-target::before {
+    opacity: 0.4;
+}
+
+.step-insert-wedge.is-target .wedge-btn {
+    opacity: 1;
+    background: var(--accent-hover);
+}
+
+/* --- Composer position indicator --- */
+
+.add-step-panel.inline-insert {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 /* Live sequence diagram (Step 2 panel 3) */
