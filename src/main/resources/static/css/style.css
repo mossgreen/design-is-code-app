@@ -2554,3 +2554,252 @@ button.small {
     align-items: flex-end;
     gap: 0.5rem;
 }
+
+/* --- Decision-table chip on step rows --- */
+
+.step-row.has-dt {
+    border-left: 3px solid var(--accent);
+}
+
+.dt-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-3);
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.step-row .dt-chip.dt-chip-add {
+    border: 1px dashed var(--border-2);
+    color: var(--text-3);
+    opacity: 0;
+}
+
+.step-row:hover .dt-chip.dt-chip-add {
+    opacity: 1;
+}
+
+.step-row .dt-chip.dt-chip-add:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.dt-chip.dt-chip-on {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent-border);
+}
+
+.dt-chip.dt-chip-on:hover {
+    background: #e0e7ff;
+}
+
+.dt-chip.dt-chip-stale {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fde68a;
+}
+
+/* --- DT editor modal --- */
+
+.dt-modal {
+    max-width: 760px;
+}
+
+.dt-target-strip {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    column-gap: 0.75rem;
+    row-gap: 0.3rem;
+    padding: 0.75rem 0.85rem;
+    margin-bottom: 1rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+
+.dt-target-strip dt {
+    color: var(--text-3);
+    text-align: right;
+}
+
+.dt-target-strip dd {
+    margin: 0;
+    color: var(--text);
+    word-break: break-word;
+}
+
+.dt-stale-banner {
+    margin: 0 0 1rem;
+    padding: 0.55rem 0.75rem;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius);
+    color: #92400e;
+    font-size: var(--fs-sm);
+}
+
+.dt-section-label {
+    display: block;
+    margin: 0 0 0.5rem;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text);
+}
+
+.dt-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 0.85rem;
+    margin-bottom: 1.25rem;
+}
+
+.dt-config-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+
+.dt-config-grid input,
+.dt-config-grid select {
+    padding: 0.35rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.dt-segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    width: fit-content;
+}
+
+.dt-segmented button {
+    padding: 0.35rem 0.7rem;
+    border: none;
+    background: var(--surface);
+    color: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+}
+
+.dt-segmented button + button {
+    border-left: 1px solid var(--border);
+}
+
+.dt-segmented button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.dt-rows-wrap {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 0.6rem;
+}
+
+.dt-rows-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+}
+
+.dt-rows-table thead th {
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-2);
+    font-weight: 500;
+    font-size: var(--fs-xs);
+    text-transform: none;
+}
+
+.dt-rows-table thead th.dt-col-action {
+    width: 36px;
+    padding: 0;
+}
+
+.dt-rows-table tbody td {
+    padding: 0;
+    border-top: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.dt-rows-table tbody tr:first-child td {
+    border-top: none;
+}
+
+.dt-rows-table input.dt-cell {
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    border: none;
+    background: transparent;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text);
+    outline: none;
+}
+
+.dt-rows-table input.dt-cell:focus {
+    background: var(--accent-soft);
+}
+
+.dt-rows-table td.dt-col-action {
+    text-align: center;
+}
+
+.dt-rows-table button.dt-row-remove {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-3);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0.3rem 0.5rem;
+}
+
+.dt-rows-table button.dt-row-remove:hover {
+    color: var(--rose);
+}
+
+.dt-add-row {
+    background: transparent;
+    border: 1px dashed var(--border-2);
+    color: var(--text-2);
+    font-size: var(--fs-sm);
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.dt-add-row:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}

@@ -700,9 +700,22 @@ function renderSteps() {
             returnLine = `<div class="step-line return leaf"><span class="dir">⤬</span><span class="payload">no return (void)</span></div>`;
         }
 
+        const dt = call.decisionTable;
+        const dtStale = dt ? decisionTableIsStale(method, dt) : false;
+        let dtChip;
+        if (dt && dtStale) {
+            dtChip = `<button type="button" class="dt-chip dt-chip-stale" title="Method signature changed — review rows">DT · stale ⚠</button>`;
+        } else if (dt) {
+            const n = (dt.rows || []).length;
+            dtChip = `<button type="button" class="dt-chip dt-chip-on" title="Edit decision table">DT · ${n} row${n === 1 ? '' : 's'}</button>`;
+        } else {
+            dtChip = `<button type="button" class="dt-chip dt-chip-add" title="Mark this method as decision-table backed">+ DT</button>`;
+        }
+
         const row = document.createElement('div');
         row.className = 'step-row';
         if (created) row.classList.add('is-create');
+        if (dt) row.classList.add('has-dt');
         row.draggable = true;
         row.dataset.id = call.id;
         row.innerHTML = `
@@ -716,6 +729,7 @@ function renderSteps() {
                 </div>
                 ${returnLine}
             </div>
+            ${dtChip}
             <button type="button" class="icon-btn step-remove" title="Remove step">×</button>
         `;
 
@@ -742,6 +756,11 @@ function renderSteps() {
         row.querySelector('.step-remove').addEventListener('click', () => {
             state.sequence = state.sequence.filter(c => c.id !== call.id);
             renderSequence();
+        });
+
+        row.querySelector('.dt-chip').addEventListener('click', (e) => {
+            e.stopPropagation();
+            openDecisionTableModal(call.id);
         });
 
         board.appendChild(row);
@@ -1182,7 +1201,23 @@ function renderSequenceDiagram(steps, container) {
         return;
     }
 
-    const colW = 150;
+    // Box width per lifeline: fit the name with horizontal padding, with a
+    // floor so short names don't look cramped. Approx 8px per char at the
+    // 13px/700 font we draw with — close enough; SVG has no metrics API.
+    const HEAD_BOX_MIN = 100;
+    const HEAD_BOX_PAD = 18;
+    const headBoxWidth = (name) => Math.max(HEAD_BOX_MIN, (name || '').length * 8 + HEAD_BOX_PAD);
+
+    // Column spacing: must keep every adjacent pair's boxes apart with a gap.
+    // Center-to-center distance ≥ (leftBox/2 + rightBox/2 + gap).
+    const COL_GAP = 36;
+    let colW = 150;
+    for (let i = 1; i < lifelines.length; i++) {
+        const need = headBoxWidth(lifelines[i - 1]) / 2 + headBoxWidth(lifelines[i]) / 2 + COL_GAP;
+        if (need > colW) colW = need;
+    }
+    colW = Math.ceil(colW);
+
     const padX = 60;
     const headTop = 14;
     const headH = 30;
@@ -1335,7 +1370,8 @@ function renderSequenceDiagram(steps, container) {
     for (const name of lifelines) {
         const x = xOf(name);
         const y = headY[name];
-        svg.appendChild(el('rect', { x: x - 50, y: y, width: 100, height: headH, fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': '1.5', rx: '3' }));
+        const boxW = headBoxWidth(name);
+        svg.appendChild(el('rect', { x: x - boxW / 2, y: y, width: boxW, height: headH, fill: '#ffffff', stroke: '#1a1a1a', 'stroke-width': '1.5', rx: '3' }));
         svg.appendChild(el('text', { x, y: y + 19, 'text-anchor': 'middle', 'font-size': '13', fill: '#1a1a1a', 'font-weight': '700' }, name));
         svg.appendChild(el('line', { x1: x, y1: y + headH, x2: x, y2: h - 8, stroke: '#444444', 'stroke-width': '1', 'stroke-dasharray': '4 4' }));
     }
@@ -1763,16 +1799,33 @@ saveEls.save.addEventListener('click', async () => {
     const originalLabel = saveEls.save.textContent;
     saveEls.save.textContent = 'Saving…';
 
+    // Collect any decision tables attached to CALL steps and serialize each
+    // as a YAML+markdown sidecar. The backend writes them next to the .puml.
+    const decisionTables = [];
+    for (const step of state.sequence) {
+        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
+        const participant = findParticipant(step.calleeId);
+        const method = findMethod(step.calleeId, step.methodId);
+        if (!participant || !method) continue;
+        decisionTables.push({
+            fileName: decisionTableFileName(participant),
+            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
+        });
+    }
+
     try {
         const res = await fetch('/api/design', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath: state.projectPath, fileName, content })
+            body: JSON.stringify({ projectPath: state.projectPath, fileName, content, decisionTables })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
 
-        saveEls.resultPath.textContent = data.savedPath;
+        const dtCount = data.decisionTableCount || 0;
+        saveEls.resultPath.textContent = dtCount > 0
+            ? `${data.savedPath}  · +${dtCount} decision table${dtCount === 1 ? '' : 's'}`
+            : data.savedPath;
         saveEls.resultCommand.textContent = `/design-is-code:disc ${data.relativePath}`;
         lastSavedRelativePath = data.relativePath;
         saveEls.runConsole.textContent = '';
@@ -2092,6 +2145,392 @@ document.getElementById('copy-output').addEventListener('click', async () => {
     }
 });
 
+// --- Decision tables ---
+// A CALL step can carry an optional `decisionTable` field describing rule-driven
+// behavior as a YAML+markdown sidecar that DisC's codegen consumes. Header
+// columns (input names) and the output type are *derived* from the called
+// method's signature, so editing the method automatically reshapes the DT.
+
+const NUMERIC_OUTPUT_TYPES = new Set([
+    'BigDecimal', 'java.math.BigDecimal',
+    'Integer', 'Long', 'Double', 'Float', 'Short', 'Byte',
+    'int', 'long', 'double', 'float', 'short', 'byte',
+    'Number'
+]);
+
+function isNumericOutput(method) {
+    if (!method) return false;
+    const out = (method.output || '').trim();
+    return NUMERIC_OUTPUT_TYPES.has(out);
+}
+
+function defaultDecisionConfig(method) {
+    const config = {
+        nullHandling: 'throw',
+        exceptionType: 'java.lang.IllegalArgumentException'
+    };
+    if (isNumericOutput(method)) {
+        config.rounding = 'HALF_UP';
+        config.scale = 2;
+    }
+    return config;
+}
+
+function makeDecisionTable(method, rows) {
+    return {
+        config: defaultDecisionConfig(method),
+        rows: rows && rows.length ? rows : [{ values: (method.inputs || []).map(() => ''), expected: '' }]
+    };
+}
+
+function decisionTableIsStale(method, dt) {
+    if (!method || !dt) return false;
+    const expected = (method.inputs || []).length;
+    return (dt.rows || []).some(r => (r.values || []).length !== expected);
+}
+
+function decisionTableFileName(participant) {
+    const name = (participant && participant.name ? participant.name : 'Participant').trim() || 'Participant';
+    return `${name}.decision.md`;
+}
+
+// Markdown-table column-width formatter: pads each column to its longest cell
+// (header included) so the saved sidecar reads cleanly when opened in an editor.
+function emitMarkdownTable(headers, rows) {
+    const widths = headers.map((h, i) => {
+        const cellMax = rows.reduce((max, r) => Math.max(max, String(r[i] || '').length), 0);
+        return Math.max(String(h).length, cellMax);
+    });
+    const fmtRow = (cells) => '| ' + cells.map((c, i) => String(c || '').padEnd(widths[i])).join(' | ') + ' |';
+    const sep = '|' + widths.map(w => '-'.repeat(w + 2)).join('|') + '|';
+    return [fmtRow(headers), sep, ...rows.map(r => fmtRow(r))].join('\n');
+}
+
+function emitDecisionTable(participant, method, dt, targetPackage) {
+    const inputs = (method.inputs || []).map(i => ({
+        name: (i.name || '').trim() || '?',
+        type: (i.type || '').trim() || '?'
+    }));
+    const output = (method.output || '').trim() || 'void';
+    const config = dt.config || defaultDecisionConfig(method);
+
+    const lines = [];
+    lines.push('---');
+    lines.push(`target: ${participant.name || '?'}.${method.name || '?'}`);
+    if (targetPackage) lines.push(`package: ${targetPackage}`);
+    lines.push('input:');
+    inputs.forEach(i => lines.push(`  ${i.name}: ${i.type}`));
+    lines.push(`output: ${output}`);
+    lines.push('config:');
+    if (isNumericOutput(method)) {
+        if (config.rounding) lines.push(`  rounding: ${config.rounding}`);
+        if (config.scale !== undefined && config.scale !== '') lines.push(`  scale: ${config.scale}`);
+    }
+    if (config.nullHandling) lines.push(`  nullHandling: ${config.nullHandling}`);
+    if (config.nullHandling === 'throw' && config.exceptionType) {
+        lines.push(`  exceptionType: ${config.exceptionType}`);
+    }
+    if (config.nullHandling === 'defaultValue' && config.defaultValue) {
+        lines.push(`  defaultValue: ${config.defaultValue}`);
+    }
+    if (config.locale && config.locale.trim()) {
+        lines.push(`  locale: ${config.locale.trim()}`);
+    }
+    lines.push('---');
+    lines.push('');
+
+    const headers = [...inputs.map(i => i.name), 'expected'];
+    const tableRows = (dt.rows || []).map(r => {
+        const values = (r.values || []).slice(0, inputs.length);
+        while (values.length < inputs.length) values.push('');
+        return [...values.map(v => String(v || '')), String(r.expected || '')];
+    });
+    lines.push(emitMarkdownTable(headers, tableRows));
+    lines.push('');
+    return lines.join('\n');
+}
+
+// --- DT modal ---
+
+const dtModalEls = {
+    backdrop: document.getElementById('dt-modal'),
+    title: document.getElementById('dt-modal-title'),
+    close: document.getElementById('dt-modal-close'),
+    body: document.getElementById('dt-modal-body'),
+    remove: document.getElementById('dt-modal-remove'),
+    done: document.getElementById('dt-modal-done')
+};
+
+let dtModalActive = null;  // { stepId, method, participant }
+
+function openDecisionTableModal(stepId) {
+    const step = state.sequence.find(s => s.id === stepId);
+    if (!step || step.kind !== STEP_KIND.CALL) return;
+    const participant = findParticipant(step.calleeId);
+    const method = findMethod(step.calleeId, step.methodId);
+    if (!participant || !method) return;
+
+    if (!step.decisionTable) {
+        step.decisionTable = makeDecisionTable(method);
+    } else if ((step.decisionTable.rows || []).length === 0) {
+        step.decisionTable.rows = [{ values: (method.inputs || []).map(() => ''), expected: '' }];
+    }
+
+    dtModalActive = { stepId, method, participant };
+    dtModalEls.title.textContent = `Decision table · ${participant.name}.${method.name}`;
+    renderDecisionModalBody();
+    dtModalEls.backdrop.classList.remove('hidden');
+}
+
+function closeDecisionTableModal() {
+    dtModalActive = null;
+    dtModalEls.backdrop.classList.add('hidden');
+    renderSequence();
+}
+
+function renderDecisionModalBody() {
+    if (!dtModalActive) return;
+    const step = state.sequence.find(s => s.id === dtModalActive.stepId);
+    if (!step) { closeDecisionTableModal(); return; }
+    const { participant, method } = dtModalActive;
+    const dt = step.decisionTable;
+    const inputs = method.inputs || [];
+    const numeric = isNumericOutput(method);
+    const stale = decisionTableIsStale(method, dt);
+
+    const targetSig = `${participant.name || '?'}.${method.name || '?'}`;
+    const inputsLabel = inputs.length
+        ? inputs.map(i => `${(i.name || '?')}: ${(i.type || '?')}`).join(', ')
+        : '(none)';
+    const outputLabel = (method.output || '').trim() || 'void';
+
+    const body = dtModalEls.body;
+    body.innerHTML = '';
+
+    // Header strip
+    const strip = document.createElement('dl');
+    strip.className = 'dt-target-strip';
+    strip.innerHTML = `
+        <dt>target</dt><dd>${escapeHtml(targetSig)}</dd>
+        <dt>package</dt><dd>${escapeHtml(state.targetPackage || '(unset)')}</dd>
+        <dt>input</dt><dd>${escapeHtml(inputsLabel)}</dd>
+        <dt>output</dt><dd>${escapeHtml(outputLabel)}</dd>
+    `;
+    body.appendChild(strip);
+
+    if (stale) {
+        const banner = document.createElement('div');
+        banner.className = 'dt-stale-banner';
+        banner.textContent = 'Method signature changed since rows were last edited. Review row values below.';
+        body.appendChild(banner);
+    }
+
+    // Config
+    const cfgLabel = document.createElement('span');
+    cfgLabel.className = 'dt-section-label';
+    cfgLabel.textContent = 'Config';
+    body.appendChild(cfgLabel);
+
+    const cfgGrid = document.createElement('div');
+    cfgGrid.className = 'dt-config-grid';
+
+    const currentNullHandling = dt.config.nullHandling || 'throw';
+
+    const nullHandlingLabel = document.createElement('label');
+    nullHandlingLabel.innerHTML = `<span>null handling</span>`;
+    const seg = document.createElement('div');
+    seg.className = 'dt-segmented';
+    ['throw', 'passThrough', 'defaultValue'].forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = opt;
+        if (currentNullHandling === opt) btn.classList.add('active');
+        btn.addEventListener('click', () => {
+            dt.config.nullHandling = opt;
+            // Clear orphaned dependent fields when switching modes so the
+            // emitted YAML doesn't carry stale keys.
+            if (opt !== 'throw') delete dt.config.exceptionType;
+            if (opt !== 'defaultValue') delete dt.config.defaultValue;
+            renderDecisionModalBody();
+        });
+        seg.appendChild(btn);
+    });
+    nullHandlingLabel.appendChild(seg);
+    cfgGrid.appendChild(nullHandlingLabel);
+
+    if (currentNullHandling === 'throw') {
+        const exLabel = document.createElement('label');
+        exLabel.innerHTML = `<span>exception type</span>`;
+        const exInput = document.createElement('input');
+        exInput.type = 'text';
+        exInput.value = dt.config.exceptionType || '';
+        exInput.placeholder = 'java.lang.IllegalArgumentException';
+        exInput.addEventListener('input', e => { dt.config.exceptionType = e.target.value; });
+        exLabel.appendChild(exInput);
+        cfgGrid.appendChild(exLabel);
+    } else if (currentNullHandling === 'defaultValue') {
+        const dvLabel = document.createElement('label');
+        dvLabel.innerHTML = `<span>default value</span>`;
+        const dvInput = document.createElement('input');
+        dvInput.type = 'text';
+        dvInput.value = dt.config.defaultValue || '';
+        dvInput.placeholder = 'e.g. BigDecimal.ZERO';
+        dvInput.addEventListener('input', e => { dt.config.defaultValue = e.target.value; });
+        dvLabel.appendChild(dvInput);
+        cfgGrid.appendChild(dvLabel);
+    }
+
+    if (numeric) {
+        const roundLabel = document.createElement('label');
+        roundLabel.innerHTML = `<span>rounding</span>`;
+        const roundSel = document.createElement('select');
+        ['HALF_UP', 'HALF_EVEN', 'HALF_DOWN', 'CEILING', 'FLOOR'].forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r; opt.textContent = r;
+            if ((dt.config.rounding || 'HALF_UP') === r) opt.selected = true;
+            roundSel.appendChild(opt);
+        });
+        roundSel.addEventListener('change', e => { dt.config.rounding = e.target.value; });
+        roundLabel.appendChild(roundSel);
+        cfgGrid.appendChild(roundLabel);
+
+        const scaleLabel = document.createElement('label');
+        scaleLabel.innerHTML = `<span>scale</span>`;
+        const scaleInput = document.createElement('input');
+        scaleInput.type = 'number';
+        scaleInput.min = '0';
+        scaleInput.value = dt.config.scale != null ? dt.config.scale : 2;
+        scaleInput.addEventListener('input', e => {
+            const n = parseInt(e.target.value, 10);
+            dt.config.scale = isNaN(n) ? '' : n;
+        });
+        scaleLabel.appendChild(scaleInput);
+        cfgGrid.appendChild(scaleLabel);
+    }
+
+    const localeLabel = document.createElement('label');
+    localeLabel.innerHTML = `<span>locale <small style="color: var(--text-3); font-weight: 400;">(optional — default ROOT)</small></span>`;
+    const localeInput = document.createElement('input');
+    localeInput.type = 'text';
+    localeInput.value = dt.config.locale || '';
+    localeInput.placeholder = 'ROOT or BCP-47 tag (e.g. en-US)';
+    localeInput.addEventListener('input', e => {
+        const v = e.target.value.trim();
+        if (v) dt.config.locale = v;
+        else delete dt.config.locale;
+    });
+    localeLabel.appendChild(localeInput);
+    cfgGrid.appendChild(localeLabel);
+
+    body.appendChild(cfgGrid);
+
+    // Rows
+    const rowsLabel = document.createElement('span');
+    rowsLabel.className = 'dt-section-label';
+    rowsLabel.textContent = `Rows · ${(dt.rows || []).length}`;
+    body.appendChild(rowsLabel);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'dt-rows-wrap';
+    const tbl = document.createElement('table');
+    tbl.className = 'dt-rows-table';
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    inputs.forEach(i => {
+        const th = document.createElement('th');
+        th.textContent = i.name || '?';
+        headRow.appendChild(th);
+    });
+    const expTh = document.createElement('th');
+    expTh.textContent = 'expected';
+    headRow.appendChild(expTh);
+    const actTh = document.createElement('th');
+    actTh.className = 'dt-col-action';
+    actTh.textContent = '';
+    headRow.appendChild(actTh);
+    thead.appendChild(headRow);
+    tbl.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    (dt.rows || []).forEach((row, rIdx) => {
+        const tr = document.createElement('tr');
+        // pad/trim row.values to match inputs.length
+        const values = (row.values || []).slice(0, inputs.length);
+        while (values.length < inputs.length) values.push('');
+        row.values = values;
+
+        inputs.forEach((_, cIdx) => {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.className = 'dt-cell';
+            input.type = 'text';
+            input.value = values[cIdx] || '';
+            input.addEventListener('input', e => { row.values[cIdx] = e.target.value; });
+            td.appendChild(input);
+            tr.appendChild(td);
+        });
+
+        const expTd = document.createElement('td');
+        const expInput = document.createElement('input');
+        expInput.className = 'dt-cell';
+        expInput.type = 'text';
+        expInput.value = row.expected || '';
+        expInput.addEventListener('input', e => { row.expected = e.target.value; });
+        expTd.appendChild(expInput);
+        tr.appendChild(expTd);
+
+        const actTd = document.createElement('td');
+        actTd.className = 'dt-col-action';
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'dt-row-remove';
+        rm.title = 'Remove row';
+        rm.textContent = '×';
+        rm.addEventListener('click', () => {
+            dt.rows.splice(rIdx, 1);
+            if (dt.rows.length === 0) {
+                dt.rows.push({ values: inputs.map(() => ''), expected: '' });
+            }
+            renderDecisionModalBody();
+        });
+        actTd.appendChild(rm);
+        tr.appendChild(actTd);
+
+        tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    body.appendChild(wrap);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'dt-add-row';
+    addBtn.textContent = '+ Add row';
+    addBtn.addEventListener('click', () => {
+        dt.rows.push({ values: inputs.map(() => ''), expected: '' });
+        renderDecisionModalBody();
+    });
+    body.appendChild(addBtn);
+}
+
+dtModalEls.close.addEventListener('click', closeDecisionTableModal);
+dtModalEls.done.addEventListener('click', closeDecisionTableModal);
+dtModalEls.remove.addEventListener('click', () => {
+    if (!dtModalActive) return;
+    const step = state.sequence.find(s => s.id === dtModalActive.stepId);
+    if (step) delete step.decisionTable;
+    closeDecisionTableModal();
+});
+dtModalEls.backdrop.addEventListener('click', (e) => {
+    if (e.target === dtModalEls.backdrop) closeDecisionTableModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !dtModalEls.backdrop.classList.contains('hidden')) {
+        closeDecisionTableModal();
+    }
+});
+
 // --- Demo prefill ---
 // Wired to the "Load demo data" button on Step 1. Seeds the wizard with the
 // "generate invoice" example so users can see a complete end-to-end run
@@ -2101,37 +2540,139 @@ const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
 
 function loadDemoData() {
     storyInput.value =
-        "As accounting, I want to generate an invoice for a customer that " +
-        "includes every order they've placed, so we can bill them in one go.";
+        "As a customer, I want to place an order for one or more products in a " +
+        "single checkout, so that I receive everything I need in one delivery " +
+        "and pay one shipping fee.";
 
     state.userStory = storyInput.value;
-    state.targetPackage = 'com.example.invoice';
+    state.targetPackage = 'com.disc.order';
 
-    const invoiceService = makeParticipant('InvoiceService');
-    const generateInvoice = makeMethod('generateInvoice', [{ name: 'customerId', type: 'UUID' }], 'Invoice');
-    invoiceService.methods.push(generateInvoice);
+    const orderService = makeParticipant('OrderService');
+    const placeOrder = makeMethod('placeOrder', [{ name: 'orderRequest', type: 'OrderRequest' }], 'Order');
+    orderService.methods.push(placeOrder);
+
+    const customerRepository = makeParticipant('CustomerRepository');
+    const findCustomer = makeMethod('findById', [{ name: 'customerId', type: 'UUID' }], 'Customer');
+    customerRepository.methods.push(findCustomer);
+
+    const orderBuilderFactory = makeParticipant('OrderBuilderFactory');
+    const createBuilder = makeMethod('create', [{ name: 'customer', type: 'Customer' }], 'OrderBuilder');
+    orderBuilderFactory.methods.push(createBuilder);
+
+    const productRepository = makeParticipant('ProductRepository');
+    const findProduct = makeMethod('findById', [{ name: 'productId', type: 'UUID' }], 'Product');
+    productRepository.methods.push(findProduct);
+
+    const stockValidator = makeParticipant('StockValidator');
+    const validateStock = makeMethod('validate', [
+        { name: 'availableQty', type: 'Integer' },
+        { name: 'requestedQty', type: 'Integer' }
+    ], 'void');
+    stockValidator.methods.push(validateStock);
+
+    const lineSubtotalCalculator = makeParticipant('LineSubtotalCalculator');
+    const calculateLineSubtotal = makeMethod('calculate', [
+        { name: 'quantity', type: 'Integer' },
+        { name: 'unitPrice', type: 'BigDecimal' }
+    ], 'BigDecimal');
+    lineSubtotalCalculator.methods.push(calculateLineSubtotal);
+
+    const orderBuilder = makeParticipant('OrderBuilder');
+    const addLine = makeMethod('addLine', [
+        { name: 'lineItem', type: 'LineItem' },
+        { name: 'lineSubtotal', type: 'BigDecimal' }
+    ], 'void');
+    const buildOrder = makeMethod('build', [], 'Order');
+    orderBuilder.methods.push(addLine, buildOrder);
+
+    const order = makeParticipant('Order');
+    const subtotal = makeMethod('subtotal', [], 'BigDecimal');
+    const applyShipping = makeMethod('applyShipping', [{ name: 'shippingFee', type: 'BigDecimal' }], 'void');
+    order.methods.push(subtotal, applyShipping);
+
+    const shippingFeeCalculator = makeParticipant('ShippingFeeCalculator');
+    const calculateShipping = makeMethod('calculate', [
+        { name: 'orderTotal', type: 'BigDecimal' },
+        { name: 'region', type: 'String' }
+    ], 'BigDecimal');
+    shippingFeeCalculator.methods.push(calculateShipping);
 
     const orderRepository = makeParticipant('OrderRepository');
-    const findAllByCustomerId = makeMethod('findAllByCustomerId', [{ name: 'customerId', type: 'UUID' }], 'List<Order>');
-    orderRepository.methods.push(findAllByCustomerId);
+    const saveOrder = makeMethod('save', [{ name: 'order', type: 'Order' }], 'Order');
+    orderRepository.methods.push(saveOrder);
 
-    const invoiceBuilderFactory = makeParticipant('InvoiceBuilderFactory');
-    const create = makeMethod('create', [], 'InvoiceBuilder');
-    invoiceBuilderFactory.methods.push(create);
+    state.participants = [
+        orderService, customerRepository, orderBuilderFactory, productRepository,
+        stockValidator, lineSubtotalCalculator, orderBuilder, order,
+        shippingFeeCalculator, orderRepository
+    ];
 
-    const invoiceBuilder = makeParticipant('InvoiceBuilder');
-    const addLine = makeMethod('addLine', [{ name: 'order', type: 'Order' }], 'void');
-    const build = makeMethod('build', [], 'Invoice');
-    invoiceBuilder.methods.push(addLine, build);
+    const stockValidatorDT = {
+        config: {
+            nullHandling: 'throw',
+            exceptionType: 'java.lang.IllegalArgumentException'
+        },
+        rows: [
+            { values: ['10', '1'],   expected: '(no exception)' },
+            { values: ['10', '10'],  expected: '(no exception)' },
+            { values: ['5', '0'],    expected: '(no exception)' },
+            { values: ['10', '11'],  expected: 'throws: InsufficientStockException' },
+            { values: ['0', '1'],    expected: 'throws: InsufficientStockException' },
+            { values: ['5', '-1'],   expected: 'throws: IllegalArgumentException' }
+        ]
+    };
 
-    state.participants = [invoiceService, orderRepository, invoiceBuilderFactory, invoiceBuilder];
+    const lineSubtotalDT = {
+        config: {
+            rounding: 'HALF_UP',
+            scale: 2,
+            nullHandling: 'throw',
+            exceptionType: 'java.lang.IllegalArgumentException'
+        },
+        rows: [
+            { values: ['1', '100.00'],  expected: '100.00' },
+            { values: ['2', '49.99'],   expected: '99.98' },
+            { values: ['3', '20.00'],   expected: '60.00' },
+            { values: ['0', '100.00'],  expected: '0.00' },
+            { values: ['3', '0.333'],   expected: '1.00' },
+            { values: ['-1', '100.00'], expected: 'throws: IllegalArgumentException' }
+        ]
+    };
+
+    const shippingFeeDT = {
+        config: {
+            rounding: 'HALF_UP',
+            scale: 2,
+            nullHandling: 'throw',
+            exceptionType: 'java.lang.IllegalArgumentException'
+        },
+        rows: [
+            { values: ['100.00', '"DOMESTIC"'],      expected: '0.00' },
+            { values: ['100.00', '"INTERNATIONAL"'], expected: '0.00' },
+            { values: ['250.00', '"DOMESTIC"'],      expected: '0.00' },
+            { values: ['99.99', '"DOMESTIC"'],       expected: '5.00' },
+            { values: ['50.00', '"DOMESTIC"'],       expected: '5.00' },
+            { values: ['0.00', '"DOMESTIC"'],        expected: '5.00' },
+            { values: ['99.99', '"INTERNATIONAL"'],  expected: '25.00' },
+            { values: ['50.00', '"INTERNATIONAL"'],  expected: '25.00' },
+            { values: ['50.00', '"ZZZ"'],            expected: 'throws: IllegalArgumentException' }
+        ]
+    };
+
     state.sequence = [
-        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: orderRepository.id, methodId: findAllByCustomerId.id },
-        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilderFactory.id, methodId: create.id },
-        { id: newId(), kind: STEP_KIND.LOOP_START, label: 'for each order in orders' },
-        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: addLine.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: customerRepository.id, methodId: findCustomer.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderBuilderFactory.id, methodId: createBuilder.id },
+        { id: newId(), kind: STEP_KIND.LOOP_START, label: 'for each lineItem in orderRequest.lineItems' },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: productRepository.id, methodId: findProduct.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: stockValidator.id, methodId: validateStock.id, decisionTable: stockValidatorDT },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: lineSubtotalCalculator.id, methodId: calculateLineSubtotal.id, decisionTable: lineSubtotalDT },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderBuilder.id, methodId: addLine.id },
         { id: newId(), kind: STEP_KIND.LOOP_END },
-        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: build.id }
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderBuilder.id, methodId: buildOrder.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: order.id, methodId: subtotal.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: shippingFeeCalculator.id, methodId: calculateShipping.id, decisionTable: shippingFeeDT },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: order.id, methodId: applyShipping.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderRepository.id, methodId: saveOrder.id }
     ];
 
     renderParticipants();

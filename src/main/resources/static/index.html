@@ -139,6 +139,22 @@
                 <div id="participants-list" class="participants-grid"></div>
             </div>
 
+            <div id="dt-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+                <div class="modal dt-modal">
+                    <div class="modal-head">
+                        <h3 id="dt-modal-title">Decision table</h3>
+                        <button type="button" class="icon-btn" id="dt-modal-close" title="Close">×</button>
+                    </div>
+                    <div class="modal-body" id="dt-modal-body">
+                        <!-- header strip, config form, rows table — built by openDecisionTableModal() -->
+                    </div>
+                    <div class="modal-foot">
+                        <button type="button" class="secondary" id="dt-modal-remove">Remove decision table</button>
+                        <button type="button" id="dt-modal-done">Done</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="participant-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
                 <div class="modal">
                     <div class="modal-head">

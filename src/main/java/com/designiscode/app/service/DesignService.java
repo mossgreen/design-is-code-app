@@ -1,5 +1,6 @@
 package com.designiscode.app.service;
 
+import com.designiscode.app.dto.DecisionTableFile;
 import com.designiscode.app.dto.DesignRequest;
 import com.designiscode.app.dto.DesignResult;
 import org.springframework.stereotype.Service;
@@ -8,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 @Service
 public class DesignService {
@@ -30,7 +32,7 @@ public class DesignService {
             throw new IllegalArgumentException("Project path is not a directory: " + projectRoot);
         }
 
-        String fileName = sanitizeFileName(request.fileName());
+        String fileName = sanitizePumlFileName(request.fileName());
         Path designDir = projectRoot.resolve(DESIGN_DIR);
         Path target = designDir.resolve(fileName).normalize();
 
@@ -45,18 +47,43 @@ public class DesignService {
             throw new RuntimeException("Failed to write design file: " + e.getMessage(), e);
         }
 
+        int sidecarCount = writeDecisionTables(designDir, request.decisionTables());
+
         String relativePath = projectRoot.relativize(target).toString();
-        return new DesignResult(target.toString(), relativePath, fileName);
+        return new DesignResult(target.toString(), relativePath, fileName, sidecarCount);
     }
 
-    private String sanitizeFileName(String raw) {
+    private int writeDecisionTables(Path designDir, List<DecisionTableFile> tables) {
+        if (tables == null || tables.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        for (DecisionTableFile dt : tables) {
+            if (dt == null) continue;
+            if (dt.content() == null || dt.content().isBlank()) {
+                throw new IllegalArgumentException("Decision-table content is empty");
+            }
+            String name = sanitizeDecisionFileName(dt.fileName());
+            Path target = designDir.resolve(name).normalize();
+            if (!target.startsWith(designDir)) {
+                throw new IllegalArgumentException("Invalid decision-table file name");
+            }
+            try {
+                Files.writeString(target, dt.content());
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to write decision table " + name + ": " + e.getMessage(), e);
+            }
+            count++;
+        }
+        return count;
+    }
+
+    private String sanitizePumlFileName(String raw) {
         String name = (raw == null) ? "" : raw.trim();
         if (name.isEmpty()) {
             name = "design.puml";
         }
-        if (name.contains("/") || name.contains("\\") || name.contains("..")) {
-            throw new IllegalArgumentException("File name must not contain path separators");
-        }
+        rejectPathTraversal(name);
         if (!name.matches("[A-Za-z0-9._-]+")) {
             throw new IllegalArgumentException("File name may only contain letters, digits, '.', '_' and '-'");
         }
@@ -64,5 +91,26 @@ public class DesignService {
             name = name + ".puml";
         }
         return name;
+    }
+
+    private String sanitizeDecisionFileName(String raw) {
+        String name = (raw == null) ? "" : raw.trim();
+        if (name.isEmpty()) {
+            throw new IllegalArgumentException("Decision-table file name is required");
+        }
+        rejectPathTraversal(name);
+        if (!name.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("Decision-table file name may only contain letters, digits, '.', '_' and '-'");
+        }
+        if (!name.toLowerCase().endsWith(".decision.md")) {
+            throw new IllegalArgumentException("Decision-table file name must end with .decision.md");
+        }
+        return name;
+    }
+
+    private void rejectPathTraversal(String name) {
+        if (name.contains("/") || name.contains("\\") || name.contains("..")) {
+            throw new IllegalArgumentException("File name must not contain path separators");
+        }
     }
 }
