@@ -1153,7 +1153,7 @@ button.small {
     color: var(--amber);
 }
 
-.plugin-pill[data-state="restart"] {
+.plugin-pill[data-state="updated"] {
     background: color-mix(in srgb, var(--accent) 10%, var(--surface));
     border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
     color: var(--accent);

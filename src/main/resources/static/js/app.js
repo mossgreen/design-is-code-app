@@ -1072,15 +1072,18 @@ function renderSteps() {
                     <div class="step-actions"></div>
                 `;
             } else {
-                // SUT --> [*] : ReturnType   ⟦return⟧
+                // [*] <-- SUT : ReturnType   ⟦return⟧
+                // The boundary marker [*] anchors the LEFT side of every line
+                // (entry AND return), per the canonical demo .puml shape and
+                // the SKILL v0.5.1 changelog. Arrow direction conveys data flow.
                 row.innerHTML = `
                     <span class="step-grip sys-grip" aria-hidden="true" title="Final return — managed by the SUT mark">·</span>
                     <span class="step-num sys-glyph" title="Final return to system caller">⇤</span>
                     <div class="step-lines">
                         <div class="step-line call">
-                            <span class="step-pill who from sys-pill" title="System under test">${escapeHtml(sutName)}</span>
+                            <span class="step-pill who from sys-pill" title="System caller — boundary, not editable">[*]</span>
                             <span class="arrow">⇠</span>
-                            <span class="step-pill who to sys-pill" title="System caller — boundary, not editable">[*]</span>
+                            <span class="step-pill who to sys-pill" title="System under test">${escapeHtml(sutName)}</span>
                             ${ret ? `<span class="ret-suffix"><span class="ret-arrow">:</span><span class="payload">${escapeHtml(ret)}</span></span>` : `<span class="ret-suffix leaf"><span class="payload">void</span></span>`}
                             <span class="sys-tag">return</span>
                         </div>
@@ -1637,7 +1640,10 @@ function emitPlantUml() {
         lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
         const ret = returnLabelFor(method);
         if (ret) {
-            lines.push(`${pad()}${callerName} <- ${calleeName} : ${ret}`);
+            // Returns use the dashed `<--` form (PlantUML's conventional return
+            // arrow) so they're visually distinct from the solid call arrows
+            // above. Matches the canonical source .puml files in design-is-code-demo.
+            lines.push(`${pad()}${callerName} <-- ${calleeName} : ${ret}`);
         }
     });
     // Auto-close any unbalanced loops so we always emit valid PlantUML.
@@ -2109,15 +2115,17 @@ function renderPluginStatus() {
     }
 }
 
-function flashRestartRequired(newVersion) {
+function flashUpdated(newVersion) {
     if (!saveEls.pluginPill) return;
-    saveEls.pluginPill.textContent = `DisC plugin updated to v${newVersion} — restart Claude Code`;
-    saveEls.pluginPill.dataset.state = 'restart';
+    // The new plugin is already on disk and the next "Run it for me" will
+    // spawn a fresh `claude` subprocess that picks it up — no user action
+    // required. Show a brief confirmation then refresh status normally.
+    saveEls.pluginPill.textContent = `DisC plugin updated to v${newVersion} ✓`;
+    saveEls.pluginPill.dataset.state = 'updated';
     saveEls.pluginPill.classList.remove('hidden');
     setTimeout(() => {
-        // Refresh status — the new pill shape will replace this flash.
         refreshPluginStatus();
-    }, 8000);
+    }, 4000);
 }
 
 // --- Step-checklist state for the "Run it for me" panel ---
@@ -2616,9 +2624,9 @@ if (saveEls.updateBtn) {
             doneLabel: '✓ Updated',
             failLabel: '✗ Update failed',
             onSuccess: () => {
-                // Surface the restart-required hint, then re-fetch status so
-                // the pill settles to the new installed version.
-                if (targetVersion) flashRestartRequired(targetVersion);
+                // Confirm the update briefly; the new plugin is already live
+                // for the next "Run it for me" subprocess.
+                if (targetVersion) flashUpdated(targetVersion);
                 else refreshPluginStatus();
             }
         });
