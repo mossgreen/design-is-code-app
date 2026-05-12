@@ -1257,12 +1257,15 @@ function renderAddStep() {
 
     ensureAddStepDraft();
 
-    // Composer's "Step N" reflects where the next add will land.
-    // For numeric insert mode, that's the wedge's index + 1 (1-based for display);
-    // for append mode, it's after the last step.
-    const stepNum = typeof composerInsertAt === 'number'
-        ? composerInsertAt + 1
-        : state.sequence.length + 1;
+    // Composer's "Step N" matches the numbering shown on the rendered CALL rows
+    // (step-num badges), which count only user-authored CALLs — fragment markers
+    // and SUT boundary edges aren't numbered. Count CALLs before the insertion
+    // point (sequence end in append mode, the wedge index in insert mode).
+    const sliceEnd = typeof composerInsertAt === 'number' ? composerInsertAt : state.sequence.length;
+    const priorCalls = state.sequence.slice(0, sliceEnd).filter(s =>
+        s.kind === STEP_KIND.CALL && !isSystemCaller(s.callerId) && !isSystemCaller(s.calleeId)
+    ).length;
+    const stepNum = priorCalls + 1;
     const callerOptions = ['<option value="">caller</option>']
         .concat(state.participants.map(p =>
             `<option value="${p.id}" ${p.id === addStepDraft.callerId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
@@ -2128,12 +2131,14 @@ function flashUpdated(newVersion) {
     }, 4000);
 }
 
-// --- Step-checklist state for the "Run it for me" panel ---
+// --- Step-checklist for the "Run it for me" panel ---
 //
-// Pulled from /api/disc-steps on first use; cached so we don't refetch every
-// run. The fallback list mirrors the DisC v0.5.1 SKILL.md so users running
-// against a different skill version still see something sensible.
-const FALLBACK_DISC_STEPS = [
+// Hardcoded against the DisC v0.5.1 SKILL. The run-event regex
+// (StreamJsonMapper.STEP_RE) matches step NUMBERS only, so a title mismatch
+// would never break event mapping — it would only show stale labels. When the
+// DisC plugin renames steps, update this array. That's the entire maintenance
+// burden; no manual snapshot of SKILL.md required.
+const DISC_STEPS = [
     { n: 1, title: 'Validate Design' },
     { n: 2, title: 'Classify Participants' },
     { n: 3, title: 'Resolve Targets' },
@@ -2143,23 +2148,10 @@ const FALLBACK_DISC_STEPS = [
     { n: 7, title: 'Write Files' },
     { n: 8, title: 'Report' }
 ];
-let discSteps = null;
-async function loadDiscSteps() {
-    if (discSteps) return discSteps;
-    try {
-        const res = await fetch('/api/disc-steps');
-        const data = await res.json();
-        if (Array.isArray(data.steps) && data.steps.length > 0) {
-            discSteps = data.steps;
-        }
-    } catch {}
-    if (!discSteps || discSteps.length === 0) discSteps = FALLBACK_DISC_STEPS;
-    return discSteps;
-}
 
 function renderRunChecklist() {
-    if (!saveEls.runChecklist || !discSteps) return;
-    saveEls.runChecklist.innerHTML = discSteps.map(s => `
+    if (!saveEls.runChecklist) return;
+    saveEls.runChecklist.innerHTML = DISC_STEPS.map(s => `
         <li class="checklist-row" data-step="${s.n}">
             <span class="checklist-dot" aria-hidden="true"></span>
             <span class="checklist-num">${s.n}</span>
@@ -2377,7 +2369,6 @@ saveEls.runBtn.addEventListener('click', async () => {
     if (!lastSavedRelativePath || !state.projectPath) return;
 
     // Reset UI for a fresh run.
-    await loadDiscSteps();
     renderRunChecklist();
     setStepActive(0);  // all pending until the agent reports a Step
     saveEls.runConsole.textContent = '';
