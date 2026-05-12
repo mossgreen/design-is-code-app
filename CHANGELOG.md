@@ -5,6 +5,37 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.4.2] - 2026-05-12
+
+Hotfix on top of v0.4.1's downloadable jar: the demo no longer pretends a
+project is connected (a hardcoded path that only existed on the author's
+machine), and the Release ships a starter Spring Boot project so anyone
+evaluating DisC Studio can complete the flow end-to-end without bringing
+their own codebase.
+
+### Added
+- **`disc-studio-starter.zip`** attached to the Release — a minimal Spring
+  Boot scaffold (Spring Initializr export, ~55KB) with one `com.example.demo`
+  package and an empty `design/` folder. Unzip and point the Studio at it to
+  evaluate the full save → run flow without an existing Java project.
+
+### Changed
+- **README leads with "What you need" before Quick start.** Three numbered
+  requirements (Java 21+ · required; a Java/Spring project · required, with
+  the starter as fallback; Claude CLI + plugin · optional) replace the
+  parenthetical version note from v0.4.1. The reader knows what they're
+  signing up for before downloading.
+
+### Fixed
+- **Demo no longer fakes a connected project.** "Load simple demo" /
+  "Load complex demo" used to set `state.projectPath` to a hardcoded
+  `/Users/mossgu/Downloads/demo` and run `/api/scan` against it, producing
+  a red error banner for every user except the author. The demos now seed
+  story + participants + sequence only; the header chip stays in "Connect
+  project" mode until the user pastes a real path.
+
+[v0.4.2]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.4.2
+
 ## [v0.4.1] - 2026-05-12
 
 DisC Studio is now downloadable. Grab `disc-studio-0.4.1.jar` from the

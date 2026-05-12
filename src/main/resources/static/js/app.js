@@ -3056,20 +3056,11 @@ document.addEventListener('keydown', (e) => {
 });
 
 // --- Demo prefill ---
-// Wired to the "Load demo data" button on Step 1. Seeds the wizard with the
-// "generate invoice" example so users can see a complete end-to-end run
-// without typing. By default (no click) every field starts empty.
-
-const DEMO_PROJECT_PATH = '/Users/mossgu/Downloads/demo';
-
-function applyDemoProjectPath() {
-    els.pathInput.value = DEMO_PROJECT_PATH;
-    state.projectPath = DEMO_PROJECT_PATH;
-    els.chip.classList.add('connected');
-    els.chipLabel.textContent = shortProjectName(DEMO_PROJECT_PATH);
-    els.chip.title = DEMO_PROJECT_PATH;
-    runScan(DEMO_PROJECT_PATH);
-}
+// Wired to the "Load simple/complex demo" buttons on Step 1. Seeds the wizard
+// with story + participants + sequence so users can see the editor end-to-end
+// without typing. The demos do NOT pretend a project is connected — to save
+// the .puml the user still has to point the header chip at a real local
+// project. By default (no click) every field starts empty.
 
 // Minimum-viable example: 3 participants, 2 CALL steps, 1 decision table.
 // Teaches the wizard's core concepts without loops/factories/mutators.
@@ -3121,7 +3112,6 @@ function loadSimpleDemo() {
 
     renderParticipants();
     renderSequence();
-    applyDemoProjectPath();
 }
 
 function loadComplexDemo() {
@@ -3272,7 +3262,6 @@ function loadComplexDemo() {
 
     renderParticipants();
     renderSequence();
-    applyDemoProjectPath();
 }
 
 document.getElementById('load-simple-demo-btn').addEventListener('click', loadSimpleDemo);
