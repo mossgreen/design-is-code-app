@@ -4,12 +4,25 @@ const state = {
     userStory: '',
     participants: [],
     sequence: [],
-    targetPackage: ''
+    targetPackage: '',
+    // Marks which participant is the System Under Test. When set, the
+    // wizard auto-manages the entry interaction ([*] -> SUT) and final
+    // return ([*] <-- SUT) steps. DisC requires exactly one system_caller
+    // per .puml; this is how we author it.
+    sutParticipantId: null
 };
 
 // Java package name validator: at least two segments, each starting with a
 // lowercase letter, dotted. e.g. com.example.invoice
 const JAVA_PACKAGE_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+
+// Sentinel "participant" id used as callerId on the entry interaction step
+// and as calleeId on the final-return step. PlantUML writes the
+// system_caller as `[*]` per the Java profile. The sentinel never resolves
+// to a real participant — findParticipant() returns null for it and code
+// paths special-case it where rendering matters.
+const SYSTEM_CALLER_ID = '__system_caller__';
+function isSystemCaller(id) { return id === SYSTEM_CALLER_ID; }
 
 let nextId = 1;
 const newId = () => `id-${nextId++}`;
@@ -334,6 +347,64 @@ function enterStep2() {
 
 // --- Participants UI ---
 
+// Remove the auto-managed entry interaction + final return steps from the
+// sequence. Used when (un)marking the SUT or deleting the SUT participant.
+function removeSystemCallerSteps() {
+    state.sequence = state.sequence.filter(s =>
+        !(isSystemCaller(s.callerId) || isSystemCaller(s.calleeId)));
+}
+
+// Append the entry interaction + final return steps for the given SUT and
+// chosen entry method. Called from toggleSut (when the SUT has one method)
+// or from the "pick entry method" banner.
+function addSystemCallerStepsFor(sutId, methodId) {
+    state.sequence.unshift({
+        id: newId(),
+        kind: STEP_KIND.CALL,
+        callerId: SYSTEM_CALLER_ID,
+        calleeId: sutId,
+        methodId
+    });
+    state.sequence.push({
+        id: newId(),
+        kind: STEP_KIND.CALL,
+        callerId: sutId,
+        calleeId: SYSTEM_CALLER_ID,
+        methodId
+    });
+}
+
+// Click handler for the SUT chip on each participant card. Marking a
+// participant as SUT auto-adds the entry interaction + final return; if
+// the SUT has exactly one method we use it as the entry method, otherwise
+// the user picks via the "pick entry method" banner that renderSteps shows.
+function toggleSut(participantId) {
+    const p = findParticipant(participantId);
+    if (!p) return;
+    if (state.sutParticipantId === participantId) {
+        state.sutParticipantId = null;
+        removeSystemCallerSteps();
+    } else {
+        removeSystemCallerSteps();
+        state.sutParticipantId = participantId;
+        if ((p.methods || []).length === 1) {
+            addSystemCallerStepsFor(participantId, p.methods[0].id);
+        }
+        // else: banner in renderSteps prompts the user to pick a method.
+    }
+    renderParticipants();
+    renderSequence();
+}
+
+// Called by the "pick entry method" banner dropdown when the SUT has 2+
+// methods and no entry interaction is set yet.
+function setEntryMethod(methodId) {
+    if (!state.sutParticipantId) return;
+    removeSystemCallerSteps();
+    addSystemCallerStepsFor(state.sutParticipantId, methodId);
+    renderSequence();
+}
+
 function renderParticipants() {
     const list = step2Els.participantsList;
     list.innerHTML = '';
@@ -345,6 +416,7 @@ function renderParticipants() {
         card.type = 'button';
         card.className = 'pc-card';
         if (idx === 0) card.classList.add('caller');
+        if (state.sutParticipantId === p.id) card.classList.add('is-sut');
         card.dataset.id = p.id;
 
         const previewMethods = p.methods.slice(0, 3).map(m => {
@@ -352,16 +424,34 @@ function renderParticipants() {
         }).join('<br>');
         const moreCount = p.methods.length - 3;
 
+        const isSut = state.sutParticipantId === p.id;
+        // Chip is a <span role=button> to avoid nesting a real <button> inside
+        // the card <button> (invalid HTML and triggers DevTools warnings).
+        const sutChip = isSut
+            ? `<span class="sut-chip sut-chip-on" role="button" tabindex="0" title="System under test — click to unmark">SUT</span>`
+            : `<span class="sut-chip sut-chip-add" role="button" tabindex="0" title="Mark as system under test">+ SUT</span>`;
+
         card.innerHTML = `
             <div class="pc-card-head">
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
+                ${sutChip}
             </div>
             <div class="pc-card-methods">
                 ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
                 ${moreCount > 0 ? `<div class="pc-card-more">+${moreCount} more</div>` : ''}
             </div>
         `;
-        card.addEventListener('click', () => openModal(p.id));
+        card.addEventListener('click', (e) => {
+            // SUT chip clicks (and keyboard activations) shouldn't open the modal.
+            const chip = e.target && e.target.closest && e.target.closest('.sut-chip');
+            if (chip) {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleSut(p.id);
+                return;
+            }
+            openModal(p.id);
+        });
         list.appendChild(card);
     });
 
@@ -399,6 +489,12 @@ function closeModal() {
     if (p && !p.name.trim() && p.methods.length === 0) {
         // discard empty participants on close
         state.participants = state.participants.filter(x => x.id !== p.id);
+        // If this empty participant happened to be marked SUT, clear the
+        // mark and any orphaned boundary steps that reference it.
+        if (state.sutParticipantId === p.id) {
+            state.sutParticipantId = null;
+            removeSystemCallerSteps();
+        }
     }
     modalParticipantId = null;
     step2Els.modal.classList.add('hidden');
@@ -441,6 +537,12 @@ step2Els.modalDelete.addEventListener('click', () => {
     state.sequence = state.sequence.filter(c =>
         c.kind !== STEP_KIND.CALL || (c.callerId !== p.id && c.calleeId !== p.id)
     );
+    // Deleting the SUT participant clears the mark; the boundary steps were
+    // already removed by the filter above (they reference this participant).
+    if (state.sutParticipantId === p.id) {
+        state.sutParticipantId = null;
+        removeSystemCallerSteps();
+    }
     modalParticipantId = null;
     step2Els.modal.classList.add('hidden');
     populateTypesDatalist();
@@ -796,8 +898,30 @@ function renderSequence() {
 function renderSteps() {
     const board = step2Els.stepsBoard;
     board.innerHTML = '';
-    const callCount = state.sequence.filter(s => s.kind === STEP_KIND.CALL).length;
+    // Count only non-boundary CALL steps for the "N added" indicator —
+    // the entry/final-return rows are framework boundary, not user-authored.
+    const callCount = state.sequence.filter(s =>
+        s.kind === STEP_KIND.CALL && !isSystemCaller(s.callerId) && !isSystemCaller(s.calleeId)
+    ).length;
     step2Els.stepsCount.textContent = `${callCount} added`;
+
+    // "Pick entry method" banner: SUT marked, has 2+ methods, and no entry
+    // interaction in the sequence yet.
+    const sut = state.sutParticipantId ? findParticipant(state.sutParticipantId) : null;
+    const hasEntry = state.sequence.some(s => isSystemCaller(s.callerId));
+    if (sut && (sut.methods || []).length >= 2 && !hasEntry) {
+        const banner = document.createElement('div');
+        banner.className = 'entry-method-banner';
+        const sel = document.createElement('select');
+        sel.innerHTML = `<option value="">— pick entry method —</option>` +
+            sut.methods.map(m => `<option value="${m.id}">${escapeHtml(methodPreviewSignature(m))}</option>`).join('');
+        sel.addEventListener('change', (e) => {
+            if (e.target.value) setEntryMethod(e.target.value);
+        });
+        banner.innerHTML = `<span class="entry-method-text"><strong>${escapeHtml(sut.name)}</strong> is the system under test — pick its entry method:</span>`;
+        banner.appendChild(sel);
+        board.appendChild(banner);
+    }
 
     if (state.sequence.length === 0) {
         const empty = document.createElement('div');
@@ -910,6 +1034,64 @@ function renderSteps() {
         }
 
         // CALL
+
+        // System-caller boundary rows (entry interaction + final return).
+        // Rendered as non-editable rows so the user can see the entry/exit
+        // exists but can't accidentally delete or rewire it. Marking/
+        // unmarking a SUT is the way to add/remove these.
+        if (isSystemCaller(step.callerId) || isSystemCaller(step.calleeId)) {
+            const isEntry = isSystemCaller(step.callerId);
+            const sutId = isEntry ? step.calleeId : step.callerId;
+            const sut = findParticipant(sutId);
+            const method = findMethod(sutId, step.methodId);
+            if (!sut || !method) return;
+            const sutName = sut.name || '(unnamed)';
+            const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
+            const methodCall = `.${method.name || '?'}(${inputArgs})`;
+            const ret = returnLabelFor(method);
+            const row = document.createElement('div');
+            row.className = 'step-row sys-edge';
+            row.dataset.id = step.id;
+            row.draggable = false;
+            if (isEntry) {
+                // [*] -> SUT . method(args) → ReturnType   ⟦entry⟧
+                row.innerHTML = `
+                    <span class="step-grip sys-grip" aria-hidden="true" title="Entry interaction — managed by the SUT mark">·</span>
+                    <span class="step-num sys-glyph" title="Entry interaction">⇥</span>
+                    <div class="step-lines">
+                        <div class="step-line call">
+                            <span class="step-pill who from sys-pill" title="System caller — boundary, not editable">[*]</span>
+                            <span class="arrow">→</span>
+                            <span class="step-pill who to sys-pill" title="System under test">${escapeHtml(sutName)}</span>
+                            <span class="as-dot">.</span>
+                            <span class="step-pill step-method sys-pill" title="Entry method">${escapeHtml(methodCall)}</span>
+                            ${ret ? `<span class="ret-suffix"><span class="ret-arrow">→</span><span class="payload">${escapeHtml(ret)}</span></span>` : `<span class="ret-suffix leaf"><span class="payload">void</span></span>`}
+                            <span class="sys-tag">entry</span>
+                        </div>
+                    </div>
+                    <div class="step-actions"></div>
+                `;
+            } else {
+                // SUT --> [*] : ReturnType   ⟦return⟧
+                row.innerHTML = `
+                    <span class="step-grip sys-grip" aria-hidden="true" title="Final return — managed by the SUT mark">·</span>
+                    <span class="step-num sys-glyph" title="Final return to system caller">⇤</span>
+                    <div class="step-lines">
+                        <div class="step-line call">
+                            <span class="step-pill who from sys-pill" title="System under test">${escapeHtml(sutName)}</span>
+                            <span class="arrow">⇠</span>
+                            <span class="step-pill who to sys-pill" title="System caller — boundary, not editable">[*]</span>
+                            ${ret ? `<span class="ret-suffix"><span class="ret-arrow">:</span><span class="payload">${escapeHtml(ret)}</span></span>` : `<span class="ret-suffix leaf"><span class="payload">void</span></span>`}
+                            <span class="sys-tag">return</span>
+                        </div>
+                    </div>
+                    <div class="step-actions"></div>
+                `;
+            }
+            board.appendChild(row);
+            return;
+        }
+
         const call = step;
         const caller = findParticipant(call.callerId);
         const callee = findParticipant(call.calleeId);
@@ -1405,6 +1587,32 @@ function emitPlantUml() {
             return;
         }
         // CALL
+
+        // Entry interaction: [*] -> SUT : method(args). The methodId points
+        // at a method on the SUT (callee); the caller is the system_caller
+        // sentinel. Only emits a call line — the return arrow is a separate
+        // step in the sequence.
+        if (isSystemCaller(s.callerId)) {
+            const callee = findParticipant(s.calleeId);
+            const method = findMethod(s.calleeId, s.methodId);
+            if (!callee || !method) return;
+            lines.push(`${pad()}[*] -> ${callee.name || '_'} : ${methodSignature(method)}`);
+            return;
+        }
+        // Final return: SUT --> [*] : returnType. Only emits a return line.
+        if (isSystemCaller(s.calleeId)) {
+            const caller = findParticipant(s.callerId);
+            const method = findMethod(s.callerId, s.methodId);
+            if (!caller || !method) return;
+            const ret = returnLabelFor(method);
+            if (ret) {
+                lines.push(`${pad()}[*] <-- ${caller.name || '_'} : ${ret}`);
+            }
+            // void entry method → no final return arrow emitted, which
+            // matches the language profile (entry can return void).
+            return;
+        }
+
         const caller = findParticipant(s.callerId);
         const callee = findParticipant(s.calleeId);
         const method = findMethod(s.calleeId, s.methodId);
@@ -2866,53 +3074,50 @@ function applyDemoProjectPath() {
 
 // Minimum-viable example: 3 participants, 2 CALL steps, 1 decision table.
 // Teaches the wizard's core concepts without loops/factories/mutators.
+// Minimum-viable example based on design/03_loop.puml from the demo corpus:
+// 4 participants, 4 CALL steps wrapped in one loop, no decision tables.
+// Teaches the loop fragment alongside the orchestrator/repository/factory/
+// builder vocabulary. The complex demo continues to be the DT showcase.
 function loadSimpleDemo() {
     storyInput.value =
-        "As a returning customer, I want my tier-based discount applied to " +
-        "every order so the price I'm shown is the price I pay.";
+        "As accounting, I want to generate an invoice for a customer that " +
+        "includes every order they've placed, so we can bill them in one go.";
 
     state.userStory = storyInput.value;
-    state.targetPackage = 'com.disc.decision';
+    state.targetPackage = 'com.disc.loop';
 
-    const pricingService = makeParticipant('PricingService');
-    const price = makeMethod('price', [
-        { name: 'customerId', type: 'UUID' },
-        { name: 'amount', type: 'BigDecimal' }
-    ], 'BigDecimal');
-    pricingService.methods.push(price);
+    const invoiceService = makeParticipant('InvoiceService');
+    const createInvoice = makeMethod('createInvoice', [{ name: 'customerId', type: 'UUID' }], 'Invoice');
+    invoiceService.methods.push(createInvoice);
 
-    const customerRepository = makeParticipant('CustomerRepository');
-    const findCustomer = makeMethod('findById', [{ name: 'customerId', type: 'UUID' }], 'Customer');
-    customerRepository.methods.push(findCustomer);
+    const orderRepository = makeParticipant('OrderRepository');
+    const findAllByCustomerId = makeMethod('findAllByCustomerId', [{ name: 'customerId', type: 'UUID' }], 'List<Order>');
+    orderRepository.methods.push(findAllByCustomerId);
 
-    const discountCalculator = makeParticipant('DiscountCalculator');
-    const calculateDiscount = makeMethod('calculate', [
-        { name: 'amount', type: 'BigDecimal' },
-        { name: 'tier', type: 'Tier' }
-    ], 'BigDecimal');
-    discountCalculator.methods.push(calculateDiscount);
+    const invoiceBuilderFactory = makeParticipant('InvoiceBuilderFactory');
+    const createBuilder = makeMethod('create', [], 'InvoiceBuilder');
+    invoiceBuilderFactory.methods.push(createBuilder);
 
-    state.participants = [pricingService, customerRepository, discountCalculator];
+    const invoiceBuilder = makeParticipant('InvoiceBuilder');
+    const addLine = makeMethod('addLine', [{ name: 'order', type: 'Order' }], 'void');
+    const buildInvoice = makeMethod('build', [], 'Invoice');
+    invoiceBuilder.methods.push(addLine, buildInvoice);
 
-    const discountDT = {
-        config: {
-            rounding: 'HALF_UP',
-            scale: 2,
-            nullHandling: 'throw',
-            exceptionType: 'java.lang.IllegalArgumentException'
-        },
-        rows: [
-            { values: ['100.00', 'STANDARD'],  expected: '0.00' },
-            { values: ['100.00', 'GOLD'],      expected: '10.00' },
-            { values: ['100.00', 'PLATINUM'],  expected: '20.00' },
-            { values: ['0.00',   'GOLD'],      expected: '0.00' },
-            { values: ['-10.00', 'STANDARD'],  expected: 'throws: IllegalArgumentException' }
-        ]
-    };
+    state.participants = [invoiceService, orderRepository, invoiceBuilderFactory, invoiceBuilder];
+    state.sutParticipantId = invoiceService.id;
 
     state.sequence = [
-        { id: newId(), kind: STEP_KIND.CALL, callerId: pricingService.id, calleeId: customerRepository.id, methodId: findCustomer.id },
-        { id: newId(), kind: STEP_KIND.CALL, callerId: pricingService.id, calleeId: discountCalculator.id, methodId: calculateDiscount.id, decisionTable: discountDT }
+        // [*] -> InvoiceService : createInvoice(customerId)
+        { id: newId(), kind: STEP_KIND.CALL, callerId: SYSTEM_CALLER_ID, calleeId: invoiceService.id, methodId: createInvoice.id },
+        // Body
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: orderRepository.id, methodId: findAllByCustomerId.id },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilderFactory.id, methodId: createBuilder.id },
+        { id: newId(), kind: STEP_KIND.LOOP_START, label: 'for each order in orders' },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: addLine.id },
+        { id: newId(), kind: STEP_KIND.LOOP_END },
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: invoiceBuilder.id, methodId: buildInvoice.id },
+        // [*] <-- InvoiceService : Invoice
+        { id: newId(), kind: STEP_KIND.CALL, callerId: invoiceService.id, calleeId: SYSTEM_CALLER_ID, methodId: createInvoice.id }
     ];
 
     renderParticipants();
@@ -2930,7 +3135,10 @@ function loadComplexDemo() {
     state.targetPackage = 'com.disc.order';
 
     const orderService = makeParticipant('OrderService');
-    const placeOrder = makeMethod('placeOrder', [{ name: 'orderRequest', type: 'OrderRequest' }], 'Order');
+    const placeOrder = makeMethod('placeOrder', [
+        { name: 'customerId', type: 'UUID' },
+        { name: 'orderRequest', type: 'OrderRequest' }
+    ], 'Order');
     orderService.methods.push(placeOrder);
 
     const customerRepository = makeParticipant('CustomerRepository');
@@ -2988,6 +3196,7 @@ function loadComplexDemo() {
         stockValidator, lineSubtotalCalculator, orderBuilder, order,
         shippingFeeCalculator, orderRepository
     ];
+    state.sutParticipantId = orderService.id;
 
     const stockValidatorDT = {
         config: {
@@ -3042,6 +3251,9 @@ function loadComplexDemo() {
     };
 
     state.sequence = [
+        // [*] -> OrderService : placeOrder(customerId, orderRequest)
+        { id: newId(), kind: STEP_KIND.CALL, callerId: SYSTEM_CALLER_ID, calleeId: orderService.id, methodId: placeOrder.id },
+        // Body
         { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: customerRepository.id, methodId: findCustomer.id },
         { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderBuilderFactory.id, methodId: createBuilder.id },
         { id: newId(), kind: STEP_KIND.LOOP_START, label: 'for each lineItem in orderRequest.lineItems' },
@@ -3054,7 +3266,9 @@ function loadComplexDemo() {
         { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: order.id, methodId: subtotal.id },
         { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: shippingFeeCalculator.id, methodId: calculateShipping.id, decisionTable: shippingFeeDT },
         { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: order.id, methodId: applyShipping.id },
-        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderRepository.id, methodId: saveOrder.id }
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: orderRepository.id, methodId: saveOrder.id },
+        // [*] <-- OrderService : Order
+        { id: newId(), kind: STEP_KIND.CALL, callerId: orderService.id, calleeId: SYSTEM_CALLER_ID, methodId: placeOrder.id }
     ];
 
     renderParticipants();

@@ -3047,3 +3047,126 @@ button.small {
     border-color: var(--accent);
     background: var(--accent-soft);
 }
+
+/* --- "Mark as SUT" chip on participant cards --- */
+
+.sut-chip {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+.sut-chip.sut-chip-add {
+    border: 1px dashed var(--border-2);
+    color: var(--text-3);
+    opacity: 0;
+}
+
+.pc-card:hover .sut-chip.sut-chip-add {
+    opacity: 1;
+}
+
+.sut-chip.sut-chip-add:hover {
+    color: #7c3aed;
+    border-color: #7c3aed;
+    background: #ede9fe;
+}
+
+.sut-chip.sut-chip-on {
+    background: #ede9fe;
+    color: #5b21b6;
+    border-color: #c4b5fd;
+}
+
+.sut-chip.sut-chip-on:hover {
+    background: #ddd6fe;
+}
+
+.pc-card.is-sut {
+    border-color: #a78bfa;
+}
+
+/* --- "Pick entry method" banner on Step 2 --- */
+
+.entry-method-banner {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    padding: 0.55rem 0.75rem;
+    margin-bottom: 0.6rem;
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    border-radius: var(--radius);
+    color: #92400e;
+    font-size: var(--fs-sm);
+}
+
+.entry-method-banner select {
+    padding: 0.25rem 0.45rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.entry-method-text strong {
+    font-family: var(--font-mono);
+}
+
+/* --- Boundary step rows: entry interaction + final return --- */
+
+.step-row.sys-edge {
+    background: color-mix(in srgb, #7c3aed 5%, #ffffff);
+    border-color: color-mix(in srgb, #7c3aed 22%, var(--border));
+    cursor: default;
+}
+
+.step-row.sys-edge .step-grip.sys-grip {
+    color: #c4b5fd;
+    cursor: default;
+    opacity: 1;
+}
+
+.step-row.sys-edge .step-num.sys-glyph {
+    color: #7c3aed;
+    font-size: 1rem;
+}
+
+.step-row.sys-edge .step-pill.sys-pill {
+    background: transparent;
+    border: none;
+    border-bottom: none;
+    cursor: default;
+    padding: 0.05rem 0.15rem;
+}
+
+.step-row.sys-edge .step-pill.sys-pill:hover {
+    background: transparent;
+    border-bottom-color: transparent;
+}
+
+.step-row.sys-edge .sys-tag {
+    margin-left: auto;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: #ede9fe;
+    color: #5b21b6;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
