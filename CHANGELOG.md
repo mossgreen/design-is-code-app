@@ -5,6 +5,116 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.4.0] - 2026-05-12
+
+The wizard grew up. It's now **DisC Studio** — the companion editor for
+DisC. Designs are first-class authoring objects with decision tables,
+explicit system-under-test marking, and a step composer you can actually
+live in: one-line rows, click-to-edit pills, insert-anywhere wedges,
+duplicate, hover-only delete, drag-reorder with a visible grip. Two demo
+seeds (a 4-participant loop example and the full 10-participant order
+flow) cover both ends of the complexity gradient.
+
+### Added
+- **Decision tables, first-class.** Any CALL step can be marked
+  decision-table-backed via a `+ DT` chip on the step row. Click opens a
+  modal editor with the method signature as a read-only header, a config
+  form (`nullHandling`, `exceptionType`/`defaultValue`, `rounding`,
+  `scale`, `locale` — the keys `java_spring.md` enumerates), and a
+  freeform rows table. "Save to project" writes the `.puml` plus one
+  `<Participant>.decision.md` sidecar per DT-backed call into the same
+  `design/` folder.
+- **System-under-test mark + entry interaction.** Each participant card
+  shows a `+ SUT` chip. Marking auto-adds the entry interaction
+  (`[*] -> SUT : method(...)`) and final return (`[*] <-- SUT : Type`).
+  Single-method SUTs get the boundary steps instantly; multi-method SUTs
+  prompt via an inline "pick entry method" banner on Step 2. Required
+  for DisC v0.5.x — Step 1 refuses any `.puml` without exactly one
+  `system_caller`.
+- **Step composer overhaul** for read, write, and modify:
+  - Each CALL renders on **one line** instead of two — the trailing
+    return type is a muted inline suffix, halving vertical space. The
+    13-step complex demo fits on a single screen.
+  - Caller, callee, and method are **click-to-edit pills**. Click opens
+    a small popover scoped to valid choices; Esc / outside-click
+    dismisses. Method-edit is one click, not "delete + re-pick three
+    dropdowns."
+  - **Insert-anywhere wedges** between adjacent rows. Hover the gap
+    between steps, click `+ insert here`, the composer relocates inline.
+  - Per-row **duplicate (⎘)** button deep-copies the step including any
+    attached decision table. Delete (×) and duplicate now hover-only to
+    reduce idle noise.
+  - Visible **6-dot grip** glyph advertises the drag-reorder affordance
+    that was already there but invisible.
+  - Composer's caller dropdown **prefills from the last CALL's caller**
+    (the common "same orchestrator throughout" case).
+- **Two demo seeds, side by side.** "Load simple demo" seeds a
+  4-participant loop example (matches the `03_loop.puml` corpus).
+  "Load complex demo" seeds the 10-participant order flow with three
+  pre-populated decision tables (matches `06_order/PlaceOrder.puml`).
+  First-timers can climb from one to the other.
+- **Target-package autocomplete** on Step 4. Suggestions come from the
+  unique `packageName`s in the scanned project. Free typing still works.
+  The list is persisted to `localStorage` so it survives a page reload
+  before reconnecting.
+- **Plugin pre-flight gets an Update flow.** When the installed
+  `design-is-code` plugin is older than the latest GitHub release, an
+  "Update plugin" banner appears next to "Run it for me" with the new
+  version + changelog link + a one-click installer. Skip-for-session
+  also available.
+- **Boundary box auto-fit.** Participant boxes in the live SVG measure
+  their rendered text width (`getBBox()`) instead of guessing 8px/char,
+  so long names like `LineSubtotalCalculator` never clip.
+
+### Changed
+- **Renamed to "DisC Studio"** (user-facing). `<title>`, `<h1>`,
+  README all reframed: DisC owns codegen; the Studio owns design
+  authoring. The Java package, Gradle artifact name, plugin slug, and
+  repo URL are unchanged — this is a Tier-1 brand rename.
+- **PlantUML emitter** uses the SUT-anchored arrow style from the
+  canonical `.puml` corpus: returns emit `<--` (dashed) instead of
+  `<-` (solid), and the boundary marker `[*]` always anchors the left
+  side of every line — both for entry (`[*] -> SUT`) and final return
+  (`[*] <-- SUT`). Visually distinguishes returns from forward calls.
+- **DisC step-name display** synced to the v0.5.1 SKILL: `Validate
+  Inputs` → `Validate Design`, `Classify` → `Classify Participants`,
+  `Discover Context` → `Resolve Targets`, `Generate` → `Generate
+  Tests`, `Quality Gate` → `Check Tests`, `Implement` → `Generate
+  Implementation`. Step numbers unchanged. The run-event regex is
+  number-only so live event mapping was unaffected; this is display
+  only.
+- **Participant cards** drop the noisy CALLER/IMPL header badges —
+  premature surface for half-shipped affordances. Grid `minmax` raised
+  from 13rem to 18rem so cards have room for typical method signatures;
+  method line wraps within the card instead of ellipsizing.
+- **Plugin-update flash** simplified. The post-update pill no longer
+  says "restart Claude Code" (nothing needs restarting — each "Run it
+  for me" spawns a fresh `claude` process that picks up the new
+  plugin). Reads `DisC plugin updated to v<X> ✓` then settles to the
+  normal status pill.
+- **Story textarea placeholder** changed from a concrete example to
+  the canonical three-part template `As a <role>, I want to <action>,
+  so that <outcome>.` Teaches the shape, not just the tone.
+- **Step 2 terminology cleanup**: `+ new class` → `+ new participant`;
+  `N classes` counter → `N participants`. Matches the participant data
+  model.
+- **Modal copy**: "generate a stub class alongside the interface" →
+  "also generate the implementation class alongside the interface."
+  Stub was misleading — DisC emits a real implementation.
+
+### Breaking
+- **Hand-built designs need a SUT.** DisC v0.5.x refuses any `.puml`
+  without exactly one `system_caller`. Loading either demo handles
+  this automatically. For hand-built designs, click `+ SUT` on the
+  participant that is your entry point — Studio adds the boundary
+  steps for you. Pre-v0.4.0 designs saved before this release will
+  need the SUT marked before they can be re-run.
+- **The CALLER and IMPL badges on participant cards are gone.** No
+  behavior change beyond visual — the underlying `implByDefault` flag
+  is still stored on each participant.
+
+[v0.4.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.4.0
+
 ## [v0.3.0] - 2026-05-10
 
 Public-ready polish: the wizard no longer auto-fills with demo data, you
