@@ -5,6 +5,37 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.4.1] - 2026-05-12
+
+DisC Studio is now downloadable. Grab `disc-studio-0.4.1.jar` from the
+Release page, `java -jar`, open `localhost:8080` — no clone or Gradle
+required.
+
+### Added
+- **Downloadable jar.** `./gradlew bootJar` produces a single fat jar
+  (`disc-studio-0.4.1.jar`, ~30MB) attached to the GitHub Release. Run
+  with `java -jar disc-studio-0.4.1.jar` on any machine with Java 21+.
+
+### Changed
+- **README restructured around "download-and-run" first.** New Quick
+  start section leads with the jar path. Running from source demoted
+  into a Development section for contributors.
+
+### Fixed
+- **Composer step number off-by-N.** The "Add step N" composer was
+  counting fragment markers (`loop`, `else`, `end`) and SUT boundary
+  edges (`[*] -> SUT`, `[*] <-- SUT`) as steps, so "Step 9" would
+  appear above a list whose last CALL badge read "7". Now counts CALL
+  rows only, matching the badges.
+
+### Removed
+- **Dead `/api/disc-steps` endpoint.** The Java controller, the
+  `loadDiscSteps()` JS indirection, and the on-disk skill bundle were
+  serving a path that no longer had a frontend consumer. The run
+  checklist now reads from a hardcoded `DISC_STEPS` constant in
+  `app.js` (the run-event regex matches step numbers only, so a title
+  mismatch couldn't break event mapping anyway). Net –80 lines.
+
 ## [v0.4.0] - 2026-05-12
 
 The wizard grew up. It's now **DisC Studio** — the companion editor for
@@ -113,6 +144,7 @@ flow) cover both ends of the complexity gradient.
   behavior change beyond visual — the underlying `implByDefault` flag
   is still stored on each participant.
 
+[v0.4.1]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.4.1
 [v0.4.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.4.0
 
 ## [v0.3.0] - 2026-05-10

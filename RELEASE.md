@@ -111,6 +111,18 @@ When the changelog draft is approved:
 3. **Ask before pushing the tag.** Then `git push origin <vX.Y.Z>`.
 4. **Create the GitHub Release.** Two paths — try the first; if it fails, fall back.
 
+   Build the redistributable jar first — it's attached to the release so people can download and `java -jar` without cloning:
+   ```sh
+   ./gradlew bootJar
+   ls build/libs/disc-studio-<X.Y.Z>.jar         # confirm it exists
+   ```
+   Smoke-test it locally before publishing (boot, hit `/`, then stop):
+   ```sh
+   java -jar build/libs/disc-studio-<X.Y.Z>.jar &
+   sleep 8 && curl -sI http://localhost:8080/ | head -1   # expect 200 OK
+   kill %1
+   ```
+
    **Path A — `gh` CLI:**
    ```sh
    gh auth status        # check first
@@ -119,11 +131,12 @@ When the changelog draft is approved:
    ```sh
    gh release create <vX.Y.Z> \
      --title "<vX.Y.Z> — <headline from changelog>" \
-     --notes "<changelog section body>"
+     --notes "<changelog section body>" \
+     build/libs/disc-studio-<X.Y.Z>.jar
    ```
 
    **Path B — web UI (use when `gh` not logged in or device flow stuck):**
-   Tell the user: open this URL, paste the title and the changelog section into the form, click Publish. URL pattern (substitute owner/repo from `git remote get-url origin`):
+   Tell the user: open this URL, paste the title and the changelog section into the form, drag-and-drop `build/libs/disc-studio-<X.Y.Z>.jar` into the assets area, click Publish. URL pattern (substitute owner/repo from `git remote get-url origin`):
    ```
    https://github.com/<owner>/<repo>/releases/new?tag=<vX.Y.Z>
    ```
@@ -168,7 +181,7 @@ Done. **Do not** delete branches, remove "runbook" files, or do any cleanup unle
 ## What this doc deliberately omits
 
 - **Pre-release testing.** Assume the user ran tests before saying "release it." If you suspect they didn't, ask once; don't gate the release on it.
-- **Build artifacts (jar, dockerfile, etc).** This project doesn't ship binaries — Gradle build is the user's local concern.
+- **Dockerfile, native-image, multi-platform binaries.** Out of scope today. The release ships a single fat jar (`./gradlew bootJar` → `build/libs/disc-studio-<X.Y.Z>.jar`); Step 5 attaches it.
 - **CI / signing / notarization.** None apply.
 - **Communication / announcements.** None for this project.
 

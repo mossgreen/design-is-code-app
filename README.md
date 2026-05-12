@@ -2,16 +2,22 @@
 
 The companion editor for the [DisC](https://github.com/mossgreen/design-is-code-plugin) methodology. Compose a sequence-diagram-driven design — participants, methods, decision tables, calls, loops, creates — and emit the `.puml` (plus any `.decision.md` sidecars) that DisC consumes to generate tests and implementation.
 
-DisC Studio is intentionally thin: DisC owns codegen; the Studio owns design authoring. The app stays focused on **producing one valid UML sequence diagram**, with everything DisC needs (target package, well-formed call/return arrows, `<<create>>` and `loop` fragments, decision-table sidecars).
+DisC Studio is intentionally thin: DisC owns codegen; the Studio owns design authoring.
 
-## How it works
+## Quick start
 
-Four steps, top to bottom:
+Requires **Java 21 or newer** (`java -version` to check; install via [SDKMAN](https://sdkman.io/) `sdk install java 21-tem` or [Adoptium](https://adoptium.net/temurin/releases/?version=21)).
 
-1. **User Story** — write the natural-language requirement.
-2. **Designer** — define participants (interfaces with typed methods), then compose the call sequence one interaction at a time. Live SVG preview updates as you go.
-3. **Review** — read-only snapshot: story, participant list, frozen diagram. The hand-off point.
-4. **Generate** — pick the target Java package, name the file, save into your project's `design/` folder, and run `/design-is-code:disc <file>` from Claude Code (or click "Run it for me" to shell out automatically).
+1. Download `disc-studio-<version>.jar` from the [latest Release](https://github.com/mossgreen/design-is-code-app/releases/latest).
+2. Run it:
+
+   ```sh
+   java -jar disc-studio-0.4.1.jar
+   ```
+
+3. Open <http://localhost:8080> and click **Load simple demo** to see the editor end-to-end.
+
+That's it. `Ctrl-C` in the terminal stops the app.
 
 ## Demo
 
@@ -23,94 +29,16 @@ The result of DisC consuming the generated `.puml` (tests + implementation produ
 
 ![DisC run result](screenshots/disc_run_result.png)
 
-## Requirements
+## How it works
 
-- **Java 21 or newer.** Spring Boot 4 requires Java 21; older JDKs will fail at startup with `UnsupportedClassVersionError`.
+Four steps, top to bottom:
 
-  Check what you have:
+1. **User Story** — write the natural-language requirement.
+2. **Designer** — define participants (interfaces with typed methods), then compose the call sequence one interaction at a time. Live SVG preview updates as you go.
+3. **Review** — read-only snapshot: story, participant list, frozen diagram. The hand-off point.
+4. **Generate** — pick the target Java package, name the file, save into your project's `design/` folder, and run `/design-is-code:disc <file>` from Claude Code (or click "Run it for me" to shell out automatically).
 
-  ```sh
-  java -version
-  ```
-
-  If you're on Java 17 or older, install JDK 21:
-
-  - **macOS / Linux** (recommended): [SDKMAN](https://sdkman.io/) — `sdk install java 21-tem`
-  - **Any platform**: download from [Adoptium](https://adoptium.net/temurin/releases/?version=21)
-
-- **Optional, for the "Run it for me" button only**: the [`claude` CLI](https://docs.claude.com/en/docs/claude-code) on your `PATH`, plus the [`design-is-code` plugin](https://github.com/mossgreen/design-is-code-plugin) installed in your Claude Code profile. Without these, you can still build and copy the `.puml` — you just lose the in-app code-generation step.
-
-## Running locally
-
-```sh
-./gradlew bootRun
-```
-
-Open <http://localhost:8080>. The demo seed loads with a complete invoice-generation flow (4 participants, 4 calls, 1 create, 1 loop) so you can click through end-to-end without typing anything first.
-
-To restart cleanly if a prior run is still holding the port:
-
-```sh
-lsof -ti :8080 | xargs kill 2>/dev/null
-./gradlew bootRun
-```
-
-## What gets emitted
-
-For the seeded demo flow, the app produces:
-
-```plantuml
-@startuml
-' @package com.example.invoice
-InvoiceService -> OrderRepository : findAllByCustomerId(customerId: UUID)
-InvoiceService <- OrderRepository : List<Order>
-InvoiceService -> InvoiceBuilderFactory : create()
-create InvoiceBuilder
-InvoiceBuilderFactory --> InvoiceService : InvoiceBuilder
-loop for each order in orders
-  InvoiceService -> InvoiceBuilder : addLine(order: Order)
-end
-InvoiceService -> InvoiceBuilder : build()
-InvoiceService <- InvoiceBuilder : Invoice
-@enduml
-```
-
-The `' @package …` header is DisC's `target_placement` declaration — required by the `disc` skill before it will generate any code.
-
-## Testing
-
-A Playwright e2e suite lives in [`e2e/`](e2e/). It drives Chromium against a running app and verifies the editor renders, the fragment composer (alt / opt / par / loop / while / for-each) inserts the right rows, and the emitted PlantUML contains the expected keywords. Fourteen tests, ~22s.
-
-You need **two terminals**: one to run the app, one to run the tests.
-
-**Terminal 1 — start the app and leave it running:**
-
-```sh
-./gradlew bootRun
-```
-
-Wait for `Started DesignIsCodeApplication`. Then in **Terminal 2**:
-
-```sh
-cd e2e
-npm install                       # first time only
-npx playwright install chromium   # first time only
-npx playwright test
-```
-
-When you're done, `Ctrl-C` Terminal 1 to stop the app.
-
-Headed mode (visible browser, useful for debugging) is `npx playwright test --headed`. Passing-run screenshots are committed at [e2e/screenshots/](e2e/screenshots/); failure artifacts (screenshot + trace) land in `e2e/test-results/` and are gitignored.
-
-> **Heads up if you're poking the app manually:** the editor starts on **Step 1 (User Story)** — a textarea and a "Continue →" button. The participant cards, fragment buttons, and live SVG diagram only appear on **Step 2** after you click Continue.
-
-## Stack
-
-- **Backend** — Spring Boot 4 (Java 21, Tomcat, Gradle).
-- **Frontend** — vanilla HTML / CSS / JS. No framework, no build step. The live sequence diagram is hand-rolled SVG.
-- **Backend endpoints** — `/api/scan` (project scan), `/api/design` (save `.puml`), `/api/run-disc` (shell out to `claude` CLI, stream output back).
-
-## How "Run it for me" works
+## "Run it for me" — optional
 
 The Step-4 "Run it for me" button shells out to:
 
@@ -118,11 +46,30 @@ The Step-4 "Run it for me" button shells out to:
 claude --dangerously-skip-permissions -p /design-is-code:disc <file>
 ```
 
-…and streams the CLI's output back into the app. The `claude` CLI and the `design-is-code` plugin are listed under [Requirements](#requirements). Without them, you can still copy the `.puml` and run DisC yourself anywhere the CLI is available.
+…and streams the CLI's output back into the app. It requires the [`claude` CLI](https://docs.claude.com/en/docs/claude-code) on your `PATH` and the [`design-is-code` plugin](https://github.com/mossgreen/design-is-code-plugin) installed in your Claude Code profile. Without those, the rest of the editor still works — copy the `.puml` and run DisC manually wherever the CLI is available.
+
+## Development
+
+Build and run from source:
+
+```sh
+./gradlew bootRun
+```
+
+Then open <http://localhost:8080>. To produce the redistributable jar:
+
+```sh
+./gradlew bootJar
+# build/libs/disc-studio-<version>.jar
+```
+
+**Stack:** Spring Boot 4 / Java 21 / vanilla HTML+CSS+JS / hand-rolled SVG. No frontend build step.
+
+**E2E tests** live in [`e2e/`](e2e/) (Playwright against a running app). Start the app in one terminal, then in another: `cd e2e && npm install && npx playwright install chromium && npx playwright test`.
 
 ## Releasing
 
-See [RELEASE.md](RELEASE.md) — version bump, tag, GitHub Release, all in one screen of copy-paste commands.
+See [RELEASE.md](RELEASE.md) — version bump, tag, GitHub Release, jar attachment, all in one screen of copy-paste commands.
 
 ## Status
 
