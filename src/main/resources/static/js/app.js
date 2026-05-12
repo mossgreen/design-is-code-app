@@ -409,7 +409,7 @@ function renderParticipants() {
     const list = step2Els.participantsList;
     list.innerHTML = '';
     const n = state.participants.length;
-    step2Els.participantsCount.textContent = `${n} class${n === 1 ? '' : 'es'}`;
+    step2Els.participantsCount.textContent = `${n} participant${n === 1 ? '' : 's'}`;
 
     state.participants.forEach((p, idx) => {
         const card = document.createElement('button');
@@ -458,7 +458,7 @@ function renderParticipants() {
     const addTile = document.createElement('button');
     addTile.type = 'button';
     addTile.className = 'pc-add-tile';
-    addTile.textContent = '+ new class';
+    addTile.textContent = '+ new participant';
     addTile.addEventListener('click', () => {
         const p = makeParticipant();
         state.participants.push(p);
@@ -2123,15 +2123,15 @@ function flashRestartRequired(newVersion) {
 // --- Step-checklist state for the "Run it for me" panel ---
 //
 // Pulled from /api/disc-steps on first use; cached so we don't refetch every
-// run. The fallback list mirrors the DisC v0.2.1 SKILL.md so users running
+// run. The fallback list mirrors the DisC v0.5.1 SKILL.md so users running
 // against a different skill version still see something sensible.
 const FALLBACK_DISC_STEPS = [
-    { n: 1, title: 'Validate Inputs' },
-    { n: 2, title: 'Classify' },
-    { n: 3, title: 'Discover Context' },
-    { n: 4, title: 'Generate' },
-    { n: 5, title: 'Quality Gate' },
-    { n: 6, title: 'Implement' },
+    { n: 1, title: 'Validate Design' },
+    { n: 2, title: 'Classify Participants' },
+    { n: 3, title: 'Resolve Targets' },
+    { n: 4, title: 'Generate Tests' },
+    { n: 5, title: 'Check Tests' },
+    { n: 6, title: 'Generate Implementation' },
     { n: 7, title: 'Write Files' },
     { n: 8, title: 'Report' }
 ];

@@ -26,7 +26,7 @@ public class StreamJsonMapper {
     /**
      * Matches "Step N" inside assistant prose — used to advance the checklist.
      * Strict by design: the user wants no inference. Examples it accepts:
-     *   "## Step 3: Discover Context"
+     *   "## Step 3: Resolve Targets"
      *   "Step 5"
      *   "### Step 7: Write Files"
      */

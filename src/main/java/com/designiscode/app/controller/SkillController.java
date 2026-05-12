@@ -32,7 +32,7 @@ public class SkillController {
     private static final Path SKILL_PATH =
             Paths.get(".claude/skills/disc/SKILL.md").toAbsolutePath().normalize();
 
-    /** Matches `### Step 1: Validate Inputs` (1-3 hashes, integer step number). */
+    /** Matches `### Step 1: Validate Design` (1-3 hashes, integer step number). */
     private static final Pattern STEP_HEADING =
             Pattern.compile("^#{1,3}\\s*Step\\s+(\\d+):\\s*(.+?)\\s*$");
 
