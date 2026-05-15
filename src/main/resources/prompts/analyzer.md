@@ -40,7 +40,18 @@ to add a 5th sibling or a 5th level, consolidate or stop.
 **Strict JSON. No prose. No markdown fences. The very first character of your
 output must be `{` and the very last must be `}`.**
 
-Schema (the root node — children follow the same shape recursively):
+The top-level shape has TWO fields:
+
+```
+{
+  "tree":  { ...the recursive node shape below... },
+  "story": "..."
+}
+```
+
+## `tree` — the recursive node shape
+
+Each node:
 
 ```
 {
@@ -53,7 +64,7 @@ Schema (the root node — children follow the same shape recursively):
 }
 ```
 
-## Rules for fields
+### Rules for tree fields
 
 - `name` — PascalCase, no `Impl`/`Default` suffixes (these are interfaces, not
   implementations). Don't add `Service`/`Manager`/`Handler` unless the
@@ -69,6 +80,28 @@ Schema (the root node — children follow the same shape recursively):
 - `children` — `[]` when `isLeaf` is true. Otherwise the direct collaborators
   this abstraction calls. Each child is a separate concept, not a sub-method.
 
+## `story` — a short prose narrative
+
+A single paragraph, **3–5 sentences**, that explains what the system does in
+plain English. This is read by humans, not by code.
+
+### Rules for the story
+
+- **Mention every abstraction by name at least once.** Each tree node's
+  `name` field should appear somewhere in the story.
+- **Every occurrence of a participant name MUST be wrapped in square
+  brackets**: write `[OrderCheckout]`, not `OrderCheckout`. The brackets are
+  parsed by the client to colour-code mentions, so wrap every appearance,
+  not just the first.
+- **Active voice, present tense.** "The [Scheduler] books a meeting." Not
+  "A meeting is booked by the Scheduler."
+- **Describe the flow, not the structure.** "The [Scheduler] asks the
+  [CalendarRepository] for free slots" — not "The Scheduler has a dependency
+  on a CalendarRepository."
+- **No markdown, no code blocks, no headings.** Just a paragraph.
+- **No JSON inside the story.** The story is a single string literal in the
+  enclosing JSON; escape inner quotes if needed.
+
 # Example
 
 Input: *"Schedule a meeting at a time that works for all attendees."*
@@ -76,46 +109,49 @@ Input: *"Schedule a meeting at a time that works for all attendees."*
 Output:
 ```
 {
-  "name": "MeetingScheduler",
-  "purpose": "Books a meeting time that works for all attendees.",
-  "attributes": [],
-  "behaviors": [
-    { "name": "schedule", "args": [{"name":"request","type":"MeetingRequest"}], "returns": "Meeting" }
-  ],
-  "isLeaf": false,
-  "children": [
-    {
-      "name": "CalendarRepository",
-      "purpose": "Reads and writes attendees' calendar entries.",
-      "attributes": [],
-      "behaviors": [
-        { "name": "loadFor",     "args": [{"name":"attendees","type":"List<Attendee>"}], "returns": "List<Calendar>" },
-        { "name": "recordBlock", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
-      ],
-      "isLeaf": true,
-      "children": []
-    },
-    {
-      "name": "AvailabilityFinder",
-      "purpose": "Computes the earliest overlap of free slots across calendars.",
-      "attributes": [],
-      "behaviors": [
-        { "name": "firstOverlap", "args": [{"name":"calendars","type":"List<Calendar>"},{"name":"duration","type":"Duration"}], "returns": "TimeSlot" }
-      ],
-      "isLeaf": true,
-      "children": []
-    },
-    {
-      "name": "InviteDispatcher",
-      "purpose": "Sends meeting invites once the slot is chosen.",
-      "attributes": [],
-      "behaviors": [
-        { "name": "send", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
-      ],
-      "isLeaf": true,
-      "children": []
-    }
-  ]
+  "tree": {
+    "name": "MeetingScheduler",
+    "purpose": "Books a meeting time that works for all attendees.",
+    "attributes": [],
+    "behaviors": [
+      { "name": "schedule", "args": [{"name":"request","type":"MeetingRequest"}], "returns": "Meeting" }
+    ],
+    "isLeaf": false,
+    "children": [
+      {
+        "name": "CalendarRepository",
+        "purpose": "Reads and writes attendees' calendar entries.",
+        "attributes": [],
+        "behaviors": [
+          { "name": "loadFor",     "args": [{"name":"attendees","type":"List<Attendee>"}], "returns": "List<Calendar>" },
+          { "name": "recordBlock", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
+        ],
+        "isLeaf": true,
+        "children": []
+      },
+      {
+        "name": "AvailabilityFinder",
+        "purpose": "Computes the earliest overlap of free slots across calendars.",
+        "attributes": [],
+        "behaviors": [
+          { "name": "firstOverlap", "args": [{"name":"calendars","type":"List<Calendar>"},{"name":"duration","type":"Duration"}], "returns": "TimeSlot" }
+        ],
+        "isLeaf": true,
+        "children": []
+      },
+      {
+        "name": "InviteDispatcher",
+        "purpose": "Sends meeting invites once the slot is chosen.",
+        "attributes": [],
+        "behaviors": [
+          { "name": "send", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
+        ],
+        "isLeaf": true,
+        "children": []
+      }
+    ]
+  },
+  "story": "The [MeetingScheduler] orchestrates the booking flow. It asks the [CalendarRepository] for everyone's calendars, hands them to the [AvailabilityFinder] to compute the earliest overlap that fits the requested duration, and once a slot is chosen the [InviteDispatcher] sends invites to all attendees. The [CalendarRepository] also records the new meeting block so future scheduling sees it."
 }
 ```
 
@@ -128,4 +164,7 @@ Why each child is a leaf — one termination reason each:
 - `InviteDispatcher` — a single method on a platform type (an HTTP / SMTP
   send). The transport is out of scope.
 
-# Now produce the tree for the input at the top of this prompt.
+Notice how the `story` mentions each name in `[brackets]` every time, reads
+as plain English, and describes the flow rather than the structure.
+
+# Now produce the analysis for the input at the top of this prompt.

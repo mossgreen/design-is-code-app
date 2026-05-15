@@ -12,9 +12,12 @@ const state = {
     sutParticipantId: null,
     // Concept-tree state. tree is populated by POST /api/analyze on enterStep2
     // when a user story is set; null means "haven't analysed yet" or
-    // "manual mode" (Start empty). analyzeError is set when claude is missing
-    // or the call fails — falls back to manual participant authoring.
+    // "manual mode" (Start empty). story is the prose narrative rendered
+    // above the participant cards (tree is preserved as latent context, not
+    // visualised). analyzeError is set when claude is missing or the call
+    // fails — falls back to manual participant authoring.
     tree: null,
+    story: '',
     analyzeError: null,
     analyzing: false
 };
@@ -218,8 +221,8 @@ const step2Els = {
     analyzeBanner: document.getElementById('analyze-banner'),
     analyzeBannerText: document.getElementById('analyze-banner-text'),
     analyzeBannerAction: document.getElementById('analyze-banner-action'),
-    conceptTreeSection: document.getElementById('concept-tree-section'),
-    conceptTree: document.getElementById('concept-tree'),
+    storyNarrativeSection: document.getElementById('story-narrative-section'),
+    storyNarrative: document.getElementById('story-narrative'),
     startEmptyBtn: document.getElementById('start-empty-btn')
 };
 
@@ -380,7 +383,7 @@ function enterStep2() {
         step2Els.storyEcho.classList.add('hidden');
     }
     populateTypesDatalist();
-    renderConceptTree();
+    renderStoryNarrative();
     renderParticipants();
     renderSequence();
     maybeAnalyzeStory();
@@ -413,9 +416,14 @@ async function runAnalyze(context) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
-        state.tree = data;
-        state.participants = flattenTreeToParticipants(data);
-        renderConceptTree();
+        // New analyser contract: {tree, story}. Tolerate the older shape
+        // (root tree object directly) so a stale-prompt response still works.
+        const tree  = (data && data.tree)  || (data && data.name ? data : null);
+        const story = (data && data.story) || '';
+        state.tree = tree;
+        state.story = story;
+        state.participants = flattenTreeToParticipants(tree);
+        renderStoryNarrative();
         renderParticipants();
         renderSequence();
         hideAnalyzeBanner();
@@ -451,111 +459,84 @@ function hideAnalyzeBanner() {
     if (step2Els.analyzeBanner) step2Els.analyzeBanner.classList.add('hidden');
 }
 
-// --- Concept tree view ---
+// --- Story narrative (replaces the concept-tree visualisation) ---
+//
+// The analyser returns {tree, story}. We keep state.tree as latent context
+// for future features (expand-further, sequence suggestion), but render
+// only the story prose here — coloured per participant so the user can
+// follow the link from "name in the paragraph" to "card below".
 
-function renderConceptTree() {
-    if (!step2Els.conceptTreeSection || !step2Els.conceptTree) return;
-    if (!state.tree) {
-        step2Els.conceptTreeSection.classList.add('hidden');
-        step2Els.conceptTree.innerHTML = '';
+// Fixed palette, cycled by participant index. All six pass WCAG AA on
+// white. The hex values match the participant card's left-border
+// (--participant-color CSS var on .pc-card). If we ever need more than 6,
+// the cycle is graceful — just visually repeats.
+const PARTICIPANT_PALETTE = [
+    '#4338ca', // 0 indigo  — orchestrator / root
+    '#047857', // 1 emerald — repository / data
+    '#b45309', // 2 amber   — service / gateway
+    '#9f1239', // 3 rose    — validator / parser
+    '#0e7490', // 4 cyan    — notifier / dispatcher
+    '#6d28d9'  // 5 violet  — misc
+];
+
+function participantColor(name) {
+    if (!name) return null;
+    const idx = state.participants.findIndex(p => p.name === name);
+    if (idx < 0) return null;
+    return PARTICIPANT_PALETTE[idx % PARTICIPANT_PALETTE.length];
+}
+
+function renderStoryNarrative() {
+    const section = step2Els.storyNarrativeSection;
+    const target = step2Els.storyNarrative;
+    if (!section || !target) return;
+    if (!state.story) {
+        section.classList.add('hidden');
+        target.innerHTML = '';
         return;
     }
-    step2Els.conceptTreeSection.classList.remove('hidden');
-    step2Els.conceptTree.innerHTML = '';
-    step2Els.conceptTree.appendChild(buildTreeNode(state.tree));
-}
+    section.classList.remove('hidden');
+    target.innerHTML = '';
 
-function buildTreeNode(node) {
-    if (!node || typeof node !== 'object') return document.createTextNode('');
-    const wrap = document.createElement('div');
-    wrap.className = 'tree-node' + (node.isLeaf ? ' is-leaf' : '');
-
-    const head = document.createElement('div');
-    head.className = 'tree-node-head';
-    const name = document.createElement('span');
-    name.className = 'tree-node-name';
-    name.textContent = node.name || '(unnamed)';
-    head.appendChild(name);
-    const tag = document.createElement('span');
-    tag.className = 'tree-node-tag';
-    tag.textContent = node.isLeaf ? 'leaf' : 'orchestrates';
-    head.appendChild(tag);
-    wrap.appendChild(head);
-
-    if (node.purpose) {
-        const purpose = document.createElement('p');
-        purpose.className = 'tree-node-purpose';
-        purpose.textContent = node.purpose;
-        wrap.appendChild(purpose);
-    }
-
-    const attrs = node.attributes || [];
-    if (attrs.length > 0) {
-        const row = document.createElement('div');
-        row.className = 'tree-node-attrs';
-        const label = document.createElement('span');
-        label.className = 'tree-node-section-label';
-        label.textContent = 'has';
-        row.appendChild(label);
-        for (const a of attrs) {
-            const chip = document.createElement('span');
-            chip.className = 'tree-chip';
-            chip.textContent = `${a.name || '?'}: ${a.type || '?'}`;
-            row.appendChild(chip);
+    // Tokenise on [...] bracket pairs. Anything between brackets becomes a
+    // coloured participant reference; anything outside is plain prose. The
+    // regex is non-greedy and tolerant of brackets with names that aren't
+    // in state.participants (renders as muted text, not coloured).
+    const tokens = state.story.split(/(\[[^\]]+\])/g);
+    for (const t of tokens) {
+        if (!t) continue;
+        const match = t.match(/^\[([^\]]+)\]$/);
+        if (match) {
+            const name = match[1].trim();
+            const color = participantColor(name);
+            const span = document.createElement('span');
+            if (color) {
+                span.className = 'participant-ref';
+                span.style.setProperty('--participant-color', color);
+            } else {
+                span.className = 'participant-ref unknown';
+            }
+            span.textContent = name;
+            target.appendChild(span);
+        } else {
+            target.appendChild(document.createTextNode(t));
         }
-        wrap.appendChild(row);
     }
-
-    const behaviors = node.behaviors || [];
-    if (behaviors.length > 0) {
-        const row = document.createElement('div');
-        row.className = 'tree-node-behaviors';
-        const label = document.createElement('span');
-        label.className = 'tree-node-section-label';
-        label.textContent = 'does';
-        row.appendChild(label);
-        for (const b of behaviors) {
-            const chip = document.createElement('span');
-            chip.className = 'tree-chip behavior';
-            chip.textContent = behaviorSignature(b);
-            row.appendChild(chip);
-        }
-        wrap.appendChild(row);
-    }
-
-    const children = node.children || [];
-    if (children.length > 0) {
-        const kids = document.createElement('div');
-        kids.className = 'tree-children';
-        for (const c of children) kids.appendChild(buildTreeNode(c));
-        wrap.appendChild(kids);
-    }
-
-    return wrap;
 }
 
-function behaviorSignature(b) {
-    const args = (b.args || [])
-        .map(a => `${a.name || ''}${a.type ? ': ' + a.type : ''}`.trim())
-        .filter(Boolean)
-        .join(', ');
-    const ret = b.returns && b.returns !== 'void' ? `: ${b.returns}` : (b.returns === 'void' ? ': void' : '');
-    return `${b.name || '?'}(${args})${ret}`;
-}
-
-// "Start fresh" — drop the suggested tree and let the user author manually.
-// Clears participants too (they were derived from the tree). The existing
-// "+ new participant" UI takes over.
+// "Start fresh" — drop the suggested tree and story, let the user author
+// manually. The existing "+ new participant" UI takes over.
 if (step2Els.startEmptyBtn) {
     step2Els.startEmptyBtn.addEventListener('click', () => {
         if (state.participants.length > 0 && !confirm(
             'Clear the suggested abstractions and start with empty participants?'
         )) return;
         state.tree = null;
+        state.story = '';
         state.participants = [];
         state.sequence = [];
         state.sutParticipantId = null;
-        renderConceptTree();
+        renderStoryNarrative();
         renderParticipants();
         renderSequence();
     });
@@ -634,6 +615,9 @@ function renderParticipants() {
         if (idx === 0) card.classList.add('caller');
         if (state.sutParticipantId === p.id) card.classList.add('is-sut');
         card.dataset.id = p.id;
+        // Cycle through the participant palette so the card's left edge
+        // matches the colour of the same name in the story narrative.
+        card.style.setProperty('--participant-color', PARTICIPANT_PALETTE[idx % PARTICIPANT_PALETTE.length]);
 
         const previewMethods = p.methods.slice(0, 3).map(m => {
             return escapeHtml(methodPreviewSignature(m));

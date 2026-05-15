@@ -507,9 +507,9 @@ button.small {
     to { transform: rotate(360deg); }
 }
 
-/* --- Concept tree (Step 2: suggested abstractions) --- */
+/* --- Story narrative (Step 2: AI-suggested prose) --- */
 
-.concept-tree-section {
+.story-narrative-section {
     margin-bottom: 1.5rem;
     padding: 0.75rem 1rem 1rem;
     background: #fafbff;
@@ -517,17 +517,17 @@ button.small {
     border-radius: 6px;
 }
 
-.concept-tree-section .section-head {
-    margin-bottom: 0.75rem;
+.story-narrative-section .section-head {
+    margin-bottom: 0.5rem;
     align-items: baseline;
 }
 
-.concept-tree-section .section-head h3 {
+.story-narrative-section .section-head h3 {
     color: #4338ca;
     margin: 0;
 }
 
-.concept-tree-section .ghost-btn {
+.story-narrative-section .ghost-btn {
     margin-left: auto;
     padding: 0.3rem 0.7rem;
     border: 1px solid #c7d2fe;
@@ -537,91 +537,31 @@ button.small {
     font-size: 0.82rem;
     cursor: pointer;
 }
-.concept-tree-section .ghost-btn:hover { background: #eef2ff; }
+.story-narrative-section .ghost-btn:hover { background: #eef2ff; }
 
-.concept-tree { font-size: 0.9rem; }
-
-.tree-node {
-    position: relative;
-    padding: 0.6rem 0.75rem;
-    margin-bottom: 0.4rem;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-left: 3px solid #818cf8;
-    border-radius: 5px;
+.story-narrative {
+    margin: 0;
+    padding: 0.5rem 0;
+    color: #1f2937;
+    font-size: 0.95rem;
+    line-height: 1.6;
 }
 
-.tree-node.is-leaf { border-left-color: #10b981; }
-
-.tree-node-head {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
-}
-
-.tree-node-name {
+/* Each [Bracketed] mention in the story renders as one of these spans.
+   The colour is set inline via the --participant-color CSS custom property
+   so it matches the corresponding .pc-card below. */
+.participant-ref {
     font-weight: 600;
-    font-size: 0.94rem;
-    color: #111827;
+    color: var(--participant-color, #4338ca);
+    padding: 0 0.05em;
+    /* Subtle underline anchored to the brand colour for legibility. */
+    border-bottom: 1.5px solid var(--participant-color, #4338ca);
 }
 
-.tree-node-tag {
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 0.05rem 0.4rem;
-    border-radius: 3px;
-    background: #e0e7ff;
-    color: #4338ca;
-}
-.tree-node.is-leaf .tree-node-tag {
-    background: #d1fae5;
-    color: #047857;
-}
-
-.tree-node-purpose {
-    color: #4b5563;
-    font-style: italic;
-    margin: 0 0 0.4rem 0;
-    line-height: 1.45;
-}
-
-.tree-node-attrs, .tree-node-behaviors {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.3rem;
-}
-
-.tree-chip {
-    font-family: 'SF Mono', Menlo, monospace;
-    font-size: 0.78rem;
-    padding: 0.1rem 0.45rem;
-    border-radius: 3px;
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid #e5e7eb;
-}
-
-.tree-chip.behavior { background: #fef3c7; border-color: #fde68a; color: #78350f; }
-
-.tree-node-section-label {
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+.participant-ref.unknown {
     color: #9ca3af;
-    margin-right: 0.3rem;
-    align-self: center;
-}
-
-.tree-children {
-    margin-top: 0.5rem;
-    margin-left: 1.25rem;
-    padding-left: 0.75rem;
-    border-left: 1px dashed #c7d2fe;
+    border-bottom: 1.5px dotted #d1d5db;
+    font-weight: 500;
 }
 
 .typeahead { position: relative; }
@@ -1496,6 +1436,10 @@ button.small {
     padding: 0;
     background: #fff;
     border: 1px solid var(--border-2);
+    /* Coloured left edge that ties this card to its mention in the story
+       narrative above. The CSS var is set inline per-card in renderParticipants;
+       the fallback is transparent so manual-mode cards stay neutral. */
+    border-left: 3px solid var(--participant-color, transparent);
     border-radius: var(--radius);
     cursor: pointer;
     overflow: hidden;
