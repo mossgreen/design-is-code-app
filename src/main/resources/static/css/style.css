@@ -459,6 +459,171 @@ button.small {
     margin-bottom: 0.3rem;
 }
 
+.analyze-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.85rem;
+    margin-bottom: 1rem;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 6px;
+    color: #3730a3;
+    font-size: 0.88rem;
+}
+
+.analyze-banner.is-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+}
+
+.analyze-banner-action {
+    margin-left: auto;
+    padding: 0.25rem 0.65rem;
+    border: 1px solid currentColor;
+    background: transparent;
+    border-radius: 4px;
+    color: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.analyze-banner-action:hover { background: rgba(255,255,255,0.4); }
+
+.analyze-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: analyze-spin 0.8s linear infinite;
+    flex: 0 0 14px;
+}
+
+.analyze-banner.is-error .analyze-spinner { display: none; }
+
+@keyframes analyze-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* --- Concept tree (Step 2: suggested abstractions) --- */
+
+.concept-tree-section {
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem 1rem;
+    background: #fafbff;
+    border: 1px solid #e0e7ff;
+    border-radius: 6px;
+}
+
+.concept-tree-section .section-head {
+    margin-bottom: 0.75rem;
+    align-items: baseline;
+}
+
+.concept-tree-section .section-head h3 {
+    color: #4338ca;
+    margin: 0;
+}
+
+.concept-tree-section .ghost-btn {
+    margin-left: auto;
+    padding: 0.3rem 0.7rem;
+    border: 1px solid #c7d2fe;
+    background: #fff;
+    border-radius: 4px;
+    color: #4338ca;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+.concept-tree-section .ghost-btn:hover { background: #eef2ff; }
+
+.concept-tree { font-size: 0.9rem; }
+
+.tree-node {
+    position: relative;
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.4rem;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-left: 3px solid #818cf8;
+    border-radius: 5px;
+}
+
+.tree-node.is-leaf { border-left-color: #10b981; }
+
+.tree-node-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+
+.tree-node-name {
+    font-weight: 600;
+    font-size: 0.94rem;
+    color: #111827;
+}
+
+.tree-node-tag {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+    background: #e0e7ff;
+    color: #4338ca;
+}
+.tree-node.is-leaf .tree-node-tag {
+    background: #d1fae5;
+    color: #047857;
+}
+
+.tree-node-purpose {
+    color: #4b5563;
+    font-style: italic;
+    margin: 0 0 0.4rem 0;
+    line-height: 1.45;
+}
+
+.tree-node-attrs, .tree-node-behaviors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+}
+
+.tree-chip {
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 0.78rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 3px;
+    background: #f3f4f6;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+}
+
+.tree-chip.behavior { background: #fef3c7; border-color: #fde68a; color: #78350f; }
+
+.tree-node-section-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #9ca3af;
+    margin-right: 0.3rem;
+    align-self: center;
+}
+
+.tree-children {
+    margin-top: 0.5rem;
+    margin-left: 1.25rem;
+    padding-left: 0.75rem;
+    border-left: 1px dashed #c7d2fe;
+}
+
 .typeahead { position: relative; }
 
 .suggestions {

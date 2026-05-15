@@ -100,6 +100,21 @@
             <p class="help">Define the cast, compose the call sequence one step at a time, watch the diagram render live.</p>
             <div class="story-context hidden" id="story-echo"></div>
 
+            <div class="analyze-banner hidden" id="analyze-banner" role="status" aria-live="polite">
+                <span class="analyze-spinner" aria-hidden="true"></span>
+                <span class="analyze-banner-text" id="analyze-banner-text">Analysing your story…</span>
+                <button type="button" class="analyze-banner-action hidden" id="analyze-banner-action"></button>
+            </div>
+
+            <div class="concept-tree-section hidden" id="concept-tree-section">
+                <div class="section-head">
+                    <h3>Suggested abstractions</h3>
+                    <span class="hint inline">A tree of the concepts in your story. The Participants below are derived from this — edit them there.</span>
+                    <button type="button" class="ghost-btn" id="start-empty-btn">Start fresh</button>
+                </div>
+                <div id="concept-tree" class="concept-tree"></div>
+            </div>
+
             <div class="section-block">
                 <div class="section-head">
                     <h3>Participants</h3>

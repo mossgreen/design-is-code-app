@@ -9,7 +9,14 @@ const state = {
     // wizard auto-manages the entry interaction ([*] -> SUT) and final
     // return ([*] <-- SUT) steps. DisC requires exactly one system_caller
     // per .puml; this is how we author it.
-    sutParticipantId: null
+    sutParticipantId: null,
+    // Concept-tree state. tree is populated by POST /api/analyze on enterStep2
+    // when a user story is set; null means "haven't analysed yet" or
+    // "manual mode" (Start empty). analyzeError is set when claude is missing
+    // or the call fails — falls back to manual participant authoring.
+    tree: null,
+    analyzeError: null,
+    analyzing: false
 };
 
 // Java package name validator: at least two segments, each starting with a
@@ -207,7 +214,13 @@ const step2Els = {
     modalDone: document.getElementById('modal-done'),
     modalImpl: document.getElementById('modal-impl'),
     modalMethodsCount: document.getElementById('modal-methods-count'),
-    participantsCount: document.getElementById('participants-count')
+    participantsCount: document.getElementById('participants-count'),
+    analyzeBanner: document.getElementById('analyze-banner'),
+    analyzeBannerText: document.getElementById('analyze-banner-text'),
+    analyzeBannerAction: document.getElementById('analyze-banner-action'),
+    conceptTreeSection: document.getElementById('concept-tree-section'),
+    conceptTree: document.getElementById('concept-tree'),
+    startEmptyBtn: document.getElementById('start-empty-btn')
 };
 
 function escapeHtml(s) {
@@ -284,6 +297,32 @@ function makeMethod(name = '', inputs = [], output = '') {
     return { id: newId(), name, inputs, output };
 }
 
+// Walk a concept-tree (depth-first) and produce the participant array the
+// rest of the wizard already consumes. The hierarchy is a design aid for the
+// user; once flattened, parent/child relationships disappear — what survives
+// is the set of named interfaces and their methods. Behaviors[].args become
+// method inputs; behaviors[].returns becomes method output.
+function flattenTreeToParticipants(root) {
+    if (!root || typeof root !== 'object') return [];
+    const out = [];
+    function visit(node) {
+        if (!node || typeof node !== 'object') return;
+        const name = (node.name || '').trim();
+        if (name) {
+            const methods = (node.behaviors || []).map(b => {
+                const inputs = (b.args || [])
+                    .filter(a => a && (a.name || a.type))
+                    .map(a => ({ name: a.name || '', type: a.type || '' }));
+                return makeMethod(b.name || '', inputs, b.returns || '');
+            });
+            out.push({ id: newId(), name, implByDefault: true, methods });
+        }
+        for (const c of (node.children || [])) visit(c);
+    }
+    visit(root);
+    return out;
+}
+
 function findParticipant(id) { return state.participants.find(p => p.id === id); }
 function findMethod(participantId, methodId) {
     const p = findParticipant(participantId);
@@ -341,8 +380,185 @@ function enterStep2() {
         step2Els.storyEcho.classList.add('hidden');
     }
     populateTypesDatalist();
+    renderConceptTree();
     renderParticipants();
     renderSequence();
+    maybeAnalyzeStory();
+}
+
+// Auto-analyse the user's story when entering Step 2 *for the first time*.
+// Guards:
+//  - story exists (nothing to analyse otherwise)
+//  - state.tree is null (haven't analysed yet OR user explicitly chose
+//    "Start empty" — both mean: don't auto-trigger)
+//  - no participants yet (demos seed participants directly; don't clobber)
+//  - not already analysing (re-entry from goToStep shouldn't re-fire)
+function maybeAnalyzeStory() {
+    if (!state.userStory) return;
+    if (state.tree) return;
+    if (state.participants.length > 0) return;
+    if (state.analyzing) return;
+    runAnalyze(state.userStory);
+}
+
+async function runAnalyze(context) {
+    state.analyzing = true;
+    state.analyzeError = null;
+    showAnalyzeBanner('Analysing your story…', { spinning: true });
+    try {
+        const res = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ context })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
+        state.tree = data;
+        state.participants = flattenTreeToParticipants(data);
+        renderConceptTree();
+        renderParticipants();
+        renderSequence();
+        hideAnalyzeBanner();
+    } catch (err) {
+        state.analyzeError = err.message;
+        showAnalyzeBanner(
+            'Couldn\'t suggest abstractions: ' + err.message + '. Add participants manually below.',
+            { spinning: false, error: true, dismissable: true }
+        );
+    } finally {
+        state.analyzing = false;
+    }
+}
+
+function showAnalyzeBanner(text, opts = {}) {
+    const b = step2Els.analyzeBanner;
+    if (!b) return;
+    b.classList.remove('hidden');
+    b.classList.toggle('is-error', !!opts.error);
+    step2Els.analyzeBannerText.textContent = text;
+    const action = step2Els.analyzeBannerAction;
+    if (opts.dismissable) {
+        action.textContent = 'Dismiss';
+        action.classList.remove('hidden');
+        action.onclick = hideAnalyzeBanner;
+    } else {
+        action.classList.add('hidden');
+        action.onclick = null;
+    }
+}
+
+function hideAnalyzeBanner() {
+    if (step2Els.analyzeBanner) step2Els.analyzeBanner.classList.add('hidden');
+}
+
+// --- Concept tree view ---
+
+function renderConceptTree() {
+    if (!step2Els.conceptTreeSection || !step2Els.conceptTree) return;
+    if (!state.tree) {
+        step2Els.conceptTreeSection.classList.add('hidden');
+        step2Els.conceptTree.innerHTML = '';
+        return;
+    }
+    step2Els.conceptTreeSection.classList.remove('hidden');
+    step2Els.conceptTree.innerHTML = '';
+    step2Els.conceptTree.appendChild(buildTreeNode(state.tree));
+}
+
+function buildTreeNode(node) {
+    if (!node || typeof node !== 'object') return document.createTextNode('');
+    const wrap = document.createElement('div');
+    wrap.className = 'tree-node' + (node.isLeaf ? ' is-leaf' : '');
+
+    const head = document.createElement('div');
+    head.className = 'tree-node-head';
+    const name = document.createElement('span');
+    name.className = 'tree-node-name';
+    name.textContent = node.name || '(unnamed)';
+    head.appendChild(name);
+    const tag = document.createElement('span');
+    tag.className = 'tree-node-tag';
+    tag.textContent = node.isLeaf ? 'leaf' : 'orchestrates';
+    head.appendChild(tag);
+    wrap.appendChild(head);
+
+    if (node.purpose) {
+        const purpose = document.createElement('p');
+        purpose.className = 'tree-node-purpose';
+        purpose.textContent = node.purpose;
+        wrap.appendChild(purpose);
+    }
+
+    const attrs = node.attributes || [];
+    if (attrs.length > 0) {
+        const row = document.createElement('div');
+        row.className = 'tree-node-attrs';
+        const label = document.createElement('span');
+        label.className = 'tree-node-section-label';
+        label.textContent = 'has';
+        row.appendChild(label);
+        for (const a of attrs) {
+            const chip = document.createElement('span');
+            chip.className = 'tree-chip';
+            chip.textContent = `${a.name || '?'}: ${a.type || '?'}`;
+            row.appendChild(chip);
+        }
+        wrap.appendChild(row);
+    }
+
+    const behaviors = node.behaviors || [];
+    if (behaviors.length > 0) {
+        const row = document.createElement('div');
+        row.className = 'tree-node-behaviors';
+        const label = document.createElement('span');
+        label.className = 'tree-node-section-label';
+        label.textContent = 'does';
+        row.appendChild(label);
+        for (const b of behaviors) {
+            const chip = document.createElement('span');
+            chip.className = 'tree-chip behavior';
+            chip.textContent = behaviorSignature(b);
+            row.appendChild(chip);
+        }
+        wrap.appendChild(row);
+    }
+
+    const children = node.children || [];
+    if (children.length > 0) {
+        const kids = document.createElement('div');
+        kids.className = 'tree-children';
+        for (const c of children) kids.appendChild(buildTreeNode(c));
+        wrap.appendChild(kids);
+    }
+
+    return wrap;
+}
+
+function behaviorSignature(b) {
+    const args = (b.args || [])
+        .map(a => `${a.name || ''}${a.type ? ': ' + a.type : ''}`.trim())
+        .filter(Boolean)
+        .join(', ');
+    const ret = b.returns && b.returns !== 'void' ? `: ${b.returns}` : (b.returns === 'void' ? ': void' : '');
+    return `${b.name || '?'}(${args})${ret}`;
+}
+
+// "Start fresh" — drop the suggested tree and let the user author manually.
+// Clears participants too (they were derived from the tree). The existing
+// "+ new participant" UI takes over.
+if (step2Els.startEmptyBtn) {
+    step2Els.startEmptyBtn.addEventListener('click', () => {
+        if (state.participants.length > 0 && !confirm(
+            'Clear the suggested abstractions and start with empty participants?'
+        )) return;
+        state.tree = null;
+        state.participants = [];
+        state.sequence = [];
+        state.sutParticipantId = null;
+        renderConceptTree();
+        renderParticipants();
+        renderSequence();
+    });
 }
 
 // --- Participants UI ---
