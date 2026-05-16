@@ -16,28 +16,6 @@
                 <h1>DisC Studio</h1>
                 <p class="tagline">Disciplined design, deterministic generation.</p>
             </div>
-            <div class="header-actions">
-                <button type="button" id="project-chip" class="project-chip" aria-expanded="false">
-                    <span class="chip-icon" aria-hidden="true">+</span>
-                    <span id="chip-label">Connect project</span>
-                </button>
-            </div>
-        </div>
-        <div id="project-panel" class="project-panel hidden">
-            <p class="help">Paste the absolute path to your Java / Spring project. Optional — it powers autocomplete, it isn't required.</p>
-            <form id="scan-form" autocomplete="off">
-                <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
-                <button type="submit" id="scan-btn">Scan</button>
-                <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
-            </form>
-            <div id="scan-status" class="status hidden">
-                <div class="spinner"></div>
-                <span id="status-text">Scanning project…</span>
-            </div>
-            <div id="scan-error" class="error hidden"></div>
-            <div id="scan-result" class="scan-summary hidden">
-                <span id="scan-summary-text"></span>
-            </div>
         </div>
     </header>
 
@@ -59,7 +37,37 @@
     <main>
         <section class="panel" id="panel-1">
             <h2>Step 1 · User story</h2>
-            <textarea id="story-input" rows="6" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;."></textarea>
+
+            <div class="step1-subblock" id="connect-project-block">
+                <div class="step1-subblock-head">
+                    <h3>Your project</h3>
+                    <span class="hint inline">Optional — used to ground the analysis in your existing code.</span>
+                </div>
+                <div id="project-panel" class="project-panel">
+                    <p class="help">Paste the absolute path to your Java / Spring project. DisC Studio uses it to suggest abstractions that fit your codebase. Skip it and suggestions come from the story alone.</p>
+                    <form id="scan-form" autocomplete="off">
+                        <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
+                        <button type="submit" id="scan-btn">Scan</button>
+                        <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
+                    </form>
+                    <div id="scan-status" class="status hidden">
+                        <div class="spinner"></div>
+                        <span id="status-text">Scanning project…</span>
+                    </div>
+                    <div id="scan-error" class="error hidden"></div>
+                    <div id="scan-result" class="scan-summary hidden">
+                        <span id="scan-summary-text"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step1-subblock">
+                <div class="step1-subblock-head">
+                    <h3>Your story</h3>
+                    <span class="hint inline">Describe what you want to build in plain English.</span>
+                </div>
+                <textarea id="story-input" rows="6" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;."></textarea>
+            </div>
             <div class="input-modes" aria-label="Additional input modes">
                 <button type="button" class="mode-btn" disabled aria-disabled="true" title="Voice input — coming soon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -106,7 +114,7 @@
                 <div class="section-head">
                     <h3>The story</h3>
                     <span class="hint inline">Plain-English summary of your design. Coloured names match the cards below.</span>
-                    <button type="button" class="ghost-btn" id="start-empty-btn">Start fresh</button>
+                    <button type="button" class="ghost-btn" id="edit-story-btn">Edit story</button>
                 </div>
                 <p id="story-narrative" class="story-narrative"></p>
             </div>
@@ -206,10 +214,8 @@
                     <span class="steps-chevron" aria-hidden="true">▸</span>
                     <h3>Steps</h3>
                     <span class="hint inline" id="sequence-hint">Click to edit, or leave the diagram as-is</span>
-                    <button type="button" class="compose-ai-btn hidden" id="compose-ai-btn" title="Use AI to suggest the call sequence based on your story and participants">✨ Compose with AI</button>
                     <span class="section-count" id="steps-count">0 added</span>
                 </summary>
-                <div class="compose-ai-status hidden" id="compose-ai-status" role="status" aria-live="polite"></div>
                 <div class="input-modes input-modes-section" aria-label="Additional input modes">
                     <button type="button" class="mode-btn" disabled aria-disabled="true" title="Natural language input — coming soon">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

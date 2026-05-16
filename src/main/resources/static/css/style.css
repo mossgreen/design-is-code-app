@@ -94,69 +94,33 @@ header {
     font-size: 0.95rem;
 }
 
-.project-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.8rem;
-    background: #f3f4f6;
-    color: #374151;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    font-size: 0.82rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-    white-space: nowrap;
-    font-family: inherit;
-    max-width: 22rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
+/* Connect-project panel now lives inside Step 1 (was in the header).
+   The chip + header-actions rules were dropped — the connect step is
+   a primary action, not a corner-of-the-screen toggle. */
+
+.step1-subblock {
+    margin-bottom: 1.25rem;
 }
 
-.project-chip:hover {
-    background: #e5e7eb;
+.step1-subblock-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    margin-bottom: 0.45rem;
 }
 
-.project-chip.connected {
-    background: #eef2ff;
-    color: #4338ca;
-    border-color: #c7d2fe;
-}
-
-.project-chip.connected:hover {
-    background: #e0e7ff;
-}
-
-.project-chip .chip-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1rem;
-    height: 1rem;
+.step1-subblock-head h3 {
+    margin: 0;
+    font-size: 0.92rem;
     font-weight: 600;
-    opacity: 0.7;
-}
-
-.project-chip.connected .chip-icon::before {
-    content: "✓";
-}
-
-.project-chip.connected .chip-icon {
-    color: #10b981;
-    opacity: 1;
-}
-
-.project-chip.connected .chip-icon > * {
-    display: none;
+    color: #1f2937;
 }
 
 .project-panel {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 1rem 2rem 1.25rem;
-    border-top: 1px solid #f1f5f9;
+    padding: 0.75rem 1rem;
     background: #fcfcfd;
+    border: 1px solid var(--border);
+    border-radius: 6px;
 }
 
 .project-panel .help {
@@ -1458,54 +1422,6 @@ button.small {
     transform: rotate(90deg);
 }
 
-/* "Compose with AI" button lives inside the <summary> — clicks must NOT
-   bubble to the summary or the accordion would toggle. JS calls
-   stopPropagation; CSS positions it before the count chip. */
-.compose-ai-btn {
-    margin-left: auto;
-    margin-right: 0.5rem;
-    padding: 0.25rem 0.65rem;
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.82rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: filter 0.1s, opacity 0.1s;
-}
-.compose-ai-btn:hover { filter: brightness(1.08); }
-.compose-ai-btn:active { transform: translateY(1px); }
-.compose-ai-btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-}
-.compose-ai-btn + .section-count {
-    margin-left: 0;
-}
-
-/* In-accordion status row — spinner while composing, red text on error.
-   Lives inside the body so it only appears when the accordion is open. */
-.compose-ai-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    border-radius: 5px;
-    background: #eef2ff;
-    border: 1px solid #c7d2fe;
-    color: #3730a3;
-    font-size: 0.86rem;
-}
-.compose-ai-status.is-error {
-    background: #fef2f2;
-    border-color: #fecaca;
-    color: #991b1b;
-}
-.compose-ai-status .analyze-spinner {
-    /* Reuse the existing spinner geometry; colour follows currentColor. */
-}
 
 .hint.inline {
     color: #6b7280;
@@ -2986,13 +2902,6 @@ button.small {
     background: #fffbeb;
     border: 1px solid #fde68a;
     color: #92400e;
-}
-
-.header-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
 }
 
 /* --- Decision-table chip on step rows --- */

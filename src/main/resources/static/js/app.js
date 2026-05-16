@@ -76,8 +76,6 @@ function effectiveFragType(s) {
 }
 
 const els = {
-    chip: document.getElementById('project-chip'),
-    chipLabel: document.getElementById('chip-label'),
     projectPanel: document.getElementById('project-panel'),
     form: document.getElementById('scan-form'),
     pathInput: document.getElementById('path-input'),
@@ -92,13 +90,7 @@ const els = {
     steps: document.querySelectorAll('.step')
 };
 
-// --- Project chip ---
-
-els.chip.addEventListener('click', () => {
-    const open = els.projectPanel.classList.toggle('hidden') === false;
-    els.chip.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) setTimeout(() => els.pathInput.focus(), 0);
-});
+// --- Project connect panel (lives inside Step 1) ---
 
 els.form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -113,8 +105,6 @@ els.disconnectBtn.addEventListener('click', () => {
     els.pathInput.value = '';
     els.scanResult.classList.add('hidden');
     els.disconnectBtn.classList.add('hidden');
-    els.chip.classList.remove('connected');
-    els.chipLabel.textContent = 'Connect project';
     populateTypesDatalist();
 });
 
@@ -151,12 +141,8 @@ async function runScan(path) {
 
 function renderScanResult(data) {
     const name = shortProjectName(data.path);
-    els.chip.classList.add('connected');
-    els.chipLabel.textContent = name;
-    els.chip.title = data.path;
-
     els.scanSummaryText.textContent =
-        `${data.fileCount} files · ${data.classes.length} classes · ${data.interfaces.length} interfaces · ${data.dataTypes.length} data types` +
+        `✓ ${name} · ${data.fileCount} files · ${data.classes.length} classes · ${data.interfaces.length} interfaces · ${data.dataTypes.length} data types` +
         (data.skippedCount > 0 ? ` · ${data.skippedCount} skipped` : '');
     els.scanResult.classList.remove('hidden');
     els.disconnectBtn.classList.remove('hidden');
@@ -223,9 +209,7 @@ const step2Els = {
     analyzeBannerAction: document.getElementById('analyze-banner-action'),
     storyNarrativeSection: document.getElementById('story-narrative-section'),
     storyNarrative: document.getElementById('story-narrative'),
-    startEmptyBtn: document.getElementById('start-empty-btn'),
-    composeAiBtn: document.getElementById('compose-ai-btn'),
-    composeAiStatus: document.getElementById('compose-ai-status')
+    editStoryBtn: document.getElementById('edit-story-btn')
 };
 
 function escapeHtml(s) {
@@ -388,7 +372,6 @@ function enterStep2() {
     renderStoryNarrative();
     renderParticipants();
     renderSequence();
-    refreshComposeAiBtn();
     maybeAnalyzeStory();
 }
 
@@ -429,8 +412,16 @@ async function runAnalyze(context) {
         renderStoryNarrative();
         renderParticipants();
         renderSequence();
-        refreshComposeAiBtn();
-        hideAnalyzeBanner();
+
+        // Chain straight into sequence composition. Two-phase LLM flow:
+        // analyse → participants land → compose → sequence + live diagram.
+        // The banner stays visible across both phases for a single
+        // continuous progress indicator.
+        if (state.participants.length > 0) {
+            await runSequence();
+        } else {
+            hideAnalyzeBanner();
+        }
     } catch (err) {
         state.analyzeError = err.message;
         showAnalyzeBanner(
@@ -463,49 +454,17 @@ function hideAnalyzeBanner() {
     if (step2Els.analyzeBanner) step2Els.analyzeBanner.classList.add('hidden');
 }
 
-// --- AI sequence composition (Step 2: "Compose with AI" inside the Steps accordion) ---
+// --- AI sequence composition (auto-fires after analyse) ---
 //
-// Given the story and the (current) participant set, asks the model to
+// Given the story and the just-landed participant set, asks the model to
 // produce a recursive sequence of calls + fragments via POST /api/sequence,
 // then walks the response and writes into state.sequence using the same
 // shape the manual composer produces. The wizard sees no difference between
 // AI-generated and hand-authored steps once resolved.
-
-let composing = false;
-
-// Count of CALL rows that aren't SUT boundary edges. Used to decide whether
-// the "Compose with AI" button should be visible — if the user already has
-// real steps, don't tempt them with a clobber.
-function nonBoundaryCallCount() {
-    return state.sequence.filter(s =>
-        s.kind === STEP_KIND.CALL && !isSystemCaller(s.callerId) && !isSystemCaller(s.calleeId)
-    ).length;
-}
-
-function refreshComposeAiBtn() {
-    if (!step2Els.composeAiBtn) return;
-    const show = !!state.tree && state.participants.length > 0 && nonBoundaryCallCount() === 0;
-    step2Els.composeAiBtn.classList.toggle('hidden', !show);
-}
-
-function showComposeStatus(text, opts = {}) {
-    const el = step2Els.composeAiStatus;
-    if (!el) return;
-    el.classList.remove('hidden');
-    el.classList.toggle('is-error', !!opts.error);
-    el.innerHTML = '';
-    if (opts.spinning) {
-        const sp = document.createElement('span');
-        sp.className = 'analyze-spinner';
-        sp.setAttribute('aria-hidden', 'true');
-        el.appendChild(sp);
-    }
-    el.appendChild(document.createTextNode(text));
-}
-
-function hideComposeStatus() {
-    if (step2Els.composeAiStatus) step2Els.composeAiStatus.classList.add('hidden');
-}
+//
+// Called automatically at the end of runAnalyze — no user gesture. The
+// existing analyze-banner is reused for the busy/error state across both
+// phases (one continuous progress indicator).
 
 // Walk the AI's recursive {steps} response and produce state.sequence
 // entries. Caller/callee names resolve to participant IDs; methods
@@ -607,23 +566,11 @@ function applyResolvedSequence(resolved) {
 }
 
 async function runSequence() {
-    if (composing) return;
-    if (!state.userStory) {
-        showComposeStatus('Type a story on Step 1 first.', { error: true });
+    if (!state.userStory || state.participants.length === 0) {
+        hideAnalyzeBanner();
         return;
     }
-    if (state.participants.length === 0) {
-        showComposeStatus('Need at least one participant.', { error: true });
-        return;
-    }
-    if (nonBoundaryCallCount() > 0) {
-        if (!confirm(`Replace existing ${nonBoundaryCallCount()} step(s) with an AI-composed sequence?`)) return;
-    }
-
-    composing = true;
-    step2Els.composeAiBtn.disabled = true;
-    showComposeStatus('Composing the sequence…', { spinning: true });
-
+    showAnalyzeBanner('Composing the sequence…', { spinning: true });
     try {
         const sutName = state.sutParticipantId
             ? (findParticipant(state.sutParticipantId)?.name || '')
@@ -650,36 +597,26 @@ async function runSequence() {
 
         const { sequence: resolved, warnings } = resolveSequence(data);
         if (resolved.length === 0) {
-            showComposeStatus('AI returned no resolvable calls. Try editing participants and retrying.', { error: true });
+            showAnalyzeBanner(
+                'AI returned no resolvable calls. Edit the story or add participants manually.',
+                { spinning: false, error: true, dismissable: true }
+            );
             return;
         }
         applyResolvedSequence(resolved);
         renderSequence();
-        refreshComposeAiBtn();
 
         if (warnings.length > 0) {
-            showComposeStatus(warnings.join(' · '), { error: true });
+            showAnalyzeBanner(warnings.join(' · '), { spinning: false, error: true, dismissable: true });
         } else {
-            hideComposeStatus();
+            hideAnalyzeBanner();
         }
     } catch (err) {
-        showComposeStatus("Couldn't compose: " + err.message, { error: true });
-    } finally {
-        composing = false;
-        step2Els.composeAiBtn.disabled = false;
+        showAnalyzeBanner(
+            "Couldn't compose the sequence: " + err.message + '. Add steps manually if needed.',
+            { spinning: false, error: true, dismissable: true }
+        );
     }
-}
-
-if (step2Els.composeAiBtn) {
-    step2Els.composeAiBtn.addEventListener('click', (e) => {
-        // Inside <summary>, the default click would toggle the accordion.
-        // We don't want toggle on this button — handle the click ourselves.
-        e.preventDefault();
-        e.stopPropagation();
-        const accordion = document.querySelector('details.steps-accordion');
-        if (accordion && !accordion.open) accordion.open = true;
-        runSequence();
-    });
 }
 
 // --- Story narrative (replaces the concept-tree visualisation) ---
@@ -747,23 +684,23 @@ function renderStoryNarrative() {
     }
 }
 
-// "Start fresh" — drop the suggested tree and story, let the user author
-// manually. The existing "+ new participant" UI takes over.
-if (step2Els.startEmptyBtn) {
-    step2Els.startEmptyBtn.addEventListener('click', () => {
-        if (state.participants.length > 0 && !confirm(
-            'Clear the suggested abstractions and start with empty participants?'
-        )) return;
+// "Edit story" — navigate back to Step 1 so the user can revise the story.
+// Clears all downstream state (tree / story / participants / sequence / SUT)
+// so when they click Continue again, analyse + compose fires fresh against
+// the revised story. state.userStory is left in place so the textarea is
+// pre-filled with whatever they typed before.
+if (step2Els.editStoryBtn) {
+    step2Els.editStoryBtn.addEventListener('click', () => {
         state.tree = null;
         state.story = '';
         state.participants = [];
         state.sequence = [];
         state.sutParticipantId = null;
+        hideAnalyzeBanner();
         renderStoryNarrative();
         renderParticipants();
         renderSequence();
-        refreshComposeAiBtn();
-        hideComposeStatus();
+        goToStep(1);
     });
 }
 
@@ -1318,9 +1255,6 @@ function renderSequence() {
     renderAddStep();
     const liveSeq = document.getElementById('live-sequence');
     if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
-    // Keep the "Compose with AI" button in sync — hide once any manual or
-    // AI-resolved step exists; reappear if the user clears everything.
-    refreshComposeAiBtn();
 }
 
 function renderSteps() {
