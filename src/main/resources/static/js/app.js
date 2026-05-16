@@ -223,7 +223,9 @@ const step2Els = {
     analyzeBannerAction: document.getElementById('analyze-banner-action'),
     storyNarrativeSection: document.getElementById('story-narrative-section'),
     storyNarrative: document.getElementById('story-narrative'),
-    startEmptyBtn: document.getElementById('start-empty-btn')
+    startEmptyBtn: document.getElementById('start-empty-btn'),
+    composeAiBtn: document.getElementById('compose-ai-btn'),
+    composeAiStatus: document.getElementById('compose-ai-status')
 };
 
 function escapeHtml(s) {
@@ -386,6 +388,7 @@ function enterStep2() {
     renderStoryNarrative();
     renderParticipants();
     renderSequence();
+    refreshComposeAiBtn();
     maybeAnalyzeStory();
 }
 
@@ -426,6 +429,7 @@ async function runAnalyze(context) {
         renderStoryNarrative();
         renderParticipants();
         renderSequence();
+        refreshComposeAiBtn();
         hideAnalyzeBanner();
     } catch (err) {
         state.analyzeError = err.message;
@@ -457,6 +461,225 @@ function showAnalyzeBanner(text, opts = {}) {
 
 function hideAnalyzeBanner() {
     if (step2Els.analyzeBanner) step2Els.analyzeBanner.classList.add('hidden');
+}
+
+// --- AI sequence composition (Step 2: "Compose with AI" inside the Steps accordion) ---
+//
+// Given the story and the (current) participant set, asks the model to
+// produce a recursive sequence of calls + fragments via POST /api/sequence,
+// then walks the response and writes into state.sequence using the same
+// shape the manual composer produces. The wizard sees no difference between
+// AI-generated and hand-authored steps once resolved.
+
+let composing = false;
+
+// Count of CALL rows that aren't SUT boundary edges. Used to decide whether
+// the "Compose with AI" button should be visible — if the user already has
+// real steps, don't tempt them with a clobber.
+function nonBoundaryCallCount() {
+    return state.sequence.filter(s =>
+        s.kind === STEP_KIND.CALL && !isSystemCaller(s.callerId) && !isSystemCaller(s.calleeId)
+    ).length;
+}
+
+function refreshComposeAiBtn() {
+    if (!step2Els.composeAiBtn) return;
+    const show = !!state.tree && state.participants.length > 0 && nonBoundaryCallCount() === 0;
+    step2Els.composeAiBtn.classList.toggle('hidden', !show);
+}
+
+function showComposeStatus(text, opts = {}) {
+    const el = step2Els.composeAiStatus;
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.classList.toggle('is-error', !!opts.error);
+    el.innerHTML = '';
+    if (opts.spinning) {
+        const sp = document.createElement('span');
+        sp.className = 'analyze-spinner';
+        sp.setAttribute('aria-hidden', 'true');
+        el.appendChild(sp);
+    }
+    el.appendChild(document.createTextNode(text));
+}
+
+function hideComposeStatus() {
+    if (step2Els.composeAiStatus) step2Els.composeAiStatus.classList.add('hidden');
+}
+
+// Walk the AI's recursive {steps} response and produce state.sequence
+// entries. Caller/callee names resolve to participant IDs; methods
+// resolve by name on the named callee, and if missing are AUTO-CREATED
+// on that participant using the AI's args/returns (or empty/void).
+// Unknown participants → step dropped + warning surfaced.
+function resolveSequence(aiResponse) {
+    const seq = [];
+    const warnings = [];
+
+    function findParticipantByName(name) {
+        if (!name) return null;
+        return state.participants.find(p => p.name === name) || null;
+    }
+
+    function findOrCreateMethod(callee, methodName, args, returns) {
+        if (!methodName) return null;
+        let m = callee.methods.find(mm => mm.name === methodName);
+        if (m) return m;
+        const inputs = (args || [])
+            .filter(a => a && (a.name || a.type))
+            .map(a => ({ name: a.name || '', type: a.type || '' }));
+        m = makeMethod(methodName, inputs, returns || '');
+        callee.methods.push(m);
+        return m;
+    }
+
+    function visit(steps) {
+        if (!Array.isArray(steps)) return;
+        for (const s of steps) {
+            if (!s || typeof s !== 'object') continue;
+
+            // Fragment kinds map 1:1 to FRAG_TYPES keys.
+            const fragKind = s.kind;
+            if (fragKind === 'loop' || fragKind === 'while' || fragKind === 'foreach' ||
+                fragKind === 'opt') {
+                seq.push({ id: newId(), kind: STEP_KIND.FRAG_START, fragType: fragKind, label: s.label || '' });
+                visit(s.steps || []);
+                seq.push({ id: newId(), kind: STEP_KIND.FRAG_END });
+                continue;
+            }
+            if (fragKind === 'alt' || fragKind === 'par') {
+                seq.push({ id: newId(), kind: STEP_KIND.FRAG_START, fragType: fragKind, label: s.label || '' });
+                visit(s.steps || []);
+                if (Array.isArray(s.elseSteps) && s.elseSteps.length > 0) {
+                    seq.push({ id: newId(), kind: STEP_KIND.FRAG_ELSE, label: '' });
+                    visit(s.elseSteps);
+                }
+                seq.push({ id: newId(), kind: STEP_KIND.FRAG_END });
+                continue;
+            }
+
+            // CALL step
+            const caller = findParticipantByName(s.caller);
+            if (!caller) {
+                warnings.push(`Dropped call from unknown participant "${s.caller}"`);
+                continue;
+            }
+            const callee = findParticipantByName(s.callee);
+            if (!callee) {
+                warnings.push(`Dropped call to unknown participant "${s.callee}"`);
+                continue;
+            }
+            const method = findOrCreateMethod(callee, s.method, s.args, s.returns);
+            if (!method) {
+                warnings.push(`Dropped call to ${callee.name}: no method name given`);
+                continue;
+            }
+            seq.push({
+                id: newId(),
+                kind: STEP_KIND.CALL,
+                callerId: caller.id,
+                calleeId: callee.id,
+                methodId: method.id
+            });
+        }
+    }
+
+    visit(aiResponse && aiResponse.steps);
+    return { sequence: seq, warnings };
+}
+
+// Splice the AI-resolved body between the existing SUT boundary rows
+// when an SUT is set. Otherwise replace state.sequence entirely.
+function applyResolvedSequence(resolved) {
+    if (!state.sutParticipantId) {
+        state.sequence = resolved;
+        return;
+    }
+    // Keep entry row (first system_caller row from [*] -> SUT) and return
+    // row (last [*] <-- SUT row), drop everything else, then splice the
+    // AI body in between.
+    const entry  = state.sequence.find(s => s.kind === STEP_KIND.CALL && isSystemCaller(s.callerId));
+    const ret    = state.sequence.find(s => s.kind === STEP_KIND.CALL && isSystemCaller(s.calleeId));
+    state.sequence = [];
+    if (entry) state.sequence.push(entry);
+    state.sequence.push(...resolved);
+    if (ret) state.sequence.push(ret);
+}
+
+async function runSequence() {
+    if (composing) return;
+    if (!state.userStory) {
+        showComposeStatus('Type a story on Step 1 first.', { error: true });
+        return;
+    }
+    if (state.participants.length === 0) {
+        showComposeStatus('Need at least one participant.', { error: true });
+        return;
+    }
+    if (nonBoundaryCallCount() > 0) {
+        if (!confirm(`Replace existing ${nonBoundaryCallCount()} step(s) with an AI-composed sequence?`)) return;
+    }
+
+    composing = true;
+    step2Els.composeAiBtn.disabled = true;
+    showComposeStatus('Composing the sequence…', { spinning: true });
+
+    try {
+        const sutName = state.sutParticipantId
+            ? (findParticipant(state.sutParticipantId)?.name || '')
+            : '';
+        const payload = {
+            story: state.userStory,
+            sut: sutName,
+            participants: state.participants.map(p => ({
+                name: p.name,
+                methods: (p.methods || []).map(m => ({
+                    name: m.name,
+                    args: m.inputs || [],
+                    returns: m.output || ''
+                }))
+            }))
+        };
+        const res = await fetch('/api/sequence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Sequence composition failed (${res.status})`);
+
+        const { sequence: resolved, warnings } = resolveSequence(data);
+        if (resolved.length === 0) {
+            showComposeStatus('AI returned no resolvable calls. Try editing participants and retrying.', { error: true });
+            return;
+        }
+        applyResolvedSequence(resolved);
+        renderSequence();
+        refreshComposeAiBtn();
+
+        if (warnings.length > 0) {
+            showComposeStatus(warnings.join(' · '), { error: true });
+        } else {
+            hideComposeStatus();
+        }
+    } catch (err) {
+        showComposeStatus("Couldn't compose: " + err.message, { error: true });
+    } finally {
+        composing = false;
+        step2Els.composeAiBtn.disabled = false;
+    }
+}
+
+if (step2Els.composeAiBtn) {
+    step2Els.composeAiBtn.addEventListener('click', (e) => {
+        // Inside <summary>, the default click would toggle the accordion.
+        // We don't want toggle on this button — handle the click ourselves.
+        e.preventDefault();
+        e.stopPropagation();
+        const accordion = document.querySelector('details.steps-accordion');
+        if (accordion && !accordion.open) accordion.open = true;
+        runSequence();
+    });
 }
 
 // --- Story narrative (replaces the concept-tree visualisation) ---
@@ -539,6 +762,8 @@ if (step2Els.startEmptyBtn) {
         renderStoryNarrative();
         renderParticipants();
         renderSequence();
+        refreshComposeAiBtn();
+        hideComposeStatus();
     });
 }
 
@@ -1093,6 +1318,9 @@ function renderSequence() {
     renderAddStep();
     const liveSeq = document.getElementById('live-sequence');
     if (liveSeq) renderSequenceDiagram(state.sequence, liveSeq);
+    // Keep the "Compose with AI" button in sync — hide once any manual or
+    // AI-resolved step exists; reappear if the user clears everything.
+    refreshComposeAiBtn();
 }
 
 function renderSteps() {

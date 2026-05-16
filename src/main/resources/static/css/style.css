@@ -1415,6 +1415,98 @@ button.small {
     margin-left: 0;
 }
 
+/* --- Steps accordion (Step 2: composer collapsed by default) --- */
+
+.steps-accordion {
+    /* Inherits .section-block (padding, background, border, radius) but
+       removes the marker arrow + tightens the closed state. */
+}
+
+.steps-accordion > summary {
+    /* Suppress all default disclosure markers across engines. */
+    list-style: none;
+    cursor: pointer;
+    /* Keep .section-head's flex row; when collapsed, no bottom margin. */
+    margin-bottom: 0;
+}
+.steps-accordion > summary::-webkit-details-marker { display: none; }
+.steps-accordion > summary::marker { content: ''; }
+
+.steps-accordion[open] > summary {
+    /* Restore the visual gap to the body once expanded. */
+    margin-bottom: 0.75rem;
+}
+
+.steps-accordion > summary:hover { color: #111827; }
+.steps-accordion > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.steps-chevron {
+    display: inline-block;
+    width: 0.9rem;
+    color: #6b7280;
+    font-size: 0.9rem;
+    line-height: 1;
+    transition: transform 0.15s ease;
+    flex: 0 0 0.9rem;
+}
+
+.steps-accordion[open] > summary .steps-chevron {
+    transform: rotate(90deg);
+}
+
+/* "Compose with AI" button lives inside the <summary> — clicks must NOT
+   bubble to the summary or the accordion would toggle. JS calls
+   stopPropagation; CSS positions it before the count chip. */
+.compose-ai-btn {
+    margin-left: auto;
+    margin-right: 0.5rem;
+    padding: 0.25rem 0.65rem;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: filter 0.1s, opacity 0.1s;
+}
+.compose-ai-btn:hover { filter: brightness(1.08); }
+.compose-ai-btn:active { transform: translateY(1px); }
+.compose-ai-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.compose-ai-btn + .section-count {
+    margin-left: 0;
+}
+
+/* In-accordion status row — spinner while composing, red text on error.
+   Lives inside the body so it only appears when the accordion is open. */
+.compose-ai-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    border-radius: 5px;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    color: #3730a3;
+    font-size: 0.86rem;
+}
+.compose-ai-status.is-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+}
+.compose-ai-status .analyze-spinner {
+    /* Reuse the existing spinner geometry; colour follows currentColor. */
+}
+
 .hint.inline {
     color: #6b7280;
     font-size: 0.8rem;
