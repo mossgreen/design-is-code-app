@@ -115,6 +115,13 @@ els.disconnectBtn.addEventListener('click', () => {
     populateTypesDatalist();
 });
 
+// Mirror the path input into state.projectPath so picker / chip / manual
+// typing all count as "project connected" — Export downstream just needs
+// a path, scan is an optional analysis pass on top.
+els.pathInput.addEventListener('input', () => {
+    state.projectPath = els.pathInput.value.trim() || null;
+});
+
 async function runScan(path) {
     els.error.classList.add('hidden');
     els.scanResult.classList.add('hidden');
@@ -290,6 +297,7 @@ function bindFooter() {
     if (useBtn) {
         useBtn.addEventListener('click', () => {
             els.pathInput.value = useBtn.dataset.usePath;
+            els.pathInput.dispatchEvent(new Event('input'));
             closeFolderPicker();
             els.pathInput.focus();
         });
@@ -390,6 +398,7 @@ function renderRecentPaths() {
     els.recentPaths.querySelectorAll('[data-recent]').forEach(btn => {
         btn.addEventListener('click', () => {
             els.pathInput.value = btn.dataset.recent;
+            els.pathInput.dispatchEvent(new Event('input'));
             els.pathInput.focus();
         });
     });
@@ -2987,7 +2996,7 @@ saveEls.save.addEventListener('click', async () => {
     saveEls.result.classList.add('hidden');
 
     if (!state.projectPath) {
-        saveEls.error.textContent = 'Connect a project first — click the chip in the header and paste your project path.';
+        saveEls.error.textContent = 'No project path — go back to Step 1 and pick a folder (or paste a path).';
         saveEls.error.classList.remove('hidden');
         return;
     }

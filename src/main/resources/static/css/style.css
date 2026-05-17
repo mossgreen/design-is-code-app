@@ -74,24 +74,27 @@ header {
 .header-inner {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 1.5rem 2rem 1.25rem;
+    padding: 0.85rem 2rem;
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
     gap: 1rem;
+    flex-wrap: wrap;
 }
 
-.title h1 {
+.brand h1 {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     font-weight: 600;
     letter-spacing: -0.01em;
+    color: var(--text);
+    line-height: 1.2;
 }
 
 .tagline {
-    margin: 0.25rem 0 0;
-    color: #6b7280;
-    font-size: 0.95rem;
+    margin: 0.15rem 0 0;
+    color: var(--text-3);
+    font-size: 0.78rem;
+    line-height: 1.3;
 }
 
 /* Connect-project panel now lives inside Step 1 (was in the header).
@@ -405,13 +408,35 @@ header {
 
 .stepper {
     display: flex;
+    align-items: center;
     gap: 0;
-    padding: 0.75rem 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
-    background: #fff;
-    border-bottom: 1px solid var(--border);
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border-bottom: 0;
     overflow-x: auto;
+    max-width: none;
+}
+
+.stepper::before {
+    content: "";
+    align-self: stretch;
+    width: 1px;
+    background: var(--border);
+    margin-right: 1rem;
+}
+
+@media (max-width: 720px) {
+    .header-inner {
+        padding: 0.7rem 1rem;
+        gap: 0.5rem;
+    }
+    .stepper {
+        width: 100%;
+    }
+    .stepper::before {
+        display: none;
+    }
 }
 
 .step {
@@ -452,7 +477,7 @@ header {
 
 main {
     max-width: 1200px;
-    margin: 2rem auto;
+    margin: 1.25rem auto;
     padding: 0 2rem 4rem;
 }
 

@@ -12,27 +12,26 @@
 <body>
     <header>
         <div class="header-inner">
-            <div class="title">
+            <div class="brand">
                 <h1>DisC Studio</h1>
                 <p class="tagline">Disciplined design, deterministic generation.</p>
             </div>
+            <nav class="stepper" id="stepper" aria-label="Workflow steps">
+                <div class="step active" data-step="1">
+                    <span class="step-num">1</span><span class="step-label">User Story</span>
+                </div>
+                <div class="step" data-step="2">
+                    <span class="step-num">2</span><span class="step-label">Designer</span>
+                </div>
+                <div class="step" data-step="3">
+                    <span class="step-num">3</span><span class="step-label">Review</span>
+                </div>
+                <div class="step" data-step="4">
+                    <span class="step-num">4</span><span class="step-label">Generate</span>
+                </div>
+            </nav>
         </div>
     </header>
-
-    <nav class="stepper" id="stepper">
-        <div class="step active" data-step="1">
-            <span class="step-num">1</span><span class="step-label">User Story</span>
-        </div>
-        <div class="step" data-step="2">
-            <span class="step-num">2</span><span class="step-label">Designer</span>
-        </div>
-        <div class="step" data-step="3">
-            <span class="step-num">3</span><span class="step-label">Review</span>
-        </div>
-        <div class="step" data-step="4">
-            <span class="step-num">4</span><span class="step-label">Generate</span>
-        </div>
-    </nav>
 
     <main>
         <section class="panel" id="panel-1">
@@ -44,7 +43,6 @@
                     <span class="hint inline">Optional — used to ground the analysis in your existing code.</span>
                 </div>
                 <div id="project-panel" class="project-panel">
-                    <p class="help">Browse to your Java / Spring project folder, or paste an absolute path. DisC Studio uses it to suggest abstractions that fit your codebase. Skip it and suggestions come from the story alone.</p>
                     <div id="recent-paths" class="recent-paths hidden" aria-label="Recent project paths"></div>
                     <form id="scan-form" autocomplete="off">
                         <div class="path-input-wrap">
@@ -421,7 +419,7 @@
 
             <div id="save-error" class="error hidden"></div>
 
-            <div class="actions">
+            <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="3">← Back</button>
             </div>
         </section>
