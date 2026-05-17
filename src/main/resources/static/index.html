@@ -44,9 +44,18 @@
                     <span class="hint inline">Optional — used to ground the analysis in your existing code.</span>
                 </div>
                 <div id="project-panel" class="project-panel">
-                    <p class="help">Paste the absolute path to your Java / Spring project. DisC Studio uses it to suggest abstractions that fit your codebase. Skip it and suggestions come from the story alone.</p>
+                    <p class="help">Browse to your Java / Spring project folder, or paste an absolute path. DisC Studio uses it to suggest abstractions that fit your codebase. Skip it and suggestions come from the story alone.</p>
+                    <div id="recent-paths" class="recent-paths hidden" aria-label="Recent project paths"></div>
                     <form id="scan-form" autocomplete="off">
-                        <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
+                        <div class="path-input-wrap">
+                            <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
+                            <button type="button" id="browse-btn" class="browse-btn" aria-label="Browse for project folder" title="Browse folders">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                </svg>
+                            </button>
+                            <div id="folder-picker" class="folder-picker hidden" role="dialog" aria-label="Choose a folder"></div>
+                        </div>
                         <button type="submit" id="scan-btn">Scan</button>
                         <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
                     </form>
@@ -101,7 +110,6 @@
 
         <section class="panel hidden" id="panel-2">
             <h2>Step 2 · Designer</h2>
-            <p class="help">Define the cast, compose the call sequence one step at a time, watch the diagram render live.</p>
             <div class="story-context hidden" id="story-echo"></div>
 
             <div class="analyze-banner hidden" id="analyze-banner" role="status" aria-live="polite">
@@ -270,7 +278,6 @@
 
         <section class="panel hidden" id="panel-3">
             <h2>Step 3 · Review</h2>
-            <p class="help">A read-only snapshot of what will be sent for code generation. Go back to the Designer to make changes.</p>
 
             <div class="review-block">
                 <div class="review-label">Story</div>
@@ -287,15 +294,42 @@
                 <div id="review-sequence" class="review-sequence"></div>
             </div>
 
+            <div class="review-block">
+                <div class="review-label">Team signoff</div>
+                <fieldset id="review-signoff" class="review-signoff">
+                    <legend class="sr-only">Team signoff — all four reviewers must approve before code generation</legend>
+                    <label class="signoff-row">
+                        <input type="checkbox" data-signoff="peter" id="signoff-peter">
+                        <span class="signoff-avatar" aria-hidden="true">P</span>
+                        <span class="signoff-name">Peter</span>
+                    </label>
+                    <label class="signoff-row">
+                        <input type="checkbox" data-signoff="john" id="signoff-john">
+                        <span class="signoff-avatar" aria-hidden="true">J</span>
+                        <span class="signoff-name">John</span>
+                    </label>
+                    <label class="signoff-row">
+                        <input type="checkbox" data-signoff="chen" id="signoff-chen">
+                        <span class="signoff-avatar" aria-hidden="true">C</span>
+                        <span class="signoff-name">Chen</span>
+                    </label>
+                    <label class="signoff-row">
+                        <input type="checkbox" data-signoff="wang" id="signoff-wang">
+                        <span class="signoff-avatar" aria-hidden="true">W</span>
+                        <span class="signoff-name">Wang</span>
+                    </label>
+                </fieldset>
+                <div id="signoff-status" class="signoff-status" aria-live="polite">0 of 4 signed off</div>
+            </div>
+
             <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="2">← Back to Designer</button>
-                <button type="button" id="preview-next">Looks right — generate →</button>
+                <button type="button" id="preview-next" disabled aria-describedby="signoff-status">Looks right — generate →</button>
             </div>
         </section>
 
         <section class="panel hidden" id="panel-4">
             <h2>Step 4 · Generate</h2>
-            <p class="help">Your design as a PlantUML sequence diagram. Save it into your project's <code>design/</code> folder, then run the <code>/disc</code> command in Claude Code to generate tests and implementation.</p>
 
             <div class="field">
                 <label for="puml-package">Target package <span class="label-hint">DisC needs this — emitted as <code>' @package …</code> in the .puml header</span></label>

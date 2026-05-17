@@ -19,7 +19,11 @@ const state = {
     tree: null,
     story: '',
     analyzeError: null,
-    analyzing: false
+    analyzing: false,
+    // Step 3 team-signoff gate — four hardcoded reviewers. All four must be
+    // checked before the Generate button enables. In-memory only; resets on
+    // page reload. Persists across step-back navigation in the same session.
+    signoffs: { peter: false, john: false, chen: false, wang: false }
 };
 
 // Java package name validator: at least two segments, each starting with a
@@ -81,6 +85,9 @@ const els = {
     pathInput: document.getElementById('path-input'),
     scanBtn: document.getElementById('scan-btn'),
     disconnectBtn: document.getElementById('disconnect-btn'),
+    browseBtn: document.getElementById('browse-btn'),
+    folderPicker: document.getElementById('folder-picker'),
+    recentPaths: document.getElementById('recent-paths'),
     status: document.getElementById('scan-status'),
     statusText: document.getElementById('status-text'),
     error: document.getElementById('scan-error'),
@@ -129,6 +136,7 @@ async function runScan(path) {
         state.scanResult = data;
         renderScanResult(data);
         populateTypesDatalist();
+        addRecentPath(data.path);
     } catch (err) {
         els.error.textContent = err.message;
         els.error.classList.remove('hidden');
@@ -154,6 +162,241 @@ function shortProjectName(path) {
     return parts[parts.length - 1] || path;
 }
 
+// --- Folder picker (popover anchored to path input) ---
+
+const RECENT_PATHS_KEY = 'disc.recentProjectPaths';
+const RECENT_PATHS_MAX = 5;
+const pickerState = { path: null, showHidden: false };
+
+const FOLDER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+
+els.browseBtn.addEventListener('click', () => {
+    if (!els.folderPicker.classList.contains('hidden')) {
+        closeFolderPicker();
+    } else {
+        const seed = pickPickerSeed();
+        openFolderPicker(seed);
+    }
+});
+
+function pickPickerSeed() {
+    const typed = els.pathInput.value.trim();
+    if (typed) return typed;
+    return null;
+}
+
+async function openFolderPicker(path) {
+    pickerState.path = path;
+    els.folderPicker.classList.remove('hidden');
+    renderPickerLoading();
+    await fetchAndRender(path);
+}
+
+function closeFolderPicker() {
+    els.folderPicker.classList.add('hidden');
+    els.folderPicker.innerHTML = '';
+}
+
+async function fetchAndRender(path) {
+    const params = new URLSearchParams();
+    if (path) params.set('path', path);
+    if (pickerState.showHidden) params.set('showHidden', 'true');
+    try {
+        const res = await fetch('/api/fs/list?' + params.toString());
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `List failed (${res.status})`);
+        pickerState.path = data.path;
+        renderPicker(data);
+    } catch (err) {
+        renderPickerError(err.message, path);
+    }
+}
+
+function renderPickerLoading() {
+    els.folderPicker.innerHTML = '<div class="picker-empty">Loading…</div>';
+}
+
+function renderPickerError(message, attemptedPath) {
+    els.folderPicker.innerHTML = `
+        <div class="picker-breadcrumbs"></div>
+        <div class="picker-error">${escapeHtml(message)}</div>
+        <div class="picker-footer">
+            <label class="hidden-toggle">
+                <input type="checkbox" ${pickerState.showHidden ? 'checked' : ''} data-toggle-hidden>
+                Show hidden
+            </label>
+            <button type="button" class="picker-use" disabled>Use this folder</button>
+        </div>
+    `;
+    bindFooter();
+}
+
+function renderPicker(data) {
+    const segments = pathSegments(data.path);
+    const crumbsHtml = segments.map((seg, i) => {
+        const isLast = i === segments.length - 1;
+        const cls = isLast ? 'crumb current' : 'crumb';
+        const sep = i === 0 ? '' : '<span class="crumb-sep">/</span>';
+        return `${sep}<button type="button" class="${cls}" data-crumb-path="${escapeAttr(seg.path)}">${escapeHtml(seg.label)}</button>`;
+    }).join('');
+
+    const parentRow = data.parent
+        ? `<button type="button" class="picker-row" data-nav="${escapeAttr(data.parent)}">${UP_SVG}<span class="row-name">.. (parent)</span></button>`
+        : '';
+
+    const entriesHtml = data.entries.length === 0
+        ? '<div class="picker-empty">No subfolders.</div>'
+        : data.entries.map(e => {
+            const childPath = joinPath(data.path, e.name);
+            const marker = e.projectMarker
+                ? `<span class="project-marker">${escapeHtml(e.projectMarker)}</span>`
+                : '';
+            return `<button type="button" class="picker-row" data-nav="${escapeAttr(childPath)}">${FOLDER_SVG}<span class="row-name">${escapeHtml(e.name)}</span>${marker}</button>`;
+        }).join('');
+
+    const truncatedHtml = data.truncated
+        ? '<div class="picker-truncated">Showing first 500 entries — narrow your folder.</div>'
+        : '';
+
+    els.folderPicker.innerHTML = `
+        <div class="picker-breadcrumbs">${crumbsHtml}</div>
+        <div class="picker-entries">
+            ${parentRow}
+            ${entriesHtml}
+            ${truncatedHtml}
+        </div>
+        <div class="picker-footer">
+            <label class="hidden-toggle">
+                <input type="checkbox" ${pickerState.showHidden ? 'checked' : ''} data-toggle-hidden>
+                Show hidden
+            </label>
+            <button type="button" class="picker-use" data-use-path="${escapeAttr(data.path)}">Use this folder</button>
+        </div>
+    `;
+
+    els.folderPicker.querySelectorAll('[data-nav]').forEach(btn => {
+        btn.addEventListener('click', () => fetchAndRender(btn.dataset.nav));
+    });
+    els.folderPicker.querySelectorAll('[data-crumb-path]').forEach(btn => {
+        if (btn.classList.contains('current')) return;
+        btn.addEventListener('click', () => fetchAndRender(btn.dataset.crumbPath));
+    });
+    bindFooter();
+}
+
+function bindFooter() {
+    const useBtn = els.folderPicker.querySelector('[data-use-path]');
+    if (useBtn) {
+        useBtn.addEventListener('click', () => {
+            els.pathInput.value = useBtn.dataset.usePath;
+            closeFolderPicker();
+            els.pathInput.focus();
+        });
+    }
+    const hiddenToggle = els.folderPicker.querySelector('[data-toggle-hidden]');
+    if (hiddenToggle) {
+        hiddenToggle.addEventListener('change', () => {
+            pickerState.showHidden = hiddenToggle.checked;
+            fetchAndRender(pickerState.path);
+        });
+    }
+}
+
+function pathSegments(absPath) {
+    if (!absPath) return [];
+    const trimmed = absPath.replace(/\/+$/, '');
+    if (trimmed === '' || trimmed === '/') return [{ label: '/', path: '/' }];
+    const parts = trimmed.split('/').filter(Boolean);
+    const out = [{ label: '/', path: '/' }];
+    let acc = '';
+    for (const p of parts) {
+        acc += '/' + p;
+        out.push({ label: p, path: acc });
+    }
+    return out;
+}
+
+function joinPath(parent, name) {
+    if (!parent || parent === '/') return '/' + name;
+    return parent.replace(/\/+$/, '') + '/' + name;
+}
+
+document.addEventListener('click', (e) => {
+    if (els.folderPicker.classList.contains('hidden')) return;
+    if (els.folderPicker.contains(e.target)) return;
+    if (els.browseBtn.contains(e.target)) return;
+    closeFolderPicker();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !els.folderPicker.classList.contains('hidden')) {
+        closeFolderPicker();
+    }
+});
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function escapeAttr(s) {
+    return escapeHtml(s);
+}
+
+// --- Recent project paths (localStorage, max 5) ---
+
+function loadRecentPaths() {
+    try {
+        const raw = localStorage.getItem(RECENT_PATHS_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveRecentPaths(paths) {
+    try {
+        localStorage.setItem(RECENT_PATHS_KEY, JSON.stringify(paths));
+    } catch {
+        // localStorage unavailable — silently ignore
+    }
+}
+
+function addRecentPath(path) {
+    if (!path) return;
+    const current = loadRecentPaths().filter(p => p !== path);
+    current.unshift(path);
+    const trimmed = current.slice(0, RECENT_PATHS_MAX);
+    saveRecentPaths(trimmed);
+    renderRecentPaths();
+}
+
+function renderRecentPaths() {
+    const paths = loadRecentPaths();
+    if (paths.length === 0) {
+        els.recentPaths.classList.add('hidden');
+        els.recentPaths.innerHTML = '';
+        return;
+    }
+    const chips = paths.map(p =>
+        `<button type="button" class="recent-chip" data-recent="${escapeAttr(p)}" title="${escapeAttr(p)}">${escapeHtml(p)}</button>`
+    ).join('');
+    els.recentPaths.innerHTML = `<span class="recent-label">Recent:</span>${chips}`;
+    els.recentPaths.classList.remove('hidden');
+    els.recentPaths.querySelectorAll('[data-recent]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            els.pathInput.value = btn.dataset.recent;
+            els.pathInput.focus();
+        });
+    });
+}
+
+renderRecentPaths();
+
 // --- Navigation ---
 
 document.addEventListener('click', (e) => {
@@ -171,6 +414,9 @@ function goToStep(n) {
     if (n === 2) enterStep2();
     if (n === 3) enterStep3();
     if (n === 4) enterStep4();
+    // Anchor the viewport to the top of the new step. rAF runs after the
+    // browser applies autofocus-triggered scrollIntoView, so this wins.
+    requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
 }
 
 // --- Step 1: story ---
@@ -278,8 +524,8 @@ populatePackagesDatalist();
 
 // --- Participant model ---
 
-function makeParticipant(name = '', implByDefault = true) {
-    return { id: newId(), name, implByDefault, methods: [] };
+function makeParticipant(name = '', implByDefault = true, purpose = '') {
+    return { id: newId(), name, implByDefault, methods: [], purpose };
 }
 
 function makeMethod(name = '', inputs = [], output = '') {
@@ -304,7 +550,13 @@ function flattenTreeToParticipants(root) {
                     .map(a => ({ name: a.name || '', type: a.type || '' }));
                 return makeMethod(b.name || '', inputs, b.returns || '');
             });
-            out.push({ id: newId(), name, implByDefault: true, methods });
+            out.push({
+                id: newId(),
+                name,
+                implByDefault: true,
+                methods,
+                purpose: (node.purpose || '').trim()
+            });
         }
         for (const c of (node.children || [])) visit(c);
     }
@@ -419,6 +671,11 @@ async function runAnalyze(context) {
         // continuous progress indicator.
         if (state.participants.length > 0) {
             await runSequence();
+            // Auto-mark the use-case orchestrator (root of the concept
+            // tree = first flattened participant) as the SUT. Domain-
+            // correct default — the use case IS the system being
+            // designed. User can unmark via the SUT chip.
+            setSut(state.participants[0].id);
         } else {
             hideAnalyzeBanner();
         }
@@ -737,22 +994,32 @@ function addSystemCallerStepsFor(sutId, methodId) {
 // participant as SUT auto-adds the entry interaction + final return; if
 // the SUT has exactly one method we use it as the entry method, otherwise
 // the user picks via the "pick entry method" banner that renderSteps shows.
-function toggleSut(participantId) {
+// Idempotent SUT setter. Sets sutParticipantId to the given id, manages
+// the boundary system-caller entry/return steps, and re-renders. No-op if
+// the requested id is already the SUT.
+function setSut(participantId) {
+    if (state.sutParticipantId === participantId) return;
     const p = findParticipant(participantId);
     if (!p) return;
+    removeSystemCallerSteps();
+    state.sutParticipantId = participantId;
+    if ((p.methods || []).length === 1) {
+        addSystemCallerStepsFor(participantId, p.methods[0].id);
+    }
+    // else: banner in renderSteps prompts the user to pick a method.
+    renderParticipants();
+    renderSequence();
+}
+
+function toggleSut(participantId) {
     if (state.sutParticipantId === participantId) {
         state.sutParticipantId = null;
         removeSystemCallerSteps();
+        renderParticipants();
+        renderSequence();
     } else {
-        removeSystemCallerSteps();
-        state.sutParticipantId = participantId;
-        if ((p.methods || []).length === 1) {
-            addSystemCallerStepsFor(participantId, p.methods[0].id);
-        }
-        // else: banner in renderSteps prompts the user to pick a method.
+        setSut(participantId);
     }
-    renderParticipants();
-    renderSequence();
 }
 
 // Called by the "pick entry method" banner dropdown when the SUT has 2+
@@ -1409,7 +1676,7 @@ function renderSteps() {
             if (!sut || !method) return;
             const sutName = sut.name || '(unnamed)';
             const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
-            const methodCall = `.${method.name || '?'}(${inputArgs})`;
+            const methodCall = `${method.name || '?'}(${inputArgs})`;
             const ret = returnLabelFor(method);
             const row = document.createElement('div');
             row.className = 'step-row sys-edge';
@@ -1467,7 +1734,7 @@ function renderSteps() {
         const callerName = caller.name || '(unnamed)';
         const calleeName = callee.name || '(unnamed)';
         const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
-        const methodCall = `.${method.name || '?'}(${inputArgs})`;
+        const methodCall = `${method.name || '?'}(${inputArgs})`;
         const ret = returnLabelFor(method);
         const created = creates.get(call.id);
 
@@ -2114,7 +2381,13 @@ function renderSequenceDiagram(steps, container) {
     }
     colW = Math.ceil(colW);
 
-    const padX = 60;
+    // padX must clear the half-width of the first and last head boxes so
+    // they don't poke past the SVG viewBox edges. Kept symmetric — the
+    // fragment-bracket math below assumes the same pad at both ends.
+    const EDGE_GAP = 16;
+    const firstBoxHalf = headBoxWidth[lifelines[0]] / 2;
+    const lastBoxHalf  = headBoxWidth[lifelines[lifelines.length - 1]] / 2;
+    const padX = Math.max(60, Math.ceil(firstBoxHalf + EDGE_GAP), Math.ceil(lastBoxHalf + EDGE_GAP));
     const headTop = 14;
     const headH = 30;
     const stepGap = 56;
@@ -2344,6 +2617,45 @@ const reviewEls = {
     sequence: document.getElementById('review-sequence')
 };
 
+// --- Step 3 team-signoff gate ---
+
+function syncSignoffUI() {
+    const inputs = Array.from(document.querySelectorAll('#review-signoff input[data-signoff]'));
+    let signed = 0;
+    for (const input of inputs) {
+        const key = input.dataset.signoff;
+        input.checked = !!state.signoffs[key];
+        if (input.checked) signed++;
+    }
+    const total = inputs.length;
+    const all = signed === total && total > 0;
+
+    const status = document.getElementById('signoff-status');
+    if (status) {
+        status.textContent = all
+            ? `All ${total} signoffs received — ready to generate.`
+            : `${signed} of ${total} signed off`;
+        status.classList.toggle('complete', all);
+    }
+    const nextBtn = document.getElementById('preview-next');
+    if (nextBtn) nextBtn.disabled = !all;
+}
+
+function allSignedOff() {
+    return ['peter', 'john', 'chen', 'wang'].every(k => !!state.signoffs[k]);
+}
+
+(() => {
+    const signoffGroup = document.getElementById('review-signoff');
+    if (!signoffGroup) return;
+    signoffGroup.addEventListener('change', (e) => {
+        const key = e.target?.dataset?.signoff;
+        if (!key) return;
+        state.signoffs[key] = !!e.target.checked;
+        syncSignoffUI();
+    });
+})();
+
 function enterStep3() {
     reviewEls.story.textContent = state.userStory || '(no story given)';
     if (!state.userStory) reviewEls.story.classList.add('muted');
@@ -2357,8 +2669,10 @@ function enterStep3() {
     const unused = state.participants.filter(p => !usedIds.has(p.id));
 
     const partLines = usedParticipants.map(p => {
-        const methodNames = p.methods.map(m => m.name || '?').join(', ') || '(no methods)';
-        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(methodNames)}</span></li>`;
+        const purpose = (p.purpose || '').trim();
+        const fallback = p.methods.map(m => m.name || '?').join(', ') || '(no methods)';
+        const desc = purpose || fallback;
+        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(desc)}</span></li>`;
     }).join('');
     const unusedLine = unused.length > 0
         ? `<div class="review-warn">${unused.length} unused participant${unused.length === 1 ? '' : 's'}: ${unused.map(p => escapeHtml(p.name || '(unnamed)')).join(', ')}</div>`
@@ -2371,9 +2685,13 @@ function enterStep3() {
     `;
 
     renderSequenceDiagram(state.sequence, reviewEls.sequence);
+    syncSignoffUI();
 }
 
-document.getElementById('preview-next').addEventListener('click', () => goToStep(4));
+document.getElementById('preview-next').addEventListener('click', () => {
+    if (!allSignedOff()) return;
+    goToStep(4);
+});
 
 // --- Step 4: generate ---
 
