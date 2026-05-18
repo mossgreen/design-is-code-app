@@ -673,6 +673,157 @@ button.small {
    and the second only appears after the first runs. */
 .export-row {
     margin-top: 0.9rem;
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Step 4 per-participant plan table — the Studio-side classification of
+   CREATE / REUSE / UPDATE / SKIP. Sets the participant_target stereotype
+   that travels in the .puml prelude. */
+.plan-block { margin-top: 1rem; }
+
+.plan-panel {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    overflow: hidden;
+}
+
+.plan-row {
+    display: grid;
+    grid-template-columns: 1fr 7rem 1fr;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
+}
+
+.plan-row:last-child { border-bottom: 0; }
+
+.plan-row .plan-participant { font-weight: 600; color: var(--text); }
+
+.plan-row .plan-action select {
+    width: 100%;
+    padding: 0.25rem 0.4rem;
+    font-size: var(--fs-xs);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-family: var(--font-sans);
+    cursor: pointer;
+}
+
+.plan-row .plan-target {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plan-row .plan-target .plan-extends {
+    color: var(--accent);
+}
+
+.plan-row.action-create  { background: rgba(5, 150, 105, 0.04); }
+.plan-row.action-reuse   { background: rgba(100, 116, 139, 0.05); }
+.plan-row.action-update  { background: rgba(217, 119, 6, 0.05); }
+.plan-row.action-skip    { background: rgba(225, 29, 72, 0.05); color: var(--text-3); }
+
+.plan-conflicts {
+    margin-top: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid #fde68a;
+    background: #fffbeb;
+    border-radius: var(--radius);
+    color: #92400e;
+    font-size: var(--fs-sm);
+}
+
+.plan-conflicts .plan-conflict-line {
+    display: block;
+    margin-top: 0.25rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: #78350f;
+}
+
+.plan-conflicts .plan-conflict-actions {
+    margin-top: 0.4rem;
+    display: flex;
+    gap: 0.4rem;
+}
+
+.plan-conflicts .plan-conflict-actions button {
+    padding: 0.2rem 0.55rem;
+    font-size: var(--fs-xs);
+    border-radius: var(--radius-sm);
+    border: 1px solid #d97706;
+    background: #fff;
+    color: #92400e;
+    cursor: pointer;
+}
+
+/* Plugin's plan response (rendered after /api/plan returns) */
+.preview-result {
+    margin-top: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.65rem 0.85rem;
+}
+
+.preview-result-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+}
+
+.preview-result-meta {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+}
+
+.preview-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text);
+}
+
+.preview-list .preview-action-create  { color: var(--emerald); }
+.preview-list .preview-action-update  { color: var(--amber); }
+.preview-list .preview-action-reuse   { color: var(--text-3); }
+
+.preview-list .preview-action-marker {
+    display: inline-block;
+    width: 1rem;
+}
+
+.preview-list .preview-detail {
+    display: block;
+    padding-left: 1rem;
+    color: var(--text-3);
+}
+
+.preview-warnings {
+    margin-top: 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-left: 3px solid var(--amber);
+    background: #fffbeb;
+    color: #92400e;
+    font-size: var(--fs-xs);
 }
 
 .field { margin-bottom: 1.25rem; }
@@ -1756,6 +1907,28 @@ button.small {
     border-left-width: 4px;
 }
 
+/* Reused-from-codebase accent — neutral slate, deliberately different
+   from .is-sut (purple) and .caller (accent blue) so the three roles
+   read at a glance. */
+.pc-card.is-reused {
+    border-left-color: #64748b;
+    border-left-width: 3px;
+}
+
+.pc-fqn-chip {
+    display: block;
+    padding: 0.25rem 0.75rem 0.35rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .pc-card-head {
     display: flex;
     align-items: center;
@@ -1797,6 +1970,21 @@ button.small {
 }
 
 .pc-card-empty { color: #9ca3af; font-style: italic; }
+
+.method-proposed-chip {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0 0.4rem;
+    border: 1px solid var(--accent-border);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 999px;
+    font-family: var(--font-sans);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    line-height: 1.4;
+    vertical-align: middle;
+}
 .pc-card-more { color: #9ca3af; font-size: 0.7rem; margin-top: 0.25rem; }
 
 .pc-add-tile {
@@ -2900,6 +3088,7 @@ button.small {
 }
 
 .review-participants .muted { color: #9ca3af; }
+.review-participants .review-fqn { color: var(--text-3); font-size: 0.78rem; }
 
 .review-warn {
     margin-top: 0.6rem;

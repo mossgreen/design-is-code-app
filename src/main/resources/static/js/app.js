@@ -1,6 +1,9 @@
 const state = {
     projectPath: null,
-    scanResult: null,
+    // Server-built snapshot of the connected project: types[], packages[],
+    // glossary[], conventions, fileCount, skippedCount. Used both to ground
+    // the AI analyser and to populate Step 2's type autocomplete.
+    codebaseCatalog: null,
     userStory: '',
     participants: [],
     sequence: [],
@@ -108,7 +111,7 @@ els.form.addEventListener('submit', async (e) => {
 
 els.disconnectBtn.addEventListener('click', () => {
     state.projectPath = null;
-    state.scanResult = null;
+    state.codebaseCatalog = null;
     els.pathInput.value = '';
     els.scanResult.classList.add('hidden');
     els.disconnectBtn.classList.add('hidden');
@@ -140,7 +143,7 @@ async function runScan(path) {
         if (!res.ok) throw new Error(data.error || `Scan failed (${res.status})`);
 
         state.projectPath = data.path;
-        state.scanResult = data;
+        state.codebaseCatalog = data;
         renderScanResult(data);
         populateTypesDatalist();
         addRecentPath(data.path);
@@ -156,8 +159,17 @@ async function runScan(path) {
 
 function renderScanResult(data) {
     const name = shortProjectName(data.path);
+    const types = data.types || [];
+    const byKind = {};
+    for (const t of types) byKind[t.kind] = (byKind[t.kind] || 0) + 1;
+    const parts = [];
+    if (byKind.class)     parts.push(`${byKind.class} class${byKind.class === 1 ? '' : 'es'}`);
+    if (byKind.interface) parts.push(`${byKind.interface} interface${byKind.interface === 1 ? '' : 's'}`);
+    if (byKind.record)    parts.push(`${byKind.record} record${byKind.record === 1 ? '' : 's'}`);
+    if (byKind.enum)      parts.push(`${byKind.enum} enum${byKind.enum === 1 ? '' : 's'}`);
+    const breakdown = parts.length ? ' · ' + parts.join(' · ') : '';
     els.scanSummaryText.textContent =
-        `✓ ${name} · ${data.fileCount} files · ${data.classes.length} classes · ${data.interfaces.length} interfaces · ${data.dataTypes.length} data types` +
+        `✓ ${name} · ${data.fileCount} files · ${types.length} types${breakdown}` +
         (data.skippedCount > 0 ? ` · ${data.skippedCount} skipped` : '');
     els.scanResult.classList.remove('hidden');
     els.disconnectBtn.classList.remove('hidden');
@@ -475,10 +487,15 @@ function escapeHtml(s) {
 
 function populateTypesDatalist() {
     const items = ['void', 'boolean', 'int', 'long', 'double', 'String'];
-    const scan = state.scanResult;
-    if (scan) {
-        scan.interfaces.forEach(i => items.push(i.name));
-        scan.dataTypes.forEach(d => items.push(d.name));
+    const catalog = state.codebaseCatalog;
+    if (catalog && Array.isArray(catalog.types)) {
+        for (const t of catalog.types) {
+            // Skip controllers/configs/exceptions — not useful as participant
+            // method types. Everything else (entities, value objects, DTOs,
+            // services, repositories, enums) is fair game.
+            if (t.role === 'controller' || t.role === 'config' || t.role === 'exception') continue;
+            if (t.name) items.push(t.name);
+        }
     }
     state.participants.forEach(p => { if (p.name) items.push(p.name); });
     step2Els.typesDatalist.innerHTML = [...new Set(items)]
@@ -499,17 +516,10 @@ const PACKAGES_STORAGE_KEY = 'disc.lastScanPackages.v1';
 function populatePackagesDatalist() {
     const dl = document.getElementById('packages-datalist');
     if (!dl) return;
-    const scan = state.scanResult;
+    const catalog = state.codebaseCatalog;
     let packages;
-    if (scan) {
-        const set = new Set();
-        for (const list of [scan.classes, scan.interfaces, scan.dataTypes]) {
-            if (!list) continue;
-            for (const t of list) {
-                if (t && t.packageName) set.add(t.packageName);
-            }
-        }
-        packages = [...set].sort();
+    if (catalog && Array.isArray(catalog.packages)) {
+        packages = catalog.packages.map(p => p.name).filter(Boolean).sort();
         try { localStorage.setItem(PACKAGES_STORAGE_KEY, JSON.stringify(packages)); }
         catch (_) { /* private mode / quota — non-fatal */ }
     } else {
@@ -534,11 +544,23 @@ populatePackagesDatalist();
 // --- Participant model ---
 
 function makeParticipant(name = '', implByDefault = true, purpose = '') {
-    return { id: newId(), name, implByDefault, methods: [], purpose };
+    return {
+        id: newId(),
+        name,
+        implByDefault,
+        methods: [],
+        purpose,
+        existingFqn: null,
+        signatureConflicts: []
+    };
 }
 
 function makeMethod(name = '', inputs = [], output = '') {
-    return { id: newId(), name, inputs, output };
+    // `isProposed` distinguishes AI-suggested NEW methods on a reused type
+    // (which become `+method` extensions in the .puml prelude) from methods
+    // that already exist on the catalog type. Default false; the merge in
+    // flattenTreeToParticipants flips it for proposed extensions only.
+    return { id: newId(), name, inputs, output, isProposed: false };
 }
 
 // Walk a concept-tree (depth-first) and produce the participant array the
@@ -546,25 +568,102 @@ function makeMethod(name = '', inputs = [], output = '') {
 // user; once flattened, parent/child relationships disappear — what survives
 // is the set of named interfaces and their methods. Behaviors[].args become
 // method inputs; behaviors[].returns becomes method output.
+//
+// When a node carries an `existingFqn`, the analyser is signalling reuse —
+// the participant's purpose and methods are pulled from the real catalog
+// entry (not the AI's invented signatures) so downstream sequencing uses
+// methods that genuinely exist on the user's type.
 function flattenTreeToParticipants(root) {
     if (!root || typeof root !== 'object') return [];
     const out = [];
+    const catalog = state.codebaseCatalog;
+    const byFqn = (catalog && Array.isArray(catalog.types))
+        ? Object.fromEntries(catalog.types.map(t => [t.fqn, t]))
+        : {};
+
     function visit(node) {
         if (!node || typeof node !== 'object') return;
         const name = (node.name || '').trim();
         if (name) {
-            const methods = (node.behaviors || []).map(b => {
-                const inputs = (b.args || [])
-                    .filter(a => a && (a.name || a.type))
-                    .map(a => ({ name: a.name || '', type: a.type || '' }));
-                return makeMethod(b.name || '', inputs, b.returns || '');
-            });
+            const existingFqn = (node.existingFqn || '').trim() || null;
+            const catalogType = existingFqn ? byFqn[existingFqn] : null;
+
+            let methods;
+            let purpose;
+            let implByDefault;
+
+            let signatureConflicts = [];
+
+            if (catalogType) {
+                // Reuse path: catalog methods are the source of truth (real
+                // signatures). AI-proposed methods that DON'T exist in the
+                // catalog are kept as "extensions" — these become `+method`
+                // entries in the .puml prelude so the plugin opens the
+                // existing type in UPDATE mode.
+                const catalogMethodNames = new Set((catalogType.publicMethods || []).map(m => m.name));
+
+                methods = (catalogType.publicMethods || []).map(m => {
+                    const inputs = (m.params || [])
+                        .filter(p => p && (p.name || p.type))
+                        .map(p => ({ name: p.name || '', type: p.type || '' }));
+                    const real = makeMethod(m.name || '', inputs, m.returnType || '');
+                    real.isProposed = false;
+                    return real;
+                });
+
+                for (const b of (node.behaviors || [])) {
+                    const bname = (b.name || '').trim();
+                    if (!bname) continue;
+                    const inputs = (b.args || [])
+                        .filter(a => a && (a.name || a.type))
+                        .map(a => ({ name: a.name || '', type: a.type || '' }));
+                    if (!catalogMethodNames.has(bname)) {
+                        // AI proposed a NEW method on a reused type — keep it as
+                        // an extension. Maps to `<<@class:fqn, +bname>>` later.
+                        const added = makeMethod(bname, inputs, b.returns || '');
+                        added.isProposed = true;
+                        methods.push(added);
+                    } else {
+                        // AI's behavior overlaps a real method — compare
+                        // signatures and flag any mismatch. We keep the catalog
+                        // version; the user can resolve in Step 4.
+                        const real = methods.find(m => m.name === bname);
+                        const aiSig = renderSignature(bname, inputs, b.returns || '');
+                        const realSig = renderSignature(real.name, real.inputs, real.output);
+                        if (aiSig !== realSig) {
+                            signatureConflicts.push({
+                                methodName: bname,
+                                aiSignature: aiSig,
+                                catalogSignature: realSig
+                            });
+                        }
+                    }
+                }
+
+                purpose = (catalogType.purpose || node.purpose || '').trim();
+                implByDefault = false;  // existing type — don't (re)generate its impl
+            } else {
+                // New-abstraction path: use the AI's behaviors verbatim.
+                methods = (node.behaviors || []).map(b => {
+                    const inputs = (b.args || [])
+                        .filter(a => a && (a.name || a.type))
+                        .map(a => ({ name: a.name || '', type: a.type || '' }));
+                    const m = makeMethod(b.name || '', inputs, b.returns || '');
+                    m.isProposed = false;  // every method on a new type is "real"
+                    return m;
+                });
+                purpose = (node.purpose || '').trim();
+                implByDefault = true;
+            }
+
             out.push({
                 id: newId(),
                 name,
-                implByDefault: true,
+                implByDefault,
                 methods,
-                purpose: (node.purpose || '').trim()
+                purpose,
+                existingFqn,
+                signatureConflicts
             });
         }
         for (const c of (node.children || [])) visit(c);
@@ -588,6 +687,15 @@ function methodPreviewSignature(m) {
     const types = (m.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
     const out = (m.output || '').trim() || 'void';
     return `${m.name || '?'}(${types}) → ${out}`;
+}
+
+// Compact normal form used for comparing AI-proposed signatures against the
+// real catalog signature when both reference the same method name on a
+// reused type. Equality of these strings is the conflict check.
+function renderSignature(name, inputs, output) {
+    const types = (inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
+    const ret = (output || '').trim() || 'void';
+    return `${(name || '').trim()}(${types}) -> ${ret}`;
 }
 
 function returnLabelFor(m) {
@@ -659,7 +767,7 @@ async function runAnalyze(context) {
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ context })
+            body: JSON.stringify({ context, catalog: state.codebaseCatalog })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
@@ -1052,13 +1160,21 @@ function renderParticipants() {
         card.className = 'pc-card';
         if (idx === 0) card.classList.add('caller');
         if (state.sutParticipantId === p.id) card.classList.add('is-sut');
+        if (p.existingFqn) card.classList.add('is-reused');
         card.dataset.id = p.id;
         // Cycle through the participant palette so the card's left edge
         // matches the colour of the same name in the story narrative.
         card.style.setProperty('--participant-color', PARTICIPANT_PALETTE[idx % PARTICIPANT_PALETTE.length]);
 
         const previewMethods = p.methods.slice(0, 3).map(m => {
-            return escapeHtml(methodPreviewSignature(m));
+            const sig = escapeHtml(methodPreviewSignature(m));
+            // AI-proposed NEW method on a reused type → render a small
+            // "+ new" chip so the user can see the design extends the
+            // existing abstraction.
+            const proposedTag = m.isProposed
+                ? ' <span class="method-proposed-chip" title="New method — would be added to the existing type">+ new</span>'
+                : '';
+            return sig + proposedTag;
         }).join('<br>');
         const moreCount = p.methods.length - 3;
 
@@ -1069,11 +1185,20 @@ function renderParticipants() {
             ? `<span class="sut-chip sut-chip-on" role="button" tabindex="0" title="System under test — click to unmark">SUT</span>`
             : `<span class="sut-chip sut-chip-add" role="button" tabindex="0" title="Mark as system under test">+ SUT</span>`;
 
+        // When the analyser pinned this participant to an existing type in
+        // the user's codebase, surface the FQN so the user can spot reuse
+        // at a glance. Title carries the full FQN for hover-preview when
+        // the chip ellipsifies.
+        const fqnChip = p.existingFqn
+            ? `<div class="pc-fqn-chip" title="${escapeHtml(p.existingFqn)}">${escapeHtml(p.existingFqn)}</div>`
+            : '';
+
         card.innerHTML = `
             <div class="pc-card-head">
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
                 ${sutChip}
             </div>
+            ${fqnChip}
             <div class="pc-card-methods">
                 ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
                 ${moreCount > 0 ? `<div class="pc-card-more">+${moreCount} more</div>` : ''}
@@ -2192,6 +2317,39 @@ function emitPlantUml() {
     if (state.targetPackage && state.targetPackage.trim()) {
         lines.push(`' @package ${state.targetPackage.trim()}`);
     }
+
+    // Participant prelude: declare every participant that appears in the
+    // sequence, decorated with its `participant_target` stereotype. The plugin
+    // reads this in its Step 2.6.5 to drive CREATE / REUSE / UPDATE in Step 3f.
+    // Plugins older than v0.6.0 ignore the stereotypes and fall back to glob-
+    // based file-mode detection — the prelude is backward-compatible.
+    const referenced = new Set();
+    for (const s of state.sequence) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+        if (s.callerId && !isSystemCaller(s.callerId)) referenced.add(s.callerId);
+        if (s.calleeId && !isSystemCaller(s.calleeId)) referenced.add(s.calleeId);
+    }
+    const preludeLines = [];
+    for (const p of state.participants) {
+        if (!referenced.has(p.id)) continue;
+        const name = (p.name || '').trim();
+        if (!name) continue;
+        const fqn = (p.existingFqn || '').trim();
+        const newMethods = (p.methods || []).filter(m => m.isProposed).map(m => '+' + m.name);
+        let stereotype = '';
+        if (fqn && newMethods.length > 0) {
+            stereotype = ` <<@class:${fqn}, ${newMethods.join(', ')}>>`;
+        } else if (fqn) {
+            stereotype = ` <<@class:${fqn}>>`;
+        }
+        preludeLines.push(`participant ${name}${stereotype}`);
+    }
+    if (preludeLines.length > 0) {
+        lines.push("' @disc-classification participants below declare CREATE (no stereotype), REUSE (@class), or UPDATE (@class + +methods)");
+        for (const line of preludeLines) lines.push(line);
+        lines.push('');  // blank line before the sequence interactions
+    }
+
     const creates = resolveCreates();
     let indent = 0;
     const pad = () => '  '.repeat(indent);
@@ -2681,7 +2839,10 @@ function enterStep3() {
         const purpose = (p.purpose || '').trim();
         const fallback = p.methods.map(m => m.name || '?').join(', ') || '(no methods)';
         const desc = purpose || fallback;
-        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(desc)}</span></li>`;
+        const fqn = p.existingFqn
+            ? ` <span class="review-fqn">(${escapeHtml(p.existingFqn)})</span>`
+            : '';
+        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(desc)}</span>${fqn}</li>`;
     }).join('');
     const unusedLine = unused.length > 0
         ? `<div class="review-warn">${unused.length} unused participant${unused.length === 1 ? '' : 's'}: ${unused.map(p => escapeHtml(p.name || '(unnamed)')).join(', ')}</div>`
@@ -2979,17 +3140,321 @@ function enterStep4() {
         saveEls.pkg.value = state.targetPackage;
     }
     refreshPackageWarning();
+    renderPlanPanel();          // per-participant CREATE/REUSE/UPDATE table
     outputEl.textContent = emitPlantUml();
     if (!saveEls.filename.value.trim()) {
         saveEls.filename.value = defaultFileName();
     }
     saveEls.result.classList.add('hidden');
     saveEls.error.classList.add('hidden');
+    // Hide any stale plugin-plan preview from a previous visit.
+    const pr = document.getElementById('preview-result');
+    if (pr) pr.classList.add('hidden');
     // Plugin status drives whether the Run button is enabled. Always refresh
     // on enter — the user might have installed the plugin in a separate
     // terminal between visits.
     refreshPluginStatus();
 }
+
+// --- Step 4 plan panel + plugin preview ---
+
+// Per-participant action picker. Reads each participant's existingFqn + any
+// isProposed methods to infer a default action (CREATE / REUSE / UPDATE),
+// renders a row per used participant with a dropdown, and lets the user
+// override the action. Changes mutate the participant and re-emit the .puml.
+function renderPlanPanel() {
+    const host = document.getElementById('plan-panel');
+    const conflictsHost = document.getElementById('plan-conflicts');
+    if (!host) return;
+
+    // Only show participants referenced by the sequence — others won't be
+    // emitted in the .puml prelude anyway.
+    const referenced = new Set();
+    for (const s of state.sequence) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+        if (s.callerId && !isSystemCaller(s.callerId)) referenced.add(s.callerId);
+        if (s.calleeId && !isSystemCaller(s.calleeId)) referenced.add(s.calleeId);
+    }
+    const used = state.participants.filter(p => referenced.has(p.id));
+
+    if (used.length === 0) {
+        host.innerHTML = '<div class="plan-row"><span class="plan-participant" style="grid-column: 1 / -1; color: var(--text-3); font-style: italic;">No participants in the sequence yet.</span></div>';
+        if (conflictsHost) conflictsHost.classList.add('hidden');
+        return;
+    }
+
+    host.innerHTML = used.map(p => {
+        const action = inferAction(p);
+        const target = describeTarget(p, action);
+        return `<div class="plan-row action-${action.toLowerCase()}" data-participant-id="${escapeAttr(p.id)}">
+            <span class="plan-participant">${escapeHtml(p.name || '(unnamed)')}</span>
+            <span class="plan-action">
+                <select data-plan-action data-participant-id="${escapeAttr(p.id)}">
+                    <option value="CREATE" ${action === 'CREATE' ? 'selected' : ''}>CREATE — new</option>
+                    <option value="REUSE"  ${action === 'REUSE'  ? 'selected' : ''}>REUSE — existing</option>
+                    <option value="UPDATE" ${action === 'UPDATE' ? 'selected' : ''}>UPDATE — add methods</option>
+                    <option value="SKIP"   ${action === 'SKIP'   ? 'selected' : ''}>SKIP — leave alone</option>
+                </select>
+            </span>
+            <span class="plan-target" title="${escapeAttr(target)}">${escapeHtml(target)}</span>
+        </div>`;
+    }).join('');
+
+    host.querySelectorAll('select[data-plan-action]').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+            const id = e.target.dataset.participantId;
+            const action = e.target.value;
+            applyPlanAction(id, action);
+        });
+    });
+
+    renderPlanConflicts(used);
+}
+
+// Default action for a participant, derived from its current state:
+//   existingFqn null                       → CREATE
+//   existingFqn set, no isProposed methods → REUSE
+//   existingFqn set, has isProposed        → UPDATE
+function inferAction(p) {
+    if (!p.existingFqn) return 'CREATE';
+    const hasProposed = (p.methods || []).some(m => m.isProposed);
+    return hasProposed ? 'UPDATE' : 'REUSE';
+}
+
+function describeTarget(p, action) {
+    if (action === 'CREATE') {
+        const pkg = (state.targetPackage || '').trim() || '(no @package)';
+        return `${pkg}.${p.name}`;
+    }
+    if (action === 'SKIP') {
+        return '(skipped — DisC will not touch this)';
+    }
+    const fqn = (p.existingFqn || '').trim() || '(no fqn set)';
+    if (action === 'UPDATE') {
+        const adds = (p.methods || []).filter(m => m.isProposed).map(m => '+' + m.name);
+        if (adds.length > 0) return `${fqn}   ${adds.join(', ')}`;
+        return fqn;
+    }
+    return fqn;
+}
+
+// Applying an action mutates the participant in place and re-emits the .puml.
+// We honour user intent over the catalog: switching CREATE → REUSE blanks
+// existingFqn; switching REUSE → CREATE clears it. UPDATE only differs from
+// REUSE by carrying isProposed methods.
+function applyPlanAction(participantId, action) {
+    const p = findParticipant(participantId);
+    if (!p) return;
+
+    if (action === 'CREATE') {
+        p.existingFqn = null;
+        // Drop any isProposed flag — proposed-on-reuse no longer applies.
+        for (const m of (p.methods || [])) m.isProposed = false;
+        p.skipped = false;
+    } else if (action === 'REUSE') {
+        // Keep existingFqn if already set; if not, the user picked REUSE
+        // without a target — they need to supply one. We don't have UI for
+        // that yet, so the row will show "(no fqn set)" and the plugin
+        // would refuse. Acceptable v1.
+        for (const m of (p.methods || [])) m.isProposed = false;
+        p.skipped = false;
+    } else if (action === 'UPDATE') {
+        // Mark every method that the catalog DID NOT carry as isProposed.
+        // For now, if the user manually picks UPDATE on a fresh participant,
+        // we have no way to know which methods are "new" — they'd all be
+        // proposed. Acceptable v1.
+        for (const m of (p.methods || [])) m.isProposed = true;
+        p.skipped = false;
+    } else if (action === 'SKIP') {
+        p.skipped = true;
+    }
+
+    renderPlanPanel();
+    outputEl.textContent = emitPlantUml();
+}
+
+function renderPlanConflicts(participants) {
+    const host = document.getElementById('plan-conflicts');
+    if (!host) return;
+    const items = [];
+    for (const p of participants) {
+        for (const c of (p.signatureConflicts || [])) {
+            items.push({ participant: p, conflict: c });
+        }
+    }
+    if (items.length === 0) {
+        host.classList.add('hidden');
+        host.innerHTML = '';
+        return;
+    }
+    host.classList.remove('hidden');
+    host.innerHTML = `<strong>⚠ ${items.length} signature conflict${items.length === 1 ? '' : 's'}</strong>
+        ${items.map(({ participant, conflict }) => `
+            <span class="plan-conflict-line">
+                ${escapeHtml(participant.name)}.${escapeHtml(conflict.methodName)} —
+                design: <code>${escapeHtml(conflict.aiSignature)}</code>;
+                catalog: <code>${escapeHtml(conflict.catalogSignature)}</code>
+            </span>
+        `).join('')}
+        <div class="plan-conflict-actions">
+            <button type="button" data-resolve-conflicts="catalog">Use catalog signatures</button>
+        </div>`;
+    const resolveBtn = host.querySelector('[data-resolve-conflicts]');
+    if (resolveBtn) {
+        resolveBtn.addEventListener('click', () => {
+            // Clearing the conflicts list is sufficient — methods[] already
+            // holds the catalog signatures (the merge logic chose them as
+            // the authoritative form). This button just acknowledges.
+            for (const p of state.participants) {
+                p.signatureConflicts = [];
+            }
+            renderPlanPanel();
+            outputEl.textContent = emitPlantUml();
+        });
+    }
+}
+
+// "Preview changes" — writes the .puml to disk first (same path the user
+// would Export to), then calls /api/plan-disc to ask the plugin what it
+// would do without mutating anything. Renders the response in the
+// preview-result panel.
+async function previewPlan() {
+    const previewBtn = document.getElementById('preview-plan');
+    const previewResult = document.getElementById('preview-result');
+    saveEls.error.classList.add('hidden');
+
+    const projectPath = state.projectPath || (els.pathInput.value || '').trim();
+    if (!projectPath) {
+        saveEls.error.textContent = 'No project path — go back to Step 1 and pick a folder (or paste a path).';
+        saveEls.error.classList.remove('hidden');
+        return;
+    }
+
+    const content = outputEl.textContent;
+    if (!content || !content.trim()) {
+        saveEls.error.textContent = 'Nothing to preview — add some steps in Step 2.';
+        saveEls.error.classList.remove('hidden');
+        return;
+    }
+
+    const fileName = saveEls.filename.value.trim() || defaultFileName();
+    if (previewBtn) {
+        previewBtn.disabled = true;
+        previewBtn.textContent = 'Previewing…';
+    }
+    if (previewResult) previewResult.classList.add('hidden');
+
+    try {
+        // Step 1: write the .puml + decision tables. Plan needs the file on disk.
+        const decisionTables = collectDecisionTablesForSave();
+        const saveRes = await fetch('/api/design', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectPath, fileName, content, decisionTables })
+        });
+        const saveData = await saveRes.json();
+        if (!saveRes.ok) throw new Error(saveData.error || `Write failed (${saveRes.status})`);
+
+        // Step 2: ask the plugin for the plan.
+        const modelSelect = document.getElementById('run-model');
+        const model = modelSelect ? modelSelect.value : null;
+        const planRes = await fetch('/api/plan-disc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectPath, filePath: saveData.relativePath, model })
+        });
+        const plan = await planRes.json();
+        if (!planRes.ok) throw new Error(plan.error || `Plan failed (${planRes.status})`);
+
+        renderPluginPlan(plan);
+    } catch (err) {
+        saveEls.error.textContent = err.message;
+        saveEls.error.classList.remove('hidden');
+    } finally {
+        if (previewBtn) {
+            previewBtn.disabled = false;
+            previewBtn.textContent = 'Preview changes';
+        }
+    }
+}
+
+// Walks state.sequence for any attached decision tables, serialises each one
+// to its YAML+markdown sidecar form, and returns the array the /api/design
+// endpoint expects. Extracted so previewPlan and the existing save handler
+// share the same builder. (Refactor: the original was inline in saveEls.save's
+// handler — see below where we keep a thin wrapper for compatibility.)
+function collectDecisionTablesForSave() {
+    const out = [];
+    for (const step of state.sequence) {
+        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
+        const participant = findParticipant(step.calleeId);
+        const method = findMethod(step.calleeId, step.methodId);
+        if (!participant || !method) continue;
+        out.push({
+            fileName: decisionTableFileName(participant),
+            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
+        });
+    }
+    return out;
+}
+
+// Render the plugin's plan envelope: { actions, warnings, summary }.
+function renderPluginPlan(plan) {
+    const panel = document.getElementById('preview-result');
+    const list  = document.getElementById('preview-result-list');
+    const meta  = document.getElementById('preview-result-meta');
+    const warn  = document.getElementById('preview-result-warnings');
+    if (!panel || !list) return;
+
+    const actions = Array.isArray(plan.actions) ? plan.actions : [];
+    const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+    const summary = plan.summary || {};
+
+    list.innerHTML = actions.length === 0
+        ? '<li class="preview-detail">No actions — nothing to do.</li>'
+        : actions.map(a => {
+            const type = (a.type || '').toUpperCase();
+            const marker = type === 'CREATE' ? '+' : type === 'UPDATE' ? '~' : type === 'REUSE' ? '✓' : '?';
+            const cls   = type === 'CREATE' ? 'preview-action-create'
+                       : type === 'UPDATE' ? 'preview-action-update'
+                       : type === 'REUSE'  ? 'preview-action-reuse'
+                       : '';
+            const adds = Array.isArray(a.addedMethods) && a.addedMethods.length > 0
+                ? `<span class="preview-detail">add: ${escapeHtml(a.addedMethods.join(', '))}</span>`
+                : '';
+            return `<li class="${cls}">
+                <span class="preview-action-marker">${marker}</span> ${type}  ${escapeHtml(a.path || a.participant || '')}
+                ${a.reason ? `<span class="preview-detail">${escapeHtml(a.reason)}</span>` : ''}
+                ${adds}
+            </li>`;
+        }).join('');
+
+    const parts = [];
+    if (summary.create != null) parts.push(`${summary.create} create`);
+    if (summary.update != null) parts.push(`${summary.update} update`);
+    if (summary.reuse  != null) parts.push(`${summary.reuse} reuse`);
+    if (summary.verifyTests != null) parts.push(`${summary.verifyTests} verify_tests`);
+    if (summary.resultTests != null) parts.push(`${summary.resultTests} result_tests`);
+    if (meta) meta.textContent = parts.join(' · ');
+
+    if (warn) {
+        if (warnings.length > 0) {
+            warn.classList.remove('hidden');
+            warn.innerHTML = warnings.map(w => `<div>⚠ ${escapeHtml(String(w))}</div>`).join('');
+        } else {
+            warn.classList.add('hidden');
+            warn.innerHTML = '';
+        }
+    }
+
+    panel.classList.remove('hidden');
+}
+
+// Wire the Preview button (only when present — backward-compat).
+(() => {
+    const previewBtn = document.getElementById('preview-plan');
+    if (previewBtn) previewBtn.addEventListener('click', previewPlan);
+})();
 
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');

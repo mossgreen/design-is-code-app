@@ -341,6 +341,12 @@
                 <input type="text" id="puml-filename" placeholder="generate-invoice.puml" autocomplete="off">
             </div>
 
+            <div class="review-block plan-block">
+                <div class="review-label">Plan — what DisC will do per participant</div>
+                <div id="plan-panel" class="plan-panel"></div>
+                <div id="plan-conflicts" class="plan-conflicts hidden"></div>
+            </div>
+
             <div class="puml-block">
                 <button type="button" id="copy-output" class="puml-copy" aria-label="Copy .puml" title="Copy .puml to clipboard">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -353,7 +359,17 @@
             </div>
 
             <div class="export-row">
+                <button type="button" id="preview-plan" class="secondary">Preview changes</button>
                 <button type="button" id="save-to-project">Export to project →</button>
+            </div>
+
+            <div id="preview-result" class="preview-result hidden" aria-label="Plugin plan preview">
+                <div class="preview-result-head">
+                    <strong>Plugin plan</strong>
+                    <span class="preview-result-meta" id="preview-result-meta"></span>
+                </div>
+                <ul id="preview-result-list" class="preview-list"></ul>
+                <div id="preview-result-warnings" class="preview-warnings hidden"></div>
             </div>
 
             <div id="save-result" class="save-result hidden">

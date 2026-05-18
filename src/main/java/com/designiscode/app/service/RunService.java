@@ -170,6 +170,129 @@ public class RunService {
         return cancelRegistry.cancel(runId);
     }
 
+    /**
+     * Plan mode — runs the DisC plugin with the `--plan` flag (introduced
+     * in plugin v0.6.0). The plugin walks Steps 1–6 internally and emits a
+     * single JSON envelope to stdout in place of Steps 7/8 (no files
+     * written). This method returns the parsed envelope; the caller passes
+     * it through to the client.
+     *
+     * <p>One-shot, synchronous. No streaming, no NDJSON, no run-id — plan
+     * mode is short-lived and cancelling it has no point (it doesn't
+     * mutate the filesystem). The output should be a few KB at most.
+     *
+     * <p>Buffer cap protects against an infinite stdout from a broken
+     * plugin: we abandon the process and throw if the output exceeds
+     * {@link #PLAN_MAX_BYTES}.
+     */
+    public java.util.Map<String, Object> plan(RunRequest request) throws java.io.IOException, InterruptedException {
+        if (request == null || request.projectPath() == null || request.projectPath().isBlank()) {
+            throw new IllegalArgumentException("projectPath is required");
+        }
+        if (request.filePath() == null || request.filePath().isBlank()) {
+            throw new IllegalArgumentException("filePath is required");
+        }
+
+        Path projectRoot = Paths.get(request.projectPath()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(projectRoot)) {
+            throw new IllegalArgumentException("project path is not a directory: " + projectRoot);
+        }
+
+        String relPath = request.filePath().trim();
+        Path resolved = projectRoot.resolve(relPath).normalize();
+        if (!resolved.startsWith(projectRoot) || !Files.exists(resolved)) {
+            throw new IllegalArgumentException("puml file not found at " + resolved);
+        }
+
+        String slashCommand = DISC_SLASH_COMMAND + " " + relPath + " --plan";
+        List<String> cmd = new ArrayList<>(List.of(
+                "claude",
+                "--dangerously-skip-permissions"
+        ));
+        String requestedModel = request.model();
+        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
+            cmd.add("--model");
+            cmd.add(requestedModel);
+        }
+        cmd.add("-p");
+        cmd.add(slashCommand);
+
+        ProcessBuilder pb = new ProcessBuilder(cmd)
+                .directory(projectRoot.toFile())
+                .redirectErrorStream(true)
+                .redirectInput(new File("/dev/null"));
+
+        Process process;
+        try {
+            process = pb.start();
+        } catch (java.io.IOException e) {
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            if (msg.contains("No such file") || msg.contains("error=2")) {
+                throw new java.io.IOException("`claude` CLI not found on PATH. Install Claude Code and try again.", e);
+            }
+            throw e;
+        }
+
+        StringBuilder buf = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8),
+                READER_BUFFER_BYTES)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                buf.append(line).append('\n');
+                if (buf.length() > PLAN_MAX_BYTES) {
+                    process.destroyForcibly();
+                    throw new java.io.IOException("plan output exceeded " + PLAN_MAX_BYTES + " bytes — aborting");
+                }
+            }
+        }
+        boolean exited = process.waitFor(PLAN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+        if (!exited) {
+            process.destroyForcibly();
+            throw new java.io.IOException("plan timed out after " + PLAN_TIMEOUT_SECONDS + "s");
+        }
+        int exit = process.exitValue();
+        String stdout = buf.toString();
+        if (exit != 0) {
+            throw new java.io.IOException("claude exited " + exit + " in plan mode: " + truncate(stdout, 500));
+        }
+
+        String body = stripFences(stdout);
+        try {
+            //noinspection unchecked
+            return planJson.readValue(body, java.util.Map.class);
+        } catch (tools.jackson.core.JacksonException e) {
+            throw new java.io.IOException("plugin did not return valid JSON in plan mode. First 500 chars: " + truncate(body, 500), e);
+        }
+    }
+
+    /** Hard cap on plan-mode stdout. The envelope should be a few KB; 256 KB
+     *  is generous. Anything more means a broken plugin. */
+    private static final int PLAN_MAX_BYTES = 256 * 1024;
+
+    /** Plan mode is expected to complete in seconds, not the minutes a real
+     *  run might take. Cap at 2 minutes to fail fast on plugin hangs. */
+    private static final long PLAN_TIMEOUT_SECONDS = 120;
+
+    private final tools.jackson.databind.ObjectMapper planJson =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
+    private static String stripFences(String text) {
+        String t = text.trim();
+        if (t.startsWith("```")) {
+            int firstNewline = t.indexOf('\n');
+            if (firstNewline > 0) t = t.substring(firstNewline + 1);
+            int endFence = t.lastIndexOf("```");
+            if (endFence >= 0) t = t.substring(0, endFence);
+        }
+        return t.trim();
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
+
     // --- emit helpers ---
 
     private void emit(ResponseBodyEmitter emitter, String chunk) {

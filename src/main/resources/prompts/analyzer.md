@@ -10,6 +10,23 @@ A user requirement, free text:
 {CONTEXT}
 ```
 
+# Existing codebase (optional)
+
+These types already exist in the user's project. When one of them
+*already fulfils* the role of a node you would otherwise propose, **reuse
+it**: keep its exact `name` and set `existingFqn` to its fully-qualified
+class name. When in doubt, propose new and omit `existingFqn`. Never
+force-fit (e.g. don't reuse `OrderService` for a meeting use case just
+because nothing else matches).
+
+## Summary
+
+{CODEBASE_SUMMARY}
+
+## Types (most relevant to the story)
+
+{CODEBASE_TYPES}
+
 # Task
 
 Produce a single tree. Each node is an interface — a named concept with a
@@ -55,12 +72,13 @@ Each node:
 
 ```
 {
-  "name":       "PascalCaseTypeName",
-  "purpose":    "one sentence describing why this abstraction exists",
-  "attributes": [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
-  "behaviors":  [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
-  "isLeaf":     false,
-  "children":   [ ...recursive... ]
+  "name":         "PascalCaseTypeName",
+  "existingFqn":  "com.foo.order.OrderRepository",   // ONLY when reusing an existing codebase type; OMIT otherwise
+  "purpose":      "one sentence describing why this abstraction exists",
+  "attributes":   [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
+  "behaviors":    [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
+  "isLeaf":       false,
+  "children":     [ ...recursive... ]
 }
 ```
 
@@ -70,6 +88,11 @@ Each node:
   implementations). Don't add `Service`/`Manager`/`Handler` unless the
   abstraction genuinely is one (an `InviteDispatcher` is an
   `InviteDispatcher`, not an `InviteDispatcherService`).
+- `existingFqn` — set ONLY when a type from "Existing codebase" already
+  fulfils this exact role with a matching name. Prefer the interface
+  over the `*Impl` class when both exist. **Omit** (do not set to null)
+  when proposing a new abstraction. The bar is "obvious match" — when in
+  doubt, propose new.
 - `purpose` — one sentence, present tense, "this thing does X." Not docs;
   rationale.
 - `attributes` — only the data the abstraction *holds*. Most interfaces have
