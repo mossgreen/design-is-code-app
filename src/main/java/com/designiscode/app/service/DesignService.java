@@ -32,25 +32,71 @@ public class DesignService {
             throw new IllegalArgumentException("Project path is not a directory: " + projectRoot);
         }
 
-        String fileName = sanitizePumlFileName(request.fileName());
-        Path designDir = projectRoot.resolve(DESIGN_DIR);
-        Path target = designDir.resolve(fileName).normalize();
+        Path target;
+        Path containerDir;
+        String fileName;
+        String relPathForResult;
 
-        if (!target.startsWith(designDir)) {
-            throw new IllegalArgumentException("Invalid file name");
+        if (request.relativePath() != null && !request.relativePath().isBlank()) {
+            // Nested sub-design — write at the exact relative path. The folder
+            // hierarchy mirrors the design call-graph.
+            relPathForResult = sanitizeRelativePath(request.relativePath());
+            target = projectRoot.resolve(relPathForResult).normalize();
+            if (!target.startsWith(projectRoot)) {
+                throw new IllegalArgumentException("Relative path escapes project");
+            }
+            containerDir = target.getParent();
+            fileName = target.getFileName().toString();
+        } else {
+            // Legacy / root design — design/<fileName>
+            fileName = sanitizePumlFileName(request.fileName());
+            containerDir = projectRoot.resolve(DESIGN_DIR);
+            target = containerDir.resolve(fileName).normalize();
+            if (!target.startsWith(containerDir)) {
+                throw new IllegalArgumentException("Invalid file name");
+            }
+            relPathForResult = projectRoot.relativize(target).toString();
         }
 
         try {
-            Files.createDirectories(designDir);
+            Files.createDirectories(containerDir);
             Files.writeString(target, request.content());
         } catch (IOException e) {
             throw new RuntimeException("Failed to write design file: " + e.getMessage(), e);
         }
 
-        int sidecarCount = writeDecisionTables(designDir, request.decisionTables());
+        int sidecarCount = writeDecisionTables(containerDir, request.decisionTables());
 
-        String relativePath = projectRoot.relativize(target).toString();
-        return new DesignResult(target.toString(), relativePath, fileName, sidecarCount);
+        return new DesignResult(target.toString(), relPathForResult, fileName, sidecarCount);
+    }
+
+    /** Sanitise a project-relative path for nested .puml writes. Permits
+     *  forward-slash separators but rejects {@code ..}, absolute paths,
+     *  and path components that fail the per-segment name check. */
+    private String sanitizeRelativePath(String raw) {
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("Relative path is empty");
+        }
+        if (trimmed.startsWith("/") || trimmed.contains("\\")) {
+            throw new IllegalArgumentException("Relative path must be project-relative (no leading '/' or backslashes)");
+        }
+        if (trimmed.contains("..")) {
+            throw new IllegalArgumentException("Relative path must not contain '..'");
+        }
+        if (!trimmed.toLowerCase().endsWith(".puml")) {
+            throw new IllegalArgumentException("Relative path must end with .puml");
+        }
+        for (String segment : trimmed.split("/")) {
+            if (segment.isEmpty()) {
+                throw new IllegalArgumentException("Relative path has empty segment");
+            }
+            if (!segment.matches("[A-Za-z0-9._-]+")) {
+                throw new IllegalArgumentException(
+                        "Path segment may only contain letters, digits, '.', '_' and '-': " + segment);
+            }
+        }
+        return trimmed;
     }
 
     private int writeDecisionTables(Path designDir, List<DecisionTableFile> tables) {

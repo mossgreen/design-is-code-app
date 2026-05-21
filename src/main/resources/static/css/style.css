@@ -3813,3 +3813,233 @@ button.small {
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
+
+/* --- v0.7 Multi-level designs: kind chip + tree view + build-all --- */
+
+/* Participant card chip: shows orchestrator / reuse classification. */
+.pc-kind-chip {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 4px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-left: 0.4rem;
+}
+
+.pc-kind-chip.kind-orchestrator {
+    background: #fff7ed;
+    color: #9a3412;
+    border: 1px solid color-mix(in srgb, #f97316 30%, transparent);
+}
+
+.pc-kind-chip.kind-reuse {
+    background: #ecfeff;
+    color: #155e75;
+    border: 1px solid color-mix(in srgb, #06b6d4 30%, transparent);
+}
+
+.pc-card.is-orchestrator {
+    border-style: dashed;
+    background: color-mix(in srgb, #f97316 4%, var(--surface));
+}
+
+/* Modal: kind dropdown + help text. */
+.field.kind-field select {
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--fs-sm);
+}
+
+.field.kind-field .kind-help {
+    margin-top: 0.35rem;
+    font-style: italic;
+}
+
+/* Tree view panel (Step 4 — post-export). */
+.tree-view {
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 0.85rem 1rem;
+}
+
+.tree-view-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.5rem;
+}
+
+.tree-view-head strong {
+    font-size: var(--fs-sm);
+}
+
+.tree-view-meta {
+    color: var(--text-muted);
+    font-size: var(--fs-xs);
+    margin-right: auto;
+}
+
+.tree-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+}
+
+.tree-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.25rem;
+    border-bottom: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.tree-row:last-child { border-bottom: none; }
+
+.tree-row-name {
+    flex: 1 1 auto;
+    color: var(--text);
+}
+
+.tree-row-pending .tree-row-name {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.tree-chip {
+    padding: 0.02rem 0.4rem;
+    border-radius: 4px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+}
+
+.tree-chip-designed { background: #ecfdf5; color: #047857; }
+.tree-chip-stale    { background: #fef3c7; color: #92400e; }
+.tree-chip-pending  { background: #f3f4f6; color: #4b5563; }
+
+.tree-design-this {
+    background: none;
+    border: none;
+    color: var(--accent, #2563eb);
+    cursor: pointer;
+    font-size: var(--fs-xs);
+    font-family: inherit;
+    text-decoration: underline;
+    padding: 0;
+}
+
+.tree-banner {
+    margin-top: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: var(--radius-sm);
+    background: #fef3c7;
+    color: #92400e;
+    font-size: var(--fs-xs);
+}
+
+/* Build-all progress: one row per .puml, bottom-up. */
+.build-all-progress {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.build-all-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+}
+
+.build-all-nodes {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+}
+
+.build-all-node {
+    display: flex;
+    flex-direction: column;
+    padding: 0.25rem 0.5rem;
+    border-left: 3px solid transparent;
+    margin-bottom: 0.2rem;
+}
+
+.build-all-node-running { border-left-color: #2563eb; background: #eff6ff; }
+.build-all-node-done    { border-left-color: #059669; background: #ecfdf5; }
+.build-all-node-failed  { border-left-color: #dc2626; background: #fef2f2; }
+
+.build-all-node-status {
+    display: inline-block;
+    width: 1rem;
+    color: inherit;
+}
+
+.build-all-node-error {
+    margin-top: 0.2rem;
+    color: #991b1b;
+    font-size: var(--fs-xs);
+}
+
+/* --- v0.7.2 Leaf kind chip + per-participant build-status dots --- */
+
+/* Make leaf participants explicit instead of letting them be the
+ * "default" card look. Muted green keeps it visually quieter than
+ * orchestrator (orange) and reuse (cyan) — leaf is the simplest kind,
+ * the chip is just a label. */
+.pc-kind-chip.kind-leaf {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid color-mix(in srgb, #10b981 30%, transparent);
+}
+
+/* Per-participant build-status dot, rendered in the Step-4 plan-panel
+ * next to each row's action. Three discrete states; defaults to gray
+ * "unknown" until the async fetch resolves. */
+.build-status-dot {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    margin-right: 0.4rem;
+    background: #d1d5db;            /* unknown / pre-fetch */
+    border: 1px solid color-mix(in srgb, #9ca3af 60%, transparent);
+    vertical-align: baseline;
+    flex-shrink: 0;
+}
+
+.build-status-dot.status-real {
+    background: #059669;
+    border-color: #047857;
+}
+
+.build-status-dot.status-stubbed {
+    background: #f59e0b;
+    border-color: #b45309;
+}
+
+.build-status-dot.status-pending {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+}
+
+/* Small text label that may render next to the dot for accessibility
+ * and to make the colour mapping legible. */
+.build-status-label {
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    margin-right: 0.5rem;
+}

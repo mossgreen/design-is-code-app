@@ -104,12 +104,34 @@ public class RunService {
     }
 
     private void runProcess(String runId, List<String> cmd, File workingDir, ResponseBodyEmitter emitter) {
-        // Echo the invocation so the user can see what was actually run. The
-        // wizard's raw-output panel renders these as plain lines.
+        ProcessResult result = streamProcess(runId, cmd, workingDir, emitter);
+        try {
+            if (result.terminalError() != null) {
+                emit(emitter, event("done", "exit", -1, "error", result.terminalError()));
+            } else {
+                emit(emitter, event("done", "exit", result.exit()));
+            }
+        } finally {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {
+                // emitter may already be in a terminal state; nothing more to do.
+            }
+        }
+    }
+
+    /**
+     * Spawn the plugin subprocess and pump its stdout (parsed via
+     * {@link StreamJsonMapper}) into the supplied emitter. Does <b>not</b>
+     * emit a terminal {@code done} event or close the emitter — the caller
+     * decides how to finalise. Used by {@link #runProcess} (single-shot) and
+     * by {@link TreeService#buildAll} (multi-shot, one per .puml in a tree).
+     */
+    ProcessResult streamProcess(String runId, List<String> cmd, File workingDir, ResponseBodyEmitter emitter) {
         emit(emitter, rawLine("$ cd " + workingDir.getAbsolutePath()));
         emit(emitter, rawLine("$ " + String.join(" ", cmd)));
 
-        Process process = null;
+        Process process;
         int exit = -1;
         String terminalError = null;
 
@@ -145,23 +167,36 @@ public class RunService {
             terminalError = e.getMessage();
         } finally {
             cancelRegistry.unregister(runId);
-            // Single guarantee: every run emits one terminal event, then completes
-            // the emitter. Without this, the wizard's "Running…" state can wedge.
-            try {
-                if (terminalError != null) {
-                    emit(emitter, event("done", "exit", -1, "error", terminalError));
-                } else {
-                    // exit==0 normal; exit!=0 the agent itself reported a failure.
-                    emit(emitter, event("done", "exit", exit));
-                }
-            } finally {
-                try {
-                    emitter.complete();
-                } catch (Exception ignored) {
-                    // emitter may already be in a terminal state; nothing more to do.
-                }
-            }
         }
+        return new ProcessResult(exit, terminalError);
+    }
+
+    /** Result of one plugin invocation. {@code terminalError} is non-null
+     *  only when the JVM-side launch/read/wait failed; a non-zero
+     *  {@code exit} with null error means the plugin itself reported a
+     *  failure but the launch was clean. */
+    record ProcessResult(int exit, String terminalError) {}
+
+    /** Builds the {@code claude --output-format stream-json --verbose -p
+     *  /design-is-code:disc <relPath>} command, validating model and
+     *  paths the same way {@link #run} does. Used by {@link TreeService}
+     *  so the build-all walker can spawn one process per .puml in a tree
+     *  without re-implementing the validation. */
+    List<String> buildDiscCommand(String relPath, String requestedModel) {
+        String slashCommand = DISC_SLASH_COMMAND + " " + relPath;
+        List<String> cmd = new ArrayList<>(List.of(
+                "claude",
+                "--dangerously-skip-permissions",
+                "--output-format", "stream-json",
+                "--verbose"
+        ));
+        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
+            cmd.add("--model");
+            cmd.add(requestedModel);
+        }
+        cmd.add("-p");
+        cmd.add(slashCommand);
+        return cmd;
     }
 
     /** Cancels a registered run by destroying the process. Idempotent. */

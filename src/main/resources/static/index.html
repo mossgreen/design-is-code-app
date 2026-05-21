@@ -200,6 +200,15 @@
                                 <span><strong>Default implementation</strong> · also generate the implementation class alongside the interface</span>
                             </label>
                         </div>
+                        <div class="field kind-field">
+                            <label for="modal-kind">Kind</label>
+                            <select id="modal-kind">
+                                <option value="leaf">leaf — pure function or stereotype boundary (full impl + tests at this level)</option>
+                                <option value="orchestrator">orchestrator — has its own collaborators (defer-design; design in a sub-.puml)</option>
+                                <option value="reuse">reuse — bound to an existing codebase type (set FQN below)</option>
+                            </select>
+                            <div class="kind-help hint" id="modal-kind-help"></div>
+                        </div>
                         <div class="field">
                             <div class="modal-methods-head">
                                 <label>Methods · <span id="modal-methods-count">0</span></label>
@@ -435,8 +444,26 @@
 
             <div id="save-error" class="error hidden"></div>
 
+            <div id="tree-view" class="tree-view hidden">
+                <div class="tree-view-head">
+                    <strong>Design tree</strong>
+                    <span class="tree-view-meta" id="tree-view-meta"></span>
+                    <button type="button" id="build-all" class="secondary small">Build all ↓</button>
+                </div>
+                <ul id="tree-view-list" class="tree-list"></ul>
+                <div id="tree-view-banner" class="tree-banner hidden"></div>
+                <div id="build-all-progress" class="build-all-progress hidden">
+                    <div class="build-all-head">
+                        <span class="run-status"><span class="run-status-dot"></span><span id="build-all-status">Building…</span></span>
+                        <span class="run-elapsed" id="build-all-elapsed"></span>
+                    </div>
+                    <ol id="build-all-nodes" class="build-all-nodes"></ol>
+                </div>
+            </div>
+
             <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="3">← Back</button>
+                <button type="button" id="exit-sub-design" class="secondary hidden">↑ Back to parent design</button>
             </div>
         </section>
     </main>

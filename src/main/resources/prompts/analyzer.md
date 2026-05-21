@@ -52,6 +52,17 @@ Mark the node `"isLeaf": true` and set `"children": []`:
 Prefer 2–5 nodes per level. Never go deeper than 4 levels. If you're tempted
 to add a 5th sibling or a 5th level, consolidate or stop.
 
+## Orchestrator vs leaf — when to leave a node non-leaf
+
+If a node represents a custom abstraction with its own internal call graph
+(it would orchestrate further collaborators when implemented), leave it
+**non-leaf** (`isLeaf: false`) even if you don't expand its children in
+this output. Downstream tooling treats such nodes as deferred sub-designs:
+they get a stub at this level and a separate design pass for their
+internals. Don't force-flatten an orchestrator into a leaf just to meet
+the depth limit — better to truncate the tree (omit children) than to
+mis-classify a multi-step concern as a pure function.
+
 # Output
 
 **Strict JSON. No prose. No markdown fences. The very first character of your
