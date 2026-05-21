@@ -183,6 +183,15 @@ header {
     height: 16px;
 }
 
+.browse-btn:disabled {
+    cursor: progress;
+    opacity: 0.65;
+}
+
+.browse-btn.is-busy {
+    background: var(--surface-3);
+}
+
 .folder-picker {
     position: absolute;
     top: calc(100% + 6px);
@@ -1958,6 +1967,27 @@ button.small {
     border: 1px solid #a7f3d0;
     border-radius: 4px;
     padding: 0.1rem 0.4rem;
+}
+
+/* One-line purpose row, surfaced from the analyzer or typed in the
+ * participant modal. Sits between the optional FQN chip and the methods
+ * preview so the card reads top-to-bottom as: name+chips → fqn → purpose
+ * → methods. Sans-serif to distinguish from the monospace methods below;
+ * full text wraps (no clamp) so users never have to hover to read the
+ * whole sentence. */
+.pc-card-purpose {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.83rem;
+    line-height: 1.45;
+    color: #4b5563;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+    overflow-wrap: anywhere;
+}
+
+.pc-card-purpose.is-empty {
+    color: #9ca3af;
+    font-style: italic;
 }
 
 .pc-card-methods {
@@ -4042,4 +4072,128 @@ button.small {
     font-size: var(--fs-xs);
     color: var(--text-muted);
     margin-right: 0.5rem;
+}
+
+/* --- Step 2 design inputs (story + acceptance criteria) --- */
+
+.design-input-block {
+    margin-bottom: 1.1rem;
+}
+
+.design-input-block textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ac-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.ac-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 0.5rem;
+    align-items: start;
+    padding: 0.55rem;
+    background: #fcfcfd;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.ac-row .ac-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.ac-row .ac-field-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-3);
+}
+
+.ac-row textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 2.6rem;
+    font-family: inherit;
+    font-size: 0.88rem;
+    resize: vertical;
+}
+
+.ac-row .ac-remove {
+    align-self: center;
+    padding: 0.35rem 0.55rem;
+    font-size: 0.85rem;
+    line-height: 1;
+    background: #fff;
+    color: #6b7280;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.ac-row .ac-remove:hover {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
+.ac-actions {
+    display: flex;
+    margin-top: 0.55rem;
+}
+
+.design-analyze-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.25rem 0 1.1rem;
+}
+
+#analyze-btn:disabled,
+#connect-next:disabled {
+    background: #9ca3af;
+    color: #fff;
+    cursor: not-allowed;
+}
+
+/* --- Step 3 review: acceptance criteria list --- */
+
+.review-ac {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.review-ac li {
+    font-size: 0.88rem;
+    color: var(--text);
+}
+
+.review-ac .ac-given,
+.review-ac .ac-when,
+.review-ac .ac-then {
+    display: inline;
+}
+
+.review-ac .ac-key {
+    font-weight: 600;
+    color: var(--text-3);
+    margin-right: 0.25rem;
+}
+
+/* --- Sub-design stepper: dim Step 1 since Connect is inherited --- */
+
+.stepper .step.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
 }

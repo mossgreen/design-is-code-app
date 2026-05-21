@@ -5,6 +5,10 @@ const state = {
     // the AI analyser and to populate Step 2's type autocomplete.
     codebaseCatalog: null,
     userStory: '',
+    // Acceptance criteria as structured Gherkin rows. Each row is
+    // { given, when, then }. Fed to /api/analyze as `acceptanceCriteria`
+    // so generated participants/sequence satisfy each row.
+    ac: [],
     participants: [],
     sequence: [],
     targetPackage: '',
@@ -89,16 +93,23 @@ const els = {
     scanBtn: document.getElementById('scan-btn'),
     disconnectBtn: document.getElementById('disconnect-btn'),
     browseBtn: document.getElementById('browse-btn'),
-    folderPicker: document.getElementById('folder-picker'),
     recentPaths: document.getElementById('recent-paths'),
     status: document.getElementById('scan-status'),
     statusText: document.getElementById('status-text'),
     error: document.getElementById('scan-error'),
     scanResult: document.getElementById('scan-result'),
     scanSummaryText: document.getElementById('scan-summary-text'),
+    connectNext: document.getElementById('connect-next'),
     panels: document.querySelectorAll('.panel'),
     steps: document.querySelectorAll('.step')
 };
+
+// Step 1 (Connect) → Step 2 gate. Enabled only after a successful scan
+// (state.codebaseCatalog is populated). Disconnecting re-disables.
+function updateConnectGate() {
+    if (!els.connectNext) return;
+    els.connectNext.disabled = !(state.codebaseCatalog && Array.isArray(state.codebaseCatalog.types));
+}
 
 // --- Project connect panel (lives inside Step 1) ---
 
@@ -116,6 +127,7 @@ els.disconnectBtn.addEventListener('click', () => {
     els.scanResult.classList.add('hidden');
     els.disconnectBtn.classList.add('hidden');
     populateTypesDatalist();
+    updateConnectGate();
 });
 
 // Mirror the path input into state.projectPath so picker / chip / manual
@@ -147,6 +159,7 @@ async function runScan(path) {
         renderScanResult(data);
         populateTypesDatalist();
         addRecentPath(data.path);
+        updateConnectGate();
     } catch (err) {
         els.error.textContent = err.message;
         els.error.classList.remove('hidden');
@@ -181,177 +194,48 @@ function shortProjectName(path) {
     return parts[parts.length - 1] || path;
 }
 
-// --- Folder picker (popover anchored to path input) ---
+// --- Folder picker (OS-native, served via /api/fs/pick-folder) ---
+//
+// DisC Studio is a localhost dev tool, so we can shell out to the host's
+// real folder dialog (Finder on macOS, zenity on Linux, FolderBrowserDialog
+// on Windows). The Browse button POSTs to /api/fs/pick-folder; the call
+// blocks while the OS dialog is open, returns { path } on selection or
+// { canceled: true } on cancel.
 
 const RECENT_PATHS_KEY = 'disc.recentProjectPaths';
 const RECENT_PATHS_MAX = 5;
-const pickerState = { path: null, showHidden: false };
 
-const FOLDER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
-const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+let folderPickerInFlight = false;
 
-els.browseBtn.addEventListener('click', () => {
-    if (!els.folderPicker.classList.contains('hidden')) {
-        closeFolderPicker();
-    } else {
-        const seed = pickPickerSeed();
-        openFolderPicker(seed);
-    }
-});
-
-function pickPickerSeed() {
-    const typed = els.pathInput.value.trim();
-    if (typed) return typed;
-    return null;
-}
-
-async function openFolderPicker(path) {
-    pickerState.path = path;
-    els.folderPicker.classList.remove('hidden');
-    renderPickerLoading();
-    await fetchAndRender(path);
-}
-
-function closeFolderPicker() {
-    els.folderPicker.classList.add('hidden');
-    els.folderPicker.innerHTML = '';
-}
-
-async function fetchAndRender(path) {
-    const params = new URLSearchParams();
-    if (path) params.set('path', path);
-    if (pickerState.showHidden) params.set('showHidden', 'true');
+els.browseBtn.addEventListener('click', async () => {
+    if (folderPickerInFlight) return;
+    folderPickerInFlight = true;
+    els.browseBtn.disabled = true;
+    els.browseBtn.classList.add('is-busy');
     try {
-        const res = await fetch('/api/fs/list?' + params.toString());
+        const seed = els.pathInput.value.trim() || null;
+        const res = await fetch('/api/fs/pick-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seedPath: seed })
+        });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `List failed (${res.status})`);
-        pickerState.path = data.path;
-        renderPicker(data);
-    } catch (err) {
-        renderPickerError(err.message, path);
-    }
-}
-
-function renderPickerLoading() {
-    els.folderPicker.innerHTML = '<div class="picker-empty">Loading…</div>';
-}
-
-function renderPickerError(message, attemptedPath) {
-    els.folderPicker.innerHTML = `
-        <div class="picker-breadcrumbs"></div>
-        <div class="picker-error">${escapeHtml(message)}</div>
-        <div class="picker-footer">
-            <label class="hidden-toggle">
-                <input type="checkbox" ${pickerState.showHidden ? 'checked' : ''} data-toggle-hidden>
-                Show hidden
-            </label>
-            <button type="button" class="picker-use" disabled>Use this folder</button>
-        </div>
-    `;
-    bindFooter();
-}
-
-function renderPicker(data) {
-    const segments = pathSegments(data.path);
-    const crumbsHtml = segments.map((seg, i) => {
-        const isLast = i === segments.length - 1;
-        const cls = isLast ? 'crumb current' : 'crumb';
-        const sep = i === 0 ? '' : '<span class="crumb-sep">/</span>';
-        return `${sep}<button type="button" class="${cls}" data-crumb-path="${escapeAttr(seg.path)}">${escapeHtml(seg.label)}</button>`;
-    }).join('');
-
-    const parentRow = data.parent
-        ? `<button type="button" class="picker-row" data-nav="${escapeAttr(data.parent)}">${UP_SVG}<span class="row-name">.. (parent)</span></button>`
-        : '';
-
-    const entriesHtml = data.entries.length === 0
-        ? '<div class="picker-empty">No subfolders.</div>'
-        : data.entries.map(e => {
-            const childPath = joinPath(data.path, e.name);
-            const marker = e.projectMarker
-                ? `<span class="project-marker">${escapeHtml(e.projectMarker)}</span>`
-                : '';
-            return `<button type="button" class="picker-row" data-nav="${escapeAttr(childPath)}">${FOLDER_SVG}<span class="row-name">${escapeHtml(e.name)}</span>${marker}</button>`;
-        }).join('');
-
-    const truncatedHtml = data.truncated
-        ? '<div class="picker-truncated">Showing first 500 entries — narrow your folder.</div>'
-        : '';
-
-    els.folderPicker.innerHTML = `
-        <div class="picker-breadcrumbs">${crumbsHtml}</div>
-        <div class="picker-entries">
-            ${parentRow}
-            ${entriesHtml}
-            ${truncatedHtml}
-        </div>
-        <div class="picker-footer">
-            <label class="hidden-toggle">
-                <input type="checkbox" ${pickerState.showHidden ? 'checked' : ''} data-toggle-hidden>
-                Show hidden
-            </label>
-            <button type="button" class="picker-use" data-use-path="${escapeAttr(data.path)}">Use this folder</button>
-        </div>
-    `;
-
-    els.folderPicker.querySelectorAll('[data-nav]').forEach(btn => {
-        btn.addEventListener('click', () => fetchAndRender(btn.dataset.nav));
-    });
-    els.folderPicker.querySelectorAll('[data-crumb-path]').forEach(btn => {
-        if (btn.classList.contains('current')) return;
-        btn.addEventListener('click', () => fetchAndRender(btn.dataset.crumbPath));
-    });
-    bindFooter();
-}
-
-function bindFooter() {
-    const useBtn = els.folderPicker.querySelector('[data-use-path]');
-    if (useBtn) {
-        useBtn.addEventListener('click', () => {
-            els.pathInput.value = useBtn.dataset.usePath;
+        if (!res.ok) throw new Error(data.error || `Picker failed (${res.status})`);
+        if (data.canceled) return;
+        if (data.path) {
+            els.pathInput.value = data.path;
+            // Keep state.projectPath + Continue gate in sync via the
+            // existing input listener.
             els.pathInput.dispatchEvent(new Event('input'));
-            closeFolderPicker();
             els.pathInput.focus();
-        });
-    }
-    const hiddenToggle = els.folderPicker.querySelector('[data-toggle-hidden]');
-    if (hiddenToggle) {
-        hiddenToggle.addEventListener('change', () => {
-            pickerState.showHidden = hiddenToggle.checked;
-            fetchAndRender(pickerState.path);
-        });
-    }
-}
-
-function pathSegments(absPath) {
-    if (!absPath) return [];
-    const trimmed = absPath.replace(/\/+$/, '');
-    if (trimmed === '' || trimmed === '/') return [{ label: '/', path: '/' }];
-    const parts = trimmed.split('/').filter(Boolean);
-    const out = [{ label: '/', path: '/' }];
-    let acc = '';
-    for (const p of parts) {
-        acc += '/' + p;
-        out.push({ label: p, path: acc });
-    }
-    return out;
-}
-
-function joinPath(parent, name) {
-    if (!parent || parent === '/') return '/' + name;
-    return parent.replace(/\/+$/, '') + '/' + name;
-}
-
-document.addEventListener('click', (e) => {
-    if (els.folderPicker.classList.contains('hidden')) return;
-    if (els.folderPicker.contains(e.target)) return;
-    if (els.browseBtn.contains(e.target)) return;
-    closeFolderPicker();
-});
-
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !els.folderPicker.classList.contains('hidden')) {
-        closeFolderPicker();
+        }
+    } catch (err) {
+        els.error.textContent = err.message;
+        els.error.classList.remove('hidden');
+    } finally {
+        folderPickerInFlight = false;
+        els.browseBtn.disabled = false;
+        els.browseBtn.classList.remove('is-busy');
     }
 });
 
@@ -426,11 +310,19 @@ document.addEventListener('click', (e) => {
 });
 
 function goToStep(n) {
+    // Sub-designs inherit the parent's project, so Step 1 (Connect) is
+    // off-limits — redirect to Step 2 instead. subDesignContext is declared
+    // later but goToStep is only invoked from user gestures / nested
+    // handlers, so the binding is initialised by then.
+    const inSub = !!subDesignContext;
+    if (n === 1 && inSub) n = 2;
     els.panels.forEach(p => p.classList.toggle('hidden', p.id !== `panel-${n}`));
     els.steps.forEach(s => {
         const step = parseInt(s.dataset.step, 10);
         s.classList.toggle('active', step === n);
         s.classList.toggle('done', step < n);
+        // Dim Step 1 in sub-design context (Connect is inherited from parent).
+        s.classList.toggle('disabled', inSub && step === 1);
     });
     if (n === 2) enterStep2();
     if (n === 3) enterStep3();
@@ -440,20 +332,31 @@ function goToStep(n) {
     requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }));
 }
 
-// --- Step 1: story ---
+// --- Step 1: Connect → Design gate ---
 
+if (els.connectNext) {
+    els.connectNext.addEventListener('click', () => {
+        if (els.connectNext.disabled) return;
+        goToStep(2);
+    });
+}
+
+// Initialise the Step 1 Continue gate on page load (defaults to disabled
+// since no scan has happened yet).
+updateConnectGate();
+
+// Step 2 story input — wired further down where step2Els is defined.
 const storyInput = document.getElementById('story-input');
-document.getElementById('story-next').addEventListener('click', () => {
-    const value = storyInput.value.trim();
-    if (!value) { storyInput.focus(); return; }
-    state.userStory = value;
-    goToStep(2);
-});
 
 // --- Step 2: participants & flow ---
 
 const step2Els = {
-    storyEcho: document.getElementById('story-echo'),
+    storyInput: storyInput,
+    acSection: document.getElementById('ac-section'),
+    acRows: document.getElementById('ac-rows'),
+    acAdd: document.getElementById('ac-add'),
+    acCount: document.getElementById('ac-count'),
+    analyzeBtn: document.getElementById('analyze-btn'),
     participantsList: document.getElementById('participants-list'),
     stepsBoard: document.getElementById('steps-board'),
     stepsCount: document.getElementById('steps-count'),
@@ -471,15 +374,99 @@ const step2Els = {
     modalImpl: document.getElementById('modal-impl'),
     modalKind: document.getElementById('modal-kind'),
     modalKindHelp: document.getElementById('modal-kind-help'),
+    modalPurpose: document.getElementById('modal-purpose'),
     modalMethodsCount: document.getElementById('modal-methods-count'),
     participantsCount: document.getElementById('participants-count'),
     analyzeBanner: document.getElementById('analyze-banner'),
     analyzeBannerText: document.getElementById('analyze-banner-text'),
     analyzeBannerAction: document.getElementById('analyze-banner-action'),
     storyNarrativeSection: document.getElementById('story-narrative-section'),
-    storyNarrative: document.getElementById('story-narrative'),
-    editStoryBtn: document.getElementById('edit-story-btn')
+    storyNarrative: document.getElementById('story-narrative')
 };
+
+// Step 2 story textarea: mirror to state.userStory and re-evaluate the
+// analyze-gate (disabled until story is non-empty).
+function updateAnalyzeGate() {
+    if (!step2Els.analyzeBtn) return;
+    step2Els.analyzeBtn.disabled = !(state.userStory && state.userStory.trim().length);
+}
+
+if (storyInput) {
+    storyInput.addEventListener('input', () => {
+        state.userStory = storyInput.value;
+        updateAnalyzeGate();
+    });
+}
+
+// --- Step 2 acceptance criteria (Gherkin rows) ---
+
+function renderAcRows() {
+    const container = step2Els.acRows;
+    if (!container) return;
+    container.innerHTML = '';
+    state.ac.forEach((row, idx) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'ac-row';
+        wrap.innerHTML = `
+            <div class="ac-field">
+                <span class="ac-field-label">Given</span>
+                <textarea data-ac-field="given" rows="2" placeholder="a precondition">${escapeHtml(row.given || '')}</textarea>
+            </div>
+            <div class="ac-field">
+                <span class="ac-field-label">When</span>
+                <textarea data-ac-field="when" rows="2" placeholder="an action">${escapeHtml(row.when || '')}</textarea>
+            </div>
+            <div class="ac-field">
+                <span class="ac-field-label">Then</span>
+                <textarea data-ac-field="then" rows="2" placeholder="the expected outcome">${escapeHtml(row.then || '')}</textarea>
+            </div>
+            <button type="button" class="ac-remove" data-ac-remove="${idx}" aria-label="Remove this row">×</button>
+        `;
+        wrap.querySelectorAll('textarea[data-ac-field]').forEach(ta => {
+            ta.addEventListener('input', () => {
+                const field = ta.dataset.acField;
+                state.ac[idx][field] = ta.value;
+            });
+        });
+        wrap.querySelector('[data-ac-remove]').addEventListener('click', () => {
+            state.ac.splice(idx, 1);
+            renderAcRows();
+        });
+        container.appendChild(wrap);
+    });
+    if (step2Els.acCount) {
+        const n = state.ac.length;
+        step2Els.acCount.textContent = `${n} row${n === 1 ? '' : 's'}`;
+    }
+}
+
+if (step2Els.acAdd) {
+    step2Els.acAdd.addEventListener('click', () => {
+        state.ac.push({ given: '', when: '', then: '' });
+        renderAcRows();
+    });
+}
+
+// --- Step 2 Analyze button: explicit trigger (no auto-fire) ---
+
+if (step2Els.analyzeBtn) {
+    step2Els.analyzeBtn.addEventListener('click', () => {
+        if (!state.userStory || !state.userStory.trim()) return;
+        // Re-analyzing wipes downstream design so the next state is
+        // produced fresh from the current story + AC. Sub-design context
+        // is preserved.
+        state.tree = null;
+        state.story = '';
+        state.participants = [];
+        state.sequence = [];
+        state.sutParticipantId = null;
+        hideAnalyzeBanner();
+        renderStoryNarrative();
+        renderParticipants();
+        renderSequence();
+        runAnalyze(state.userStory);
+    });
+}
 
 function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
@@ -762,32 +749,15 @@ function resolveCreates(seq) {
 // --- Step 2 entry ---
 
 function enterStep2() {
-    if (state.userStory) {
-        step2Els.storyEcho.textContent = state.userStory;
-        step2Els.storyEcho.classList.remove('hidden');
-    } else {
-        step2Els.storyEcho.classList.add('hidden');
+    if (step2Els.storyInput && step2Els.storyInput.value !== (state.userStory || '')) {
+        step2Els.storyInput.value = state.userStory || '';
     }
+    renderAcRows();
+    updateAnalyzeGate();
     populateTypesDatalist();
     renderStoryNarrative();
     renderParticipants();
     renderSequence();
-    maybeAnalyzeStory();
-}
-
-// Auto-analyse the user's story when entering Step 2 *for the first time*.
-// Guards:
-//  - story exists (nothing to analyse otherwise)
-//  - state.tree is null (haven't analysed yet OR user explicitly chose
-//    "Start empty" — both mean: don't auto-trigger)
-//  - no participants yet (demos seed participants directly; don't clobber)
-//  - not already analysing (re-entry from goToStep shouldn't re-fire)
-function maybeAnalyzeStory() {
-    if (!state.userStory) return;
-    if (state.tree) return;
-    if (state.participants.length > 0) return;
-    if (state.analyzing) return;
-    runAnalyze(state.userStory);
 }
 
 async function runAnalyze(context) {
@@ -795,10 +765,13 @@ async function runAnalyze(context) {
     state.analyzeError = null;
     showAnalyzeBanner('Analysing your story…', { spinning: true });
     try {
+        // Drop empty AC rows so the prompt only includes meaningful criteria.
+        const ac = (state.ac || []).filter(r =>
+            (r.given || '').trim() || (r.when || '').trim() || (r.then || '').trim());
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ context, catalog: state.codebaseCatalog })
+            body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
@@ -1089,26 +1062,6 @@ function renderStoryNarrative() {
     }
 }
 
-// "Edit story" — navigate back to Step 1 so the user can revise the story.
-// Clears all downstream state (tree / story / participants / sequence / SUT)
-// so when they click Continue again, analyse + compose fires fresh against
-// the revised story. state.userStory is left in place so the textarea is
-// pre-filled with whatever they typed before.
-if (step2Els.editStoryBtn) {
-    step2Els.editStoryBtn.addEventListener('click', () => {
-        state.tree = null;
-        state.story = '';
-        state.participants = [];
-        state.sequence = [];
-        state.sutParticipantId = null;
-        hideAnalyzeBanner();
-        renderStoryNarrative();
-        renderParticipants();
-        renderSequence();
-        goToStep(1);
-    });
-}
-
 // --- Participants UI ---
 
 // Remove the auto-managed entry interaction + final return steps from the
@@ -1237,6 +1190,14 @@ function renderParticipants() {
             kindChip = `<span class="pc-kind-chip kind-leaf" title="Terminal — pure function, stereotype boundary, or single platform method">leaf</span>`;
         }
 
+        // One-sentence purpose, surfaced from the analyzer (or user-typed
+        // via the modal). Empty-state placeholder doubles as a discovery
+        // hint that purpose is editable.
+        const purposeText = (p.purpose || '').trim();
+        const purposeRow = purposeText
+            ? `<div class="pc-card-purpose" title="${escapeAttr(purposeText)}">${escapeHtml(purposeText)}</div>`
+            : `<div class="pc-card-purpose is-empty">Click to describe what this does</div>`;
+
         card.innerHTML = `
             <div class="pc-card-head">
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
@@ -1244,6 +1205,7 @@ function renderParticipants() {
                 ${sutChip}
             </div>
             ${fqnChip}
+            ${purposeRow}
             <div class="pc-card-methods">
                 ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
                 ${moreCount > 0 ? `<div class="pc-card-more">+${moreCount} more</div>` : ''}
@@ -1289,6 +1251,9 @@ function openModal(id) {
     if (step2Els.modalKind) {
         step2Els.modalKind.value = p.kind || 'leaf';
         updateKindHelp(p);
+    }
+    if (step2Els.modalPurpose) {
+        step2Els.modalPurpose.value = p.purpose || '';
     }
     renderModalMethods();
     step2Els.modal.classList.remove('hidden');
@@ -1351,6 +1316,13 @@ step2Els.modalImpl.addEventListener('change', (e) => {
     const p = findParticipant(modalParticipantId);
     if (p) p.implByDefault = e.target.checked;
 });
+
+if (step2Els.modalPurpose) {
+    step2Els.modalPurpose.addEventListener('input', (e) => {
+        const p = findParticipant(modalParticipantId);
+        if (p) p.purpose = e.target.value;
+    });
+}
 
 if (step2Els.modalKind) {
     step2Els.modalKind.addEventListener('change', (e) => {
@@ -2886,6 +2858,8 @@ function renderSequenceDiagram(steps, container) {
 
 const reviewEls = {
     story: document.getElementById('review-story'),
+    acBlock: document.getElementById('review-ac-block'),
+    acList: document.getElementById('review-ac'),
     summary: document.getElementById('review-summary'),
     sequence: document.getElementById('review-sequence')
 };
@@ -2934,6 +2908,26 @@ function enterStep3() {
     if (!state.userStory) reviewEls.story.classList.add('muted');
     else reviewEls.story.classList.remove('muted');
 
+    // Acceptance criteria — render filled rows only; hide whole block if
+    // none. Each row reads as a single "Given …, when …, then …" sentence.
+    if (reviewEls.acBlock && reviewEls.acList) {
+        const filled = (state.ac || []).filter(r =>
+            (r.given || '').trim() || (r.when || '').trim() || (r.then || '').trim());
+        if (filled.length === 0) {
+            reviewEls.acBlock.classList.add('hidden');
+            reviewEls.acList.innerHTML = '';
+        } else {
+            reviewEls.acBlock.classList.remove('hidden');
+            reviewEls.acList.innerHTML = filled.map(r => `
+                <li>
+                    <span class="ac-given"><span class="ac-key">Given</span>${escapeHtml((r.given || '').trim() || '—')}</span>,
+                    <span class="ac-when"><span class="ac-key">when</span>${escapeHtml((r.when || '').trim() || '—')}</span>,
+                    <span class="ac-then"><span class="ac-key">then</span>${escapeHtml((r.then || '').trim() || '—')}</span>.
+                </li>
+            `).join('');
+        }
+    }
+
     const pCount = state.participants.length;
     const sCount = state.sequence.length;
     const usedIds = new Set();
@@ -2954,10 +2948,16 @@ function enterStep3() {
         ? `<div class="review-warn">${unused.length} unused participant${unused.length === 1 ? '' : 's'}: ${unused.map(p => escapeHtml(p.name || '(unnamed)')).join(', ')}</div>`
         : '';
 
+    // The per-participant lines now duplicate what each Step 2 card already
+    // surfaces, so collapse them behind a <details>. Counts and any unused-
+    // participant warning stay visible up-front for the sign-off ritual.
     reviewEls.summary.innerHTML = `
         <div class="review-counts">${pCount} participant${pCount === 1 ? '' : 's'} · ${sCount} step${sCount === 1 ? '' : 's'}</div>
-        <ul class="review-participants">${partLines || '<li class="muted">no participants</li>'}</ul>
         ${unusedLine}
+        <details class="review-participants-details">
+            <summary>Show participant list</summary>
+            <ul class="review-participants">${partLines || '<li class="muted">no participants</li>'}</ul>
+        </details>
     `;
 
     renderSequenceDiagram(state.sequence, reviewEls.sequence);
@@ -3973,6 +3973,7 @@ async function startSubDesign(participant, parentRelativePath, parentManifestFol
     // Reset state to a fresh wizard run, keeping the project context.
     state.userStory = `Design the internals of ${participant.name}. ` +
         `Called by ${parentPumlStem} with: ${(participant.methods || []).map(m => methodPreviewSignature(m)).join('; ')}.`;
+    state.ac = [];
     state.participants = [];
     state.sequence = [];
     state.tree = null;
@@ -4017,6 +4018,7 @@ async function startSubDesign(participant, parentRelativePath, parentManifestFol
 function snapshotWizardState() {
     return {
         userStory: state.userStory,
+        ac: JSON.parse(JSON.stringify(state.ac || [])),
         participants: JSON.parse(JSON.stringify(state.participants)),
         sequence: JSON.parse(JSON.stringify(state.sequence)),
         targetPackage: state.targetPackage,
@@ -4037,6 +4039,7 @@ function exitSubDesign() {
         return;
     }
     state.userStory = snapshot.userStory;
+    state.ac = snapshot.ac || [];
     state.participants = snapshot.participants;
     state.sequence = snapshot.sequence;
     state.targetPackage = snapshot.targetPackage;

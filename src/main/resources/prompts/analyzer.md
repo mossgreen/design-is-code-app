@@ -10,6 +10,24 @@ A user requirement, free text:
 {CONTEXT}
 ```
 
+# Acceptance criteria
+
+Each row below is a Gherkin-style constraint on the design. When deciding
+which abstractions to propose and how they collaborate, ensure the resulting
+participants and (later) sequence demonstrably satisfy **every** row.
+Treat each `Given … when … then …` as a constraint, not a flow specification:
+
+- A row's *Given* clause may imply a participant whose responsibility is the
+  state described (e.g. "Given the calendar is loaded" → a `CalendarRepository`).
+- A row's *When* clause typically maps to a behaviour on an existing
+  participant (e.g. "When a slot is proposed" → a `proposeSlot()` method on
+  the orchestrator).
+- A row's *Then* clause is the postcondition the design must guarantee —
+  if no proposed participant could produce it, add or rename one until they
+  can.
+
+{ACCEPTANCE_CRITERIA}
+
 # Existing codebase (optional)
 
 These types already exist in the user's project. When one of them

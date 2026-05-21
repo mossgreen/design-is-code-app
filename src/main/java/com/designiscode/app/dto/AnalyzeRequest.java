@@ -1,5 +1,7 @@
 package com.designiscode.app.dto;
 
+import java.util.List;
+
 /**
  * Body for {@code POST /api/analyze}.
  *
@@ -8,5 +10,14 @@ package com.designiscode.app.dto;
  * lexically filters it to the most relevant types and injects them as
  * grounding into the prompt so the proposed tree reuses existing names
  * rather than inventing parallels.
+ *
+ * <p>{@code acceptanceCriteria} carries the Step-2 Gherkin rows; the analyser
+ * renders them under an "Acceptance criteria" section of the prompt so the
+ * generated participants and sequence must satisfy each row. May be null or
+ * empty when the user supplied no AC.
  */
-public record AnalyzeRequest(String context, ScanCatalog catalog) {}
+public record AnalyzeRequest(
+        String context,
+        ScanCatalog catalog,
+        List<AcRow> acceptanceCriteria
+) {}

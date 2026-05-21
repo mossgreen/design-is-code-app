@@ -23,7 +23,8 @@ public class AnalyzeController {
     @PostMapping("/analyze")
     public ResponseEntity<?> analyze(@RequestBody AnalyzeRequest request) {
         try {
-            return ResponseEntity.ok(analyzeService.analyze(request.context(), request.catalog()));
+            return ResponseEntity.ok(analyzeService.analyze(
+                    request.context(), request.catalog(), request.acceptanceCriteria()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (InterruptedException e) {

@@ -1,5 +1,6 @@
 package com.designiscode.app.service;
 
+import com.designiscode.app.dto.AcRow;
 import com.designiscode.app.dto.ScanCatalog;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
@@ -42,6 +43,7 @@ public class AnalyzeService {
     private static final String PH_CONTEXT = "{CONTEXT}";
     private static final String PH_CODEBASE_SUMMARY = "{CODEBASE_SUMMARY}";
     private static final String PH_CODEBASE_TYPES = "{CODEBASE_TYPES}";
+    private static final String PH_ACCEPTANCE_CRITERIA = "{ACCEPTANCE_CRITERIA}";
 
     /** How many lexically-matched types to inject as grounding. Tuned to
      *  fit ~2 KB of prompt budget on a typical Spring sample. */
@@ -58,7 +60,7 @@ public class AnalyzeService {
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
     }
 
-    public Map<String, Object> analyze(String context, ScanCatalog catalog)
+    public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria)
             throws IOException, InterruptedException {
         if (context == null || context.isBlank()) {
             throw new IllegalArgumentException("context is required");
@@ -67,11 +69,13 @@ public class AnalyzeService {
         CatalogFilter.FilteredCatalog filtered = CatalogFilter.filter(context, catalog, TOP_K_TYPES);
         String summaryMd = renderSummary(filtered);
         String typesMd = renderTypes(filtered);
+        String acMd = renderAcceptanceCriteria(acceptanceCriteria);
 
         String prompt = promptTemplate
                 .replace(PH_CONTEXT, context.trim())
                 .replace(PH_CODEBASE_SUMMARY, summaryMd)
-                .replace(PH_CODEBASE_TYPES, typesMd);
+                .replace(PH_CODEBASE_TYPES, typesMd)
+                .replace(PH_ACCEPTANCE_CRITERIA, acMd);
 
         ProcessBuilder pb = new ProcessBuilder(
                 "claude",
@@ -145,6 +149,34 @@ public class AnalyzeService {
                 sb.append("primary stereotypes ").append(String.join(", ", c.primaryStereotypes())).append('.');
             }
             sb.append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    /** Acceptance criteria rendered as a Markdown bullet list of
+     *  "Given …, when …, then …" sentences. Empty rows are skipped; when
+     *  no usable rows remain, returns a sentinel string that the prompt
+     *  template substitutes into the placeholder so the section reads
+     *  cleanly. */
+    private String renderAcceptanceCriteria(List<AcRow> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return "_No acceptance criteria supplied — design from the story alone._";
+        }
+        StringBuilder sb = new StringBuilder();
+        int written = 0;
+        for (AcRow r : rows) {
+            if (r == null) continue;
+            String given = r.given() == null ? "" : r.given().trim();
+            String when = r.when() == null ? "" : r.when().trim();
+            String then = r.then() == null ? "" : r.then().trim();
+            if (given.isEmpty() && when.isEmpty() && then.isEmpty()) continue;
+            sb.append("- **Given** ").append(given.isEmpty() ? "—" : given)
+                    .append(", **when** ").append(when.isEmpty() ? "—" : when)
+                    .append(", **then** ").append(then.isEmpty() ? "—" : then).append('\n');
+            written++;
+        }
+        if (written == 0) {
+            return "_No acceptance criteria supplied — design from the story alone._";
         }
         return sb.toString().trim();
     }

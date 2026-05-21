@@ -18,13 +18,13 @@
             </div>
             <nav class="stepper" id="stepper" aria-label="Workflow steps">
                 <div class="step active" data-step="1">
-                    <span class="step-num">1</span><span class="step-label">User Story</span>
+                    <span class="step-num">1</span><span class="step-label">Connect</span>
                 </div>
                 <div class="step" data-step="2">
-                    <span class="step-num">2</span><span class="step-label">Designer</span>
+                    <span class="step-num">2</span><span class="step-label">Design</span>
                 </div>
                 <div class="step" data-step="3">
-                    <span class="step-num">3</span><span class="step-label">Review</span>
+                    <span class="step-num">3</span><span class="step-label">Sign-off</span>
                 </div>
                 <div class="step" data-step="4">
                     <span class="step-num">4</span><span class="step-label">Generate</span>
@@ -35,24 +35,23 @@
 
     <main>
         <section class="panel" id="panel-1">
-            <h2>Step 1 · User story</h2>
+            <h2>Step 1 · Connect</h2>
 
             <div class="step1-subblock" id="connect-project-block">
                 <div class="step1-subblock-head">
                     <h3>Your project</h3>
-                    <span class="hint inline">Optional — used to ground the analysis in your existing code.</span>
+                    <span class="hint inline">Scan a Java/Spring project to ground the design in your existing code.</span>
                 </div>
                 <div id="project-panel" class="project-panel">
                     <div id="recent-paths" class="recent-paths hidden" aria-label="Recent project paths"></div>
                     <form id="scan-form" autocomplete="off">
                         <div class="path-input-wrap">
                             <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
-                            <button type="button" id="browse-btn" class="browse-btn" aria-label="Browse for project folder" title="Browse folders">
+                            <button type="button" id="browse-btn" class="browse-btn" aria-label="Browse for project folder" title="Open the OS folder picker">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                                 </svg>
                             </button>
-                            <div id="folder-picker" class="folder-picker hidden" role="dialog" aria-label="Choose a folder"></div>
                         </div>
                         <button type="submit" id="scan-btn">Scan</button>
                         <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
@@ -68,47 +67,38 @@
                 </div>
             </div>
 
-            <div class="step1-subblock">
-                <div class="step1-subblock-head">
-                    <h3>Your story</h3>
-                    <span class="hint inline">Describe what you want to build in plain English.</span>
-                </div>
-                <textarea id="story-input" rows="6" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;."></textarea>
-            </div>
-            <div class="input-modes" aria-label="Additional input modes">
-                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Voice input — coming soon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <rect x="9" y="3" width="6" height="11" rx="3"/>
-                        <path d="M5 11v1a7 7 0 0 0 14 0v-1"/>
-                        <line x1="12" y1="19" x2="12" y2="22"/>
-                    </svg>
-                    <span class="sr-only">Voice</span>
-                </button>
-                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Image input — coming soon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <rect x="3" y="5" width="18" height="14" rx="2"/>
-                        <circle cx="9" cy="10" r="1.6"/>
-                        <path d="m21 17-5-5-4 4-3-3-6 6"/>
-                    </svg>
-                    <span class="sr-only">Image</span>
-                </button>
-                <button type="button" class="mode-btn" disabled aria-disabled="true" title="Video input — coming soon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <rect x="3" y="6" width="13" height="12" rx="2"/>
-                        <path d="m16 10 5-3v10l-5-3z"/>
-                    </svg>
-                    <span class="sr-only">Video</span>
-                </button>
-                <span class="input-modes-hint">Voice, image, video — coming soon</span>
-            </div>
             <div class="actions">
-                <button type="button" id="story-next">Continue →</button>
+                <button type="button" id="connect-next" disabled>Continue to Design →</button>
             </div>
         </section>
 
         <section class="panel hidden" id="panel-2">
-            <h2>Step 2 · Designer</h2>
-            <div class="story-context hidden" id="story-echo"></div>
+            <h2>Step 2 · Design</h2>
+
+            <div class="section-block design-input-block">
+                <div class="section-head">
+                    <h3>Your story</h3>
+                    <span class="hint inline">Describe what you want to build in plain English.</span>
+                </div>
+                <textarea id="story-input" rows="5" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;."></textarea>
+            </div>
+
+            <div class="section-block design-input-block" id="ac-section">
+                <div class="section-head">
+                    <h3>Acceptance criteria</h3>
+                    <span class="hint inline">Each row constrains the design — the analyzer must satisfy every row.</span>
+                    <span class="section-count" id="ac-count">0 rows</span>
+                </div>
+                <div id="ac-rows" class="ac-rows"></div>
+                <div class="ac-actions">
+                    <button type="button" class="secondary small" id="ac-add">+ Add criterion</button>
+                </div>
+            </div>
+
+            <div class="design-analyze-row">
+                <button type="button" id="analyze-btn" disabled>Analyze →</button>
+                <span class="hint inline">Generates participants, sequence, and live preview from the story + AC above.</span>
+            </div>
 
             <div class="analyze-banner hidden" id="analyze-banner" role="status" aria-live="polite">
                 <span class="analyze-spinner" aria-hidden="true"></span>
@@ -118,9 +108,8 @@
 
             <div class="story-narrative-section hidden" id="story-narrative-section">
                 <div class="section-head">
-                    <h3>The story</h3>
+                    <h3>The story (AI summary)</h3>
                     <span class="hint inline">Plain-English summary of your design. Coloured names match the cards below.</span>
-                    <button type="button" class="ghost-btn" id="edit-story-btn">Edit story</button>
                 </div>
                 <p id="story-narrative" class="story-narrative"></p>
             </div>
@@ -209,6 +198,10 @@
                             </select>
                             <div class="kind-help hint" id="modal-kind-help"></div>
                         </div>
+                        <div class="field purpose-field">
+                            <label for="modal-purpose">Purpose <span class="label-hint">one sentence — what this abstraction is responsible for</span></label>
+                            <textarea id="modal-purpose" rows="2" placeholder="e.g. Books a meeting time that works for all attendees."></textarea>
+                        </div>
                         <div class="field">
                             <div class="modal-methods-head">
                                 <label>Methods · <span id="modal-methods-count">0</span></label>
@@ -284,11 +277,16 @@
         </section>
 
         <section class="panel hidden" id="panel-3">
-            <h2>Step 3 · Review</h2>
+            <h2>Step 3 · Sign-off</h2>
 
             <div class="review-block">
                 <div class="review-label">Story</div>
                 <div id="review-story" class="review-story"></div>
+            </div>
+
+            <div class="review-block hidden" id="review-ac-block">
+                <div class="review-label">Acceptance criteria</div>
+                <ol id="review-ac" class="review-ac"></ol>
             </div>
 
             <div class="review-block">
