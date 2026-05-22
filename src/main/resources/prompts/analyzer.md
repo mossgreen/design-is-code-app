@@ -71,34 +71,16 @@ same shape.
    exchanged between them, name branches taken inside them, or
    paraphrase the rule tables.
 
-## When the domain noun has multiple kinds
+## Variance is governed by the patterns below
 
-If the domain treats one conceptual thing as having multiple kinds,
-choose one of two structural patterns:
+When the AC implies variance — different cases producing different
+outcomes — choose ONE pattern per axis using the rules in the
+"Variance-handling patterns" section below. The default priority is
+rule table > resolver > sealed polymorphism > pattern matching.
 
-(a) **Discriminator + policy.** The noun stays a flat discriminator
-    type — an `enum` for a new noun, or a reused class for an existing
-    one. A separate participant — the policy — holds the abstract
-    decision; its `purpose` describes the decision in shape language,
-    without naming any kind. The rules per kind live only in the
-    policy's implementation.
-
-(b) **Sealed contract.** The noun itself becomes `kind:
-    "sealed-interface"` with `permits[]` listing concrete record
-    variants; each variant is a `kind: "record"` entry in the same
-    `entities[]` array. The contract names the abstract operation
-    each variant implements; the variants implement it differently.
-
-Choose (a) when the kinds differ only in data a policy consumes.
-Choose (b) when each kind owns behaviour the design exposes — when
-you can name a method whose implementation differs in operation
-across the kinds, not merely in the data it uses.
-
-**Default to (a).** Promote to (b) only when (b)'s criterion holds.
-
-Under both patterns, the names of specific kinds, the rule values,
-and the branch conditions never appear in any `purpose` field or
-`story` sentence.
+Under every pattern, the names of specific kinds, the rule values, and
+the branch conditions never appear in any `purpose` field or `story`
+sentence — that invariance from rules 1–3 above is unconditional.
 
 ## Self-check before returning
 
@@ -106,6 +88,131 @@ After producing the design, verify every `purpose` field and every
 sentence of the `story` against the invariance test. If any sentence
 would need to change to accommodate a hypothetical new case in the
 implementation, rewrite it before returning.
+
+# Variance-handling patterns
+
+For each variance axis the AC exposes, choose ONE of the four patterns
+below. Each pattern produces a specific participant shape; mixing
+patterns within one axis fragments the design.
+
+## The four patterns
+
+### 1. Rule table — variance as data
+
+The cases are rows in a table (config, database, hardcoded list). Code
+is constant; adding a new case adds a row.
+
+Choose when: cases differ only in data values (thresholds, percentages,
+windows, eligibility predicates). The case set can grow without new
+code.
+
+Participant shape:
+- A `Repository` participant (`kind: "reuse"` if it already exists in
+  the codebase; else `kind: "leaf"`) exposing a `find(...)` method that
+  returns the applicable rule.
+- An `Applier` leaf (or a method on the orchestrator) that consumes the
+  rule and produces the outcome.
+
+No `sealed-interface` entity is needed for this pattern — the
+discriminator is a plain enum or reused value type.
+
+### 2. Resolver — variance as pluggable processors
+
+The cases are N implementations of a common interface, selected at
+runtime by a key.
+
+Choose when: each case is a full operation (not just data). The variants
+are interchangeable at the same call site, selected by an external key.
+
+Participant shape:
+- A `XxxResolver` participant exposing `resolve(key) → Strategy`.
+- N strategy participants implementing a common operation; each strategy
+  is its own leaf in the participant tree.
+
+No `sealed-interface` entity is needed for this pattern either — the
+strategies are participants, not entities.
+
+### 3. Sealed polymorphism — variance as data-with-behaviour
+
+The cases are a sealed family of records, each owning its own
+implementation of a common method.
+
+Choose when: the variance genuinely belongs ON a domain noun — the
+behaviour is part of the noun's identity (each variant has its own
+operation tied to its data).
+
+Participant shape:
+- A `sealed-interface` entity in `entities[]` with `behaviors[]`
+  declaring the contract.
+- N `record` entities in the same `entities[]` array, listed in the
+  parent's `permits[]`, each implementing the contract.
+- The caller invokes `entity.method(...)` directly — no branching at
+  the call site.
+
+### 4. In-method pattern matching — variance as a local switch
+
+The cases are a sealed family of pure-data records (no per-variant
+behaviour), and the caller `switch`es over them in its method body.
+
+Choose when: variance is local to ONE method, behaviour doesn't belong
+on the variants, the case set won't grow.
+
+Participant shape:
+- A `sealed-interface` entity with EMPTY `behaviors[]` (pure sum type)
+  and `permits[]` listing record variants.
+- The caller's method body owns the switch — this spends ONE level of
+  the caller's complexity budget (see below).
+
+## Selection priority
+
+For each variance axis, ask in order; pick the first whose criterion
+holds:
+
+1. Can the variance be expressed as data with a constant code path?
+   → **rule table**.
+2. Are the variants interchangeable processors selected by an external
+   key?
+   → **resolver**.
+3. Does the behaviour conceptually belong on a domain noun?
+   → **sealed polymorphism**.
+4. Is the variance a closed sum used at one site, with logic that
+   doesn't belong on the variants?
+   → **in-method pattern matching**.
+
+Lower-numbered patterns have lower coupling and lower test-nesting cost.
+Only step to a higher number when the lower one's criterion genuinely
+fails.
+
+## Complexity budget per participant
+
+A single participant owns AT MOST 2 independent variance axes in its
+method body. Count axes by clustering AC rows:
+
+- Each distinct `Given` condition pattern is one axis.
+- Each distinct `When` condition pattern is another axis.
+
+If a participant would need more than 2 axes:
+- Mark it `"isLeaf": false` (orchestrator) so its internals are designed
+  at the next level. Don't expand its children inline at this level —
+  downstream tooling treats such nodes as deferred sub-designs.
+- The sub-design inherits the AC subset that maps to this participant.
+
+This budget corresponds to the DisC plugin's 2-level test-nesting limit:
+each axis the participant owns becomes one `@Nested` class in its test.
+
+## The orchestrator must be linear
+
+The root participant's method body is a LINEAR sequence of calls to its
+collaborators. No `if`, no `switch`, no ternary at the orchestrator
+level. Every branch at the orchestrator's level is a sign that a
+variance axis was not delegated to one of the four pattern hosts above.
+
+Branches live in:
+- The rule table's lookup (data, not code).
+- The resolver's map lookup (data, not code).
+- The variant record's polymorphic method (invisible at the call site).
+- The pattern-matching method body of a single non-root participant
+  (one level of test nesting; used sparingly).
 
 # Existing codebase (optional)
 
@@ -159,6 +266,11 @@ they get a stub at this level and a separate design pass for their
 internals. Don't force-flatten an orchestrator into a leaf just to meet
 the depth limit — better to truncate the tree (omit children) than to
 mis-classify a multi-step concern as a pure function.
+
+A participant whose AC subset spans more than 2 variance axes is by
+definition an orchestrator (`isLeaf: false`), even when you don't expand
+its children at this level. See "Complexity budget per participant" in
+the Variance-handling patterns section.
 
 # Output
 
@@ -268,10 +380,15 @@ Each entry:
     operations.
   - `sealed-interface` — closed family of variants. The variants are
     record entries in this same `entities[]` array.
-- **Which kind for variance.** The "When the domain noun has multiple
-  kinds" subsection in the Abstraction-discipline block above governs
-  the choice between (a) discriminator + policy and (b) sealed contract.
-  The schema here only specifies *how* to express each kind once chosen.
+- **Which kind for variance.** The selection priority in the
+  "Variance-handling patterns" section governs which kind to choose.
+  Rule table and resolver patterns do NOT need a `sealed-interface`
+  entity — the discriminator is a plain enum or reused value type, and
+  the strategies are participants, not entities. Sealed polymorphism
+  uses `kind: "sealed-interface"` with non-empty `behaviors[]` and a
+  `permits[]` list of variant records. In-method pattern matching uses
+  `kind: "sealed-interface"` with EMPTY `behaviors[]` (pure sum type)
+  and a `permits[]` list of pure-data records.
 - **Skip primitives and JDK collections.** No `int`, `long`, `String`,
   `boolean`, `void`. No `List`, `Map`, `Set`, `Optional` — but the
   *element* types inside them (e.g. `Visit` inside `List<Visit>`) DO go
