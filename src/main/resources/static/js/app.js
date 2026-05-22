@@ -364,6 +364,7 @@ const step2Els = {
     acRows: document.getElementById('ac-rows'),
     acAdd: document.getElementById('ac-add'),
     acCount: document.getElementById('ac-count'),
+    acCoverage: document.getElementById('ac-coverage'),
     analyzeBtn: document.getElementById('analyze-btn'),
     participantsList: document.getElementById('participants-list'),
     stepsBoard: document.getElementById('steps-board'),
@@ -408,6 +409,60 @@ if (storyInput) {
 
 // --- Step 2 acceptance criteria (Gherkin rows) ---
 
+// Participants that carry a specific AC row by index. The mapping is
+// produced by the analyzer (acIndices field on each tree node) and
+// propagated onto each participant by flattenTreeToParticipants. Used
+// by the per-row carrier-count chip and the cross-highlight hover.
+function participantsCoveringAc(rowIdx) {
+    return (state.participants || []).filter(p =>
+        Array.isArray(p.acIndices) && p.acIndices.includes(rowIdx));
+}
+
+// Section-level coverage: how many AC rows have at least one carrier.
+// Surfaced as a chip next to the AC count so the user sees orphaned
+// scenarios at a glance.
+function acCoverageStats() {
+    const total = (state.ac || []).length;
+    let covered = 0;
+    for (let i = 0; i < total; i++) {
+        if (participantsCoveringAc(i).length > 0) covered++;
+    }
+    return { covered, total };
+}
+
+// --- AC ↔ Participant cross-highlight ---
+//
+// One body data-attribute is the single source of truth for hover state;
+// CSS dims non-matching items via attribute selectors. The matching cards/
+// rows also get an explicit class so CSS can render the accent.
+
+function setAcHover(idx) {
+    document.body.setAttribute('data-ac-hover', String(idx));
+    document.querySelectorAll('#participants-list .pc-card').forEach(card => {
+        const p = findParticipant(card.dataset.id);
+        const covered = p && Array.isArray(p.acIndices) && p.acIndices.includes(idx);
+        card.classList.toggle('ac-covered', !!covered);
+    });
+}
+function clearAcHover() {
+    document.body.removeAttribute('data-ac-hover');
+    document.querySelectorAll('.pc-card.ac-covered').forEach(c => c.classList.remove('ac-covered'));
+}
+function setParticipantHover(participantId) {
+    const p = findParticipant(participantId);
+    if (!p) return;
+    document.body.setAttribute('data-participant-hover', String(participantId));
+    const indices = new Set(p.acIndices || []);
+    document.querySelectorAll('.ac-row[data-ac-index]').forEach(row => {
+        const i = Number(row.getAttribute('data-ac-index'));
+        row.classList.toggle('participant-covers', indices.has(i));
+    });
+}
+function clearParticipantHover() {
+    document.body.removeAttribute('data-participant-hover');
+    document.querySelectorAll('.ac-row.participant-covers').forEach(r => r.classList.remove('participant-covers'));
+}
+
 function renderAcRows() {
     const container = step2Els.acRows;
     if (!container) return;
@@ -415,6 +470,15 @@ function renderAcRows() {
     state.ac.forEach((row, idx) => {
         const wrap = document.createElement('div');
         wrap.className = 'ac-row';
+        wrap.setAttribute('data-ac-index', String(idx));
+
+        const carriers = participantsCoveringAc(idx);
+        const carrierWarn = carriers.length === 0 ? ' is-warn' : '';
+        const carrierTitle = carriers.length === 0
+            ? 'no participant covers this scenario — analyse again, or this AC may be redundant'
+            : `Carried by: ${carriers.map(p => p.name || '?').join(', ')}`;
+        const carrierChip = `<span class="ac-carrier-chip${carrierWarn}" title="${escapeAttr(carrierTitle)}">${carriers.length} ${carriers.length === 1 ? 'participant' : 'participants'}</span>`;
+
         wrap.innerHTML = `
             <div class="ac-field">
                 <span class="ac-field-label">Given</span>
@@ -428,6 +492,7 @@ function renderAcRows() {
                 <span class="ac-field-label">Then</span>
                 <textarea data-ac-field="then" rows="2" placeholder="the expected outcome">${escapeHtml(row.then || '')}</textarea>
             </div>
+            ${carrierChip}
             <button type="button" class="ac-remove" data-ac-remove="${idx}" aria-label="Remove this row">×</button>
         `;
         wrap.querySelectorAll('textarea[data-ac-field]').forEach(ta => {
@@ -440,11 +505,25 @@ function renderAcRows() {
             state.ac.splice(idx, 1);
             renderAcRows();
         });
+        // Cross-highlight: when this row is hovered, dim non-carrier
+        // participants. Cleared on leave.
+        wrap.addEventListener('mouseenter', () => setAcHover(idx));
+        wrap.addEventListener('mouseleave', clearAcHover);
         container.appendChild(wrap);
     });
     if (step2Els.acCount) {
         const n = state.ac.length;
         step2Els.acCount.textContent = `${n} row${n === 1 ? '' : 's'}`;
+    }
+    if (step2Els.acCoverage) {
+        const { covered, total } = acCoverageStats();
+        if (total === 0) {
+            step2Els.acCoverage.textContent = '';
+            step2Els.acCoverage.classList.remove('is-warn');
+        } else {
+            step2Els.acCoverage.textContent = `${covered} / ${total} covered`;
+            step2Els.acCoverage.classList.toggle('is-warn', covered < total);
+        }
     }
 }
 
@@ -1466,6 +1545,11 @@ function renderParticipants() {
             }
             openModal(p.id);
         });
+        // Cross-highlight: hovering a card lights up only the AC rows it
+        // carries. Lets the user verify which scenarios this participant
+        // is responsible for at a glance.
+        card.addEventListener('mouseenter', () => setParticipantHover(p.id));
+        card.addEventListener('mouseleave', clearParticipantHover);
         list.appendChild(card);
     });
 
@@ -1479,6 +1563,11 @@ function renderParticipants() {
         openModal(p.id);
     });
     list.appendChild(addTile);
+
+    // Keep the AC carrier chips + coverage indicator in sync with the
+    // current participant set. Participants own the acIndices mapping;
+    // adding / editing / removing one shifts coverage on the AC side.
+    renderAcRows();
 }
 
 // --- Modal ---
@@ -5635,4 +5724,11 @@ document.addEventListener('keydown', (e) => {
         closeDecisionTableModal();
     }
 });
+
+// Dev hook — exposes the module-scoped state and element bag for
+// in-browser debugging and automated UI verification. No prod effect;
+// nothing in the wizard reads window.__disc.
+if (typeof window !== 'undefined') {
+    window.__disc = { state, step2Els };
+}
 

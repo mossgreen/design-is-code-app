@@ -214,3 +214,73 @@ they rule out. Append new entries on top of older ones in each subsection.
   Domain-correct default — the use-case orchestrator (tree root) is by
   convention the System Under Test. `setSut` is idempotent and shared
   with the manual click path; manual-add flow never auto-marks.
+
+
+## UI improvement roadmap (post-discipline iterations)
+
+After slices A–D (analyzer discipline + abstraction kinds + axes chip +
+AC↔participant cross-highlight), the wizard's reasoning is increasingly
+visible. The next slices, in rough priority order, make the rest of the
+discipline transparent and reduce visual clutter.
+
+### Slice E — Variance pattern badges on participant cards
+
+Each participant gets a small badge: `rule-table` / `resolver` /
+`polymorphism` / `pattern-match` / `n/a`. Derived from a new analyzer
+output field (`pattern` per tree node) so the wizard surfaces *which*
+of the four variance-handling patterns from analyzer.md applies to
+each participant. Teaches the discipline without forcing the user to
+read the prompt.
+
+### Slice F — Step 3 redesign as analytical design-checks
+
+Replace the four named-reviewer checkboxes (peter / john / chen / wang)
+with concrete checks computed from the design itself:
+
+- AC coverage (every AC row has ≥1 carrier — from slice D)
+- Orchestrator linearity (no branches at the root)
+- No orphaned entities (every entity is referenced by some participant signature)
+- Axes within budget (every participant has ≤2 axes)
+- Sealed-interface variants ≥ 2 (no one-permit sealed families)
+- Reused types resolve in the catalog
+
+Sign-off becomes signing off on the checks, not on each other. The
+"four reviewers" idea was always ceremony; the discipline checks are
+what actually matter.
+
+### Slice G — Sub-design drill-in surfaced on Step 2
+
+Move the "Design this level" affordance from Step 3's tree view to
+orchestrator participant cards in Step 2 directly. Users iterate on
+Step 2; the multi-level capability should be reachable where they
+work. Optional onboarding banner the first time an orchestrator
+appears: "X participants are orchestrators — design them in sub-flows."
+
+### Slice H — Chip consolidation pass
+
+Visual-density audit. Each participant card carries up to 4 chips
+(kind, axes, SUT, FQN); each entity card up to 3 (kind, provenance,
+FQN). Signal-to-noise is dropping. Options:
+
+- Collapse `kind` + `provenance` into a single role badge with
+  hover-for-details
+- Use border-style / colour to encode kind instead of a chip
+- Cap chip count per card at 2 visible + an overflow indicator
+
+### Slice I — Manual edit of `acIndices`
+
+Let the user click an AC row and toggle which participants carry it
+(checkbox grid in a small popover, or drag-and-drop). Currently
+`acIndices` is read-only from analyzer output; user edits would let
+them correct mis-mappings without re-running the analyzer.
+
+### Slice J — Real-time discipline feedback
+
+As the user edits Step 2 fields, surface inline hints:
+
+- ">5 participants at this level" — recommend decompose
+- "no SUT marked" — every chain needs one
+- AC row with empty `Then` — won't constrain the design
+- Method signature with > 3 args — consider grouping into a record
+
+Cheap to compute, debounce-aware, visible only when triggered.

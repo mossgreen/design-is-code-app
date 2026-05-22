@@ -4116,13 +4116,14 @@ button.small {
 
 .ac-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr auto;
+    grid-template-columns: 1fr 1fr 1fr auto auto;
     gap: 0.5rem;
     align-items: start;
     padding: 0.55rem;
     background: #fcfcfd;
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    transition: opacity 0.12s, box-shadow 0.12s;
 }
 
 .ac-row .ac-field {
@@ -4170,6 +4171,51 @@ button.small {
 .ac-actions {
     display: flex;
     margin-top: 0.55rem;
+}
+
+/* Per-AC-row "N participants" chip. Shows how many participants
+ * carry this scenario. is-warn highlights orphans (zero carriers). */
+.ac-carrier-chip {
+    align-self: center;
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 4px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    cursor: help;
+    white-space: nowrap;
+}
+.ac-carrier-chip.is-warn {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
+/* Section-level AC coverage indicator next to #ac-count. Hidden when
+ * empty; turns red when covered < total. */
+#ac-coverage { margin-left: 0.4rem; }
+#ac-coverage:empty { display: none; }
+#ac-coverage.is-warn { color: #b91c1c; }
+
+/* AC ↔ Participant cross-highlight.
+ * One body data-attribute is set on hover; CSS dims non-matching items
+ * via attribute selectors. The matching cards/rows gain an explicit
+ * .ac-covered / .participant-covers class for the accent border. */
+body[data-ac-hover] #participants-list .pc-card { opacity: 0.32; }
+body[data-ac-hover] #participants-list .pc-card.ac-covered {
+    opacity: 1;
+    border-color: var(--accent);
+    box-shadow: 0 2px 6px rgba(99, 102, 241, 0.18);
+}
+body[data-participant-hover] #ac-rows .ac-row { opacity: 0.32; }
+body[data-participant-hover] #ac-rows .ac-row.participant-covers {
+    opacity: 1;
+    box-shadow: 0 0 0 1px var(--accent), 0 2px 6px rgba(99, 102, 241, 0.18);
 }
 
 .design-analyze-row {
