@@ -324,6 +324,9 @@ public class ScanService {
         if (doc == null) return "";
         String text = doc.getDescription().toText().trim();
         if (text.isEmpty()) return "";
+        // Strip inline HTML tags Javadoc allows (<code>, <p>, <br>, <a>, etc.) so the
+        // raw text reads cleanly when rendered by the frontend (which escapes < and >).
+        text = text.replaceAll("<[^>]+>", "");
         // First sentence — up to first period that ends a sentence, else first 140 chars.
         int dot = text.indexOf('.');
         String first = (dot > 0) ? text.substring(0, dot + 1) : text;

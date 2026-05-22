@@ -114,6 +114,16 @@
                 <p id="story-narrative" class="story-narrative"></p>
             </div>
 
+            <details class="steps-accordion section-block entities-section hidden" id="entities-section">
+                <summary class="section-head">
+                    <span class="steps-chevron" aria-hidden="true">▸</span>
+                    <h3>Types &amp; entities</h3>
+                    <span class="hint inline">Records, enums, and value types the participants pass around. Click to edit fields. New types will be codegen'd; reused types bind to your existing source.</span>
+                    <span class="section-count" id="entities-count">0 types</span>
+                </summary>
+                <div id="entities-list" class="entities-grid"></div>
+            </details>
+
             <div class="section-block">
                 <div class="section-head">
                     <h3>Participants</h3>
@@ -168,6 +178,68 @@
                     <div class="modal-foot">
                         <button type="button" class="secondary" id="dt-modal-remove">Remove decision table</button>
                         <button type="button" id="dt-modal-done">Done</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="entity-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+                <div class="modal">
+                    <div class="modal-head">
+                        <h3 id="entity-modal-title">Edit type</h3>
+                        <button type="button" class="icon-btn" id="entity-modal-close" title="Close">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="field">
+                            <label for="entity-modal-name">Name</label>
+                            <input type="text" id="entity-modal-name" placeholder="e.g. VisitFeeRequest" list="types-datalist" autocomplete="off">
+                        </div>
+                        <div class="field kind-field">
+                            <label for="entity-modal-kind">Kind</label>
+                            <select id="entity-modal-kind">
+                                <option value="record">record — immutable data carrier (Java record)</option>
+                                <option value="enum">enum — finite set of named values</option>
+                                <option value="class">class — mutable value object with identity</option>
+                                <option value="interface">interface — behavioural contract (Java interface)</option>
+                                <option value="sealed-interface">sealed-interface — closed family of variants</option>
+                            </select>
+                        </div>
+                        <div class="field purpose-field">
+                            <label for="entity-modal-purpose">Purpose <span class="label-hint">one sentence — what this type carries</span></label>
+                            <textarea id="entity-modal-purpose" rows="2" placeholder="e.g. Carries the inputs a front-desk clerk submits to price a visit."></textarea>
+                        </div>
+                        <div class="field" id="entity-modal-fqn-field">
+                            <label for="entity-modal-fqn">Bind to existing type <span class="label-hint">FQN — leave blank to codegen a new type</span></label>
+                            <input type="text" id="entity-modal-fqn" placeholder="com.example.fee.VisitFeeRequest" autocomplete="off">
+                        </div>
+                        <div class="field" id="entity-modal-fields-field">
+                            <div class="modal-methods-head">
+                                <label>Fields · <span id="entity-modal-fields-count">0</span></label>
+                                <button type="button" class="secondary small" id="entity-modal-add-field">+ Add field</button>
+                            </div>
+                            <div id="entity-modal-fields" class="entity-rows-list"></div>
+                        </div>
+                        <div class="field hidden" id="entity-modal-values-field">
+                            <div class="modal-methods-head">
+                                <label>Values · <span id="entity-modal-values-count">0</span></label>
+                                <button type="button" class="secondary small" id="entity-modal-add-value">+ Add value</button>
+                            </div>
+                            <div id="entity-modal-values" class="entity-rows-list"></div>
+                        </div>
+                        <div class="field hidden" id="entity-modal-behaviors-field">
+                            <div class="modal-methods-head">
+                                <label>Behaviors · <span id="entity-modal-behaviors-count">0</span></label>
+                                <button type="button" class="secondary small" id="entity-modal-add-behavior">+ Add behavior</button>
+                            </div>
+                            <div id="entity-modal-behaviors" class="pc-methods-list"></div>
+                        </div>
+                        <div class="field hidden" id="entity-modal-permits-field">
+                            <label>Permits <span class="label-hint">variants that implement this sealed contract</span></label>
+                            <div id="entity-modal-permits" class="entity-permits-list"></div>
+                        </div>
+                    </div>
+                    <div class="modal-foot">
+                        <button type="button" class="secondary" id="entity-modal-delete">Delete</button>
+                        <button type="button" id="entity-modal-done">Done</button>
                     </div>
                 </div>
             </div>

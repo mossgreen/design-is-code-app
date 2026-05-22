@@ -9,6 +9,14 @@ const state = {
     // { given, when, then }. Fed to /api/analyze as `acceptanceCriteria`
     // so generated participants/sequence satisfy each row.
     ac: [],
+    // Types/entities the participants pass around — records, enums,
+    // classes (not interfaces; those are participants). Populated from
+    // the analyzer's new entities[] response, then augmented by a
+    // frontend derivation pass that scans participant signatures for
+    // any names the AI missed. User edits land here via the entity
+    // modal. Each entry: { id, name, kind, purpose, existingFqn,
+    // fields:[{name,type}], values:[string] }.
+    entities: [],
     participants: [],
     sequence: [],
     targetPackage: '',
@@ -563,6 +571,185 @@ function makeMethod(name = '', inputs = [], output = '') {
     return { id: newId(), name, inputs, output, isProposed: false };
 }
 
+// Entity factory — records / enums / classes the participants pass around.
+// `kind` drives both the editor UI (fields list vs values list) and the
+// .puml emission stereotype. `existingFqn` set means REUSE (no codegen);
+// when null the entity is NEW and the plugin will codegen the source.
+function makeEntity(name = '', kind = 'record', purpose = '') {
+    return {
+        id: newId(),
+        name,
+        kind,                // 'record' | 'enum' | 'class' | 'interface' | 'sealed-interface'
+        purpose,
+        existingFqn: null,
+        fields: [],          // [{ name, type }] — for record / class
+        values: [],          // [string] — for enum
+        behaviors: [],       // [{ name, args, returns }] — for interface / sealed-interface
+        permits: []          // [variantEntityName] — for sealed-interface
+    };
+}
+
+// JDK collection generics & primitives that derivation skips when
+// scanning method signatures for entity references — these are platform
+// types, not domain entities.
+const PRIMITIVE_TYPES = new Set([
+    // primitives + their lowercase form
+    'void', 'boolean', 'byte', 'short', 'char', 'int', 'long', 'float', 'double',
+    // boxed primitives + common JDK value types
+    'Boolean', 'Byte', 'Short', 'Character', 'Integer', 'Long', 'Float', 'Double',
+    'Number', 'BigDecimal', 'BigInteger',
+    'String', 'CharSequence', 'Object', 'Void',
+    // date/time (java.time + legacy)
+    'Instant', 'Duration', 'Period', 'LocalDate', 'LocalTime', 'LocalDateTime',
+    'ZonedDateTime', 'OffsetDateTime', 'OffsetTime', 'ZoneId', 'ZoneOffset',
+    'Year', 'YearMonth', 'Month', 'MonthDay', 'DayOfWeek', 'Clock', 'Date',
+    // misc common
+    'UUID', 'URL', 'URI', 'Path', 'File', 'Class',
+    'Exception', 'Throwable', 'RuntimeException', 'Error'
+]);
+const JDK_GENERIC_OUTER = new Set([
+    'List', 'Set', 'Map', 'Collection', 'Optional', 'Iterable', 'Iterator',
+    'Queue', 'Deque', 'Stream', 'Future', 'CompletableFuture'
+]);
+
+// Extract every PascalCase type token from a raw signature fragment like
+// "List<Visit>", "Map<String, Order>", "VisitFeeRequest". Token order is
+// preserved; primitives + JDK generic outers are dropped by the caller.
+function extractTypeRefs(raw) {
+    if (!raw) return [];
+    return raw.match(/[A-Z][A-Za-z0-9_]*/g) || [];
+}
+
+// Reshape an analyzer-supplied entity payload into the local entity model
+// (fresh `id`, defaults for omitted fields). Tolerates missing keys so a
+// truncated/older AI response still loads cleanly.
+function adoptEntity(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const allowedKinds = new Set(['record', 'enum', 'class', 'interface', 'sealed-interface']);
+    const kind = allowedKinds.has(raw.kind) ? raw.kind : 'record';
+    const existingFqn = (raw.existingFqn || '').trim() || null;
+    const fields = Array.isArray(raw.fields)
+        ? raw.fields
+            .filter(f => f && (f.name || f.type))
+            .map(f => ({ name: (f.name || '').trim(), type: (f.type || '').trim() }))
+        : [];
+    const values = Array.isArray(raw.values)
+        ? raw.values.map(v => (v || '').toString().trim()).filter(Boolean)
+        : [];
+    const behaviors = Array.isArray(raw.behaviors)
+        ? raw.behaviors
+            .filter(b => b && (b.name || b.returns))
+            .map(b => ({
+                name: (b.name || '').trim(),
+                args: Array.isArray(b.args)
+                    ? b.args
+                        .filter(a => a && (a.name || a.type))
+                        .map(a => ({ name: (a.name || '').trim(), type: (a.type || '').trim() }))
+                    : [],
+                returns: (b.returns || '').trim() || 'void'
+            }))
+        : [];
+    const permits = Array.isArray(raw.permits)
+        ? raw.permits.map(v => (v || '').toString().trim()).filter(Boolean)
+        : [];
+    return {
+        id: newId(),
+        name: (raw.name || '').trim(),
+        kind,
+        purpose: (raw.purpose || '').trim(),
+        existingFqn,
+        // Reuse entities defer to the existing source — keep authoring
+        // arrays empty so the UI doesn't pretend to author them.
+        fields: existingFqn ? [] : fields,
+        values: existingFqn ? [] : values,
+        behaviors: existingFqn ? [] : behaviors,
+        permits: existingFqn ? [] : permits
+    };
+}
+
+// Walk every type reference in every participant method and ensure each
+// domain type has a corresponding entry in state.entities. Skips
+// primitives, JDK collection outers, and names that are themselves
+// participants (those are services, not entities). For NEW types, hydrate
+// from state.codebaseCatalog when the name matches a scanned type;
+// otherwise drop a placeholder record entity inviting the user to fill
+// in fields.
+//
+// Idempotent: existing entities (AI-supplied or user-typed) are left
+// alone; only missing names are added.
+function mergeDerivedEntities() {
+    const participantNames = new Set(
+        state.participants.map(p => (p.name || '').trim()).filter(Boolean)
+    );
+    const existingNames = new Set(state.entities.map(e => e.name));
+    const catalog = state.codebaseCatalog;
+    const catalogByName = (catalog && Array.isArray(catalog.types))
+        ? Object.fromEntries(catalog.types.map(t => [t.name, t]))
+        : {};
+
+    const seen = new Set();
+    const queue = [];
+
+    function consider(typeStr) {
+        for (const token of extractTypeRefs(typeStr || '')) {
+            if (PRIMITIVE_TYPES.has(token)) continue;
+            if (JDK_GENERIC_OUTER.has(token)) continue;
+            if (participantNames.has(token)) continue;
+            if (existingNames.has(token)) continue;
+            if (seen.has(token)) continue;
+            seen.add(token);
+            queue.push(token);
+        }
+    }
+
+    for (const p of state.participants) {
+        for (const m of (p.methods || [])) {
+            for (const i of (m.inputs || [])) consider(i.type);
+            consider(m.output);
+        }
+    }
+
+    for (const name of queue) {
+        const catalogType = catalogByName[name];
+        if (catalogType) {
+            // REUSE: bind to the existing FQN. Skip controller / config /
+            // exception roles — they aren't entities.
+            if (catalogType.role === 'controller' || catalogType.role === 'config' || catalogType.role === 'exception') {
+                continue;
+            }
+            const kind = (catalogType.kind === 'enum' || catalogType.kind === 'class' || catalogType.kind === 'record')
+                ? catalogType.kind
+                : 'record';
+            state.entities.push({
+                id: newId(),
+                name,
+                kind,
+                purpose: catalogType.purpose || '',
+                existingFqn: catalogType.fqn,
+                fields: [],
+                values: [],
+                behaviors: [],
+                permits: []
+            });
+        } else {
+            // NEW placeholder — kind defaults to record (sensible default
+            // for a DTO inferred from a signature). User refines via the
+            // entity modal; the plugin's codegen needs the right kind.
+            state.entities.push({
+                id: newId(),
+                name,
+                kind: 'record',
+                purpose: '',
+                existingFqn: null,
+                fields: [],
+                values: [],
+                behaviors: [],
+                permits: []
+            });
+        }
+    }
+}
+
 // Walk a concept-tree (depth-first) and produce the participant array the
 // rest of the wizard already consumes. The hierarchy is a design aid for the
 // user; once flattened, parent/child relationships disappear — what survives
@@ -757,6 +944,8 @@ function enterStep2() {
     populateTypesDatalist();
     renderStoryNarrative();
     renderParticipants();
+    mergeDerivedEntities();
+    renderEntities();
     renderSequence();
 }
 
@@ -775,15 +964,21 @@ async function runAnalyze(context) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
-        // New analyser contract: {tree, story}. Tolerate the older shape
-        // (root tree object directly) so a stale-prompt response still works.
+        // New analyser contract: {tree, story, entities}. Tolerate the
+        // older shape (root tree object directly) so a stale-prompt
+        // response still works; entities[] is optional and just missing
+        // when an older prompt is in flight.
         const tree  = (data && data.tree)  || (data && data.name ? data : null);
         const story = (data && data.story) || '';
         state.tree = tree;
         state.story = story;
         state.participants = flattenTreeToParticipants(tree);
+        const aiEntities = Array.isArray(data && data.entities) ? data.entities : [];
+        state.entities = aiEntities.map(adoptEntity).filter(e => e && e.name);
+        mergeDerivedEntities();
         renderStoryNarrative();
         renderParticipants();
+        renderEntities();
         renderSequence();
 
         // Chain straight into sequence composition. Two-phase LLM flow:
@@ -982,6 +1177,12 @@ async function runSequence() {
             return;
         }
         applyResolvedSequence(resolved);
+        // AI sequence composition can invent new methods on participants
+        // (with their own type signatures) — re-derive so the entities
+        // grid catches up.
+        mergeDerivedEntities();
+        renderParticipants();
+        renderEntities();
         renderSequence();
 
         if (warnings.length > 0) {
@@ -1295,7 +1496,12 @@ function closeModal() {
     modalParticipantId = null;
     step2Els.modal.classList.add('hidden');
     populateTypesDatalist();
+    // A participant edit can rename / add / remove method types, which
+    // shifts what entities the design references. Re-derive so any new
+    // type names get cards immediately.
+    mergeDerivedEntities();
     renderParticipants();
+    renderEntities();
     renderSequence();
 }
 
@@ -1374,7 +1580,9 @@ step2Els.modalDelete.addEventListener('click', () => {
     modalParticipantId = null;
     step2Els.modal.classList.add('hidden');
     populateTypesDatalist();
+    mergeDerivedEntities();
     renderParticipants();
+    renderEntities();
     renderSequence();
 });
 
@@ -1385,6 +1593,461 @@ step2Els.modal.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !step2Els.modal.classList.contains('hidden')) closeModal();
+});
+
+// --- Entities (records / enums / classes) ---
+//
+// Parallel surface to participants: data types the design passes around.
+// state.entities is populated by the analyzer's entities[] response and
+// augmented by mergeDerivedEntities() which scans participant signatures
+// for any names the AI missed. Cards are smaller than participant cards
+// (no SUT chip, no sequence colour); clicking opens the entity modal.
+
+const entityEls = {
+    section: document.getElementById('entities-section'),
+    list: document.getElementById('entities-list'),
+    count: document.getElementById('entities-count'),
+    modal: document.getElementById('entity-modal'),
+    modalTitle: document.getElementById('entity-modal-title'),
+    modalName: document.getElementById('entity-modal-name'),
+    modalKind: document.getElementById('entity-modal-kind'),
+    modalPurpose: document.getElementById('entity-modal-purpose'),
+    modalFqn: document.getElementById('entity-modal-fqn'),
+    modalFieldsField: document.getElementById('entity-modal-fields-field'),
+    modalFields: document.getElementById('entity-modal-fields'),
+    modalFieldsCount: document.getElementById('entity-modal-fields-count'),
+    modalAddField: document.getElementById('entity-modal-add-field'),
+    modalValuesField: document.getElementById('entity-modal-values-field'),
+    modalValues: document.getElementById('entity-modal-values'),
+    modalValuesCount: document.getElementById('entity-modal-values-count'),
+    modalAddValue: document.getElementById('entity-modal-add-value'),
+    modalBehaviorsField: document.getElementById('entity-modal-behaviors-field'),
+    modalBehaviors: document.getElementById('entity-modal-behaviors'),
+    modalBehaviorsCount: document.getElementById('entity-modal-behaviors-count'),
+    modalAddBehavior: document.getElementById('entity-modal-add-behavior'),
+    modalPermitsField: document.getElementById('entity-modal-permits-field'),
+    modalPermits: document.getElementById('entity-modal-permits'),
+    modalDelete: document.getElementById('entity-modal-delete'),
+    modalDone: document.getElementById('entity-modal-done'),
+    modalClose: document.getElementById('entity-modal-close')
+};
+
+let entityModalId = null;
+
+function findEntity(id) {
+    return state.entities.find(e => e.id === id) || null;
+}
+
+function renderEntities() {
+    if (!entityEls.list) return;
+    if (!state.entities.length) {
+        entityEls.section.classList.add('hidden');
+        entityEls.list.innerHTML = '';
+        if (entityEls.count) entityEls.count.textContent = '0 types';
+        return;
+    }
+    entityEls.section.classList.remove('hidden');
+    if (entityEls.count) {
+        const n = state.entities.length;
+        entityEls.count.textContent = `${n} type${n === 1 ? '' : 's'}`;
+    }
+
+    entityEls.list.innerHTML = '';
+    for (const e of state.entities) {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = `ec-card kind-${e.kind}`;
+        if (e.existingFqn) card.classList.add('is-reused');
+        card.dataset.id = e.id;
+
+        const provenance = e.existingFqn
+            ? `<span class="ec-provenance-chip is-reuse" title="Existing type in your project — the plugin won't codegen this">REUSE</span>`
+            : `<span class="ec-provenance-chip is-new" title="New type — the plugin will codegen the source from these fields">NEW</span>`;
+
+        const kindChip = `<span class="ec-kind-chip kind-${e.kind}" title="${e.kind}">${escapeHtml(e.kind)}</span>`;
+
+        const fqnRow = e.existingFqn
+            ? `<div class="ec-fqn-chip" title="${escapeHtml(e.existingFqn)}">${escapeHtml(e.existingFqn)}</div>`
+            : '';
+
+        const purposeText = (e.purpose || '').trim();
+        const purposeRow = purposeText
+            ? `<div class="ec-card-purpose" title="${escapeAttr(purposeText)}">${escapeHtml(purposeText)}</div>`
+            : `<div class="ec-card-purpose is-empty">Click to describe what this carries</div>`;
+
+        let bodyRow = '';
+        let permitsRow = '';
+        if (e.existingFqn) {
+            bodyRow = `<div class="ec-card-fields is-reused-note">defers to existing source</div>`;
+        } else if (e.kind === 'enum') {
+            const preview = (e.values || []).slice(0, 4).map(v => escapeHtml(v)).join('<br>');
+            const more = (e.values || []).length - 4;
+            bodyRow = (e.values && e.values.length)
+                ? `<div class="ec-card-fields">${preview}${more > 0 ? `<div class="ec-card-more">+${more} more</div>` : ''}</div>`
+                : `<div class="ec-card-fields ec-card-empty">no values yet</div>`;
+        } else if (e.kind === 'interface' || e.kind === 'sealed-interface') {
+            const behaviors = (e.behaviors || []).filter(b => b && b.name);
+            const preview = behaviors.slice(0, 4).map(b => {
+                const args = (b.args || [])
+                    .map(a => `${escapeHtml(a.name || '?')}: ${escapeHtml(a.type || '?')}`)
+                    .join(', ');
+                const ret = escapeHtml((b.returns || 'void').trim() || 'void');
+                return `${escapeHtml(b.name)}(${args}) → ${ret}`;
+            }).join('<br>');
+            const more = behaviors.length - 4;
+            bodyRow = behaviors.length
+                ? `<div class="ec-card-fields">${preview}${more > 0 ? `<div class="ec-card-more">+${more} more</div>` : ''}</div>`
+                : `<div class="ec-card-fields ec-card-empty">no behaviours yet</div>`;
+            if (e.kind === 'sealed-interface') {
+                const permits = (e.permits || []).filter(Boolean);
+                permitsRow = permits.length
+                    ? `<div class="ec-permits-row" title="permits ${escapeAttr(permits.join(', '))}"><span class="ec-permits-label">permits:</span> ${permits.map(p => `<span class="ec-permit-tag">${escapeHtml(p)}</span>`).join(' ')}</div>`
+                    : `<div class="ec-permits-row is-empty">no variants permitted yet</div>`;
+            }
+        } else {
+            const preview = (e.fields || []).slice(0, 4).map(f =>
+                `${escapeHtml(f.name || '?')}: ${escapeHtml(f.type || '?')}`
+            ).join('<br>');
+            const more = (e.fields || []).length - 4;
+            bodyRow = (e.fields && e.fields.length)
+                ? `<div class="ec-card-fields">${preview}${more > 0 ? `<div class="ec-card-more">+${more} more</div>` : ''}</div>`
+                : `<div class="ec-card-fields ec-card-empty">no fields yet</div>`;
+        }
+
+        card.innerHTML = `
+            <div class="ec-card-head">
+                <span class="ec-card-name">${escapeHtml(e.name || '(unnamed)')}</span>
+                ${kindChip}
+                ${provenance}
+            </div>
+            ${fqnRow}
+            ${purposeRow}
+            ${bodyRow}
+            ${permitsRow}
+        `;
+        card.addEventListener('click', () => openEntityModal(e.id));
+        entityEls.list.appendChild(card);
+    }
+}
+
+function openEntityModal(id) {
+    entityModalId = id;
+    const e = findEntity(id);
+    if (!e) return;
+    entityEls.modalTitle.textContent = e.name ? `Edit ${e.name}` : 'New type';
+    entityEls.modalName.value = e.name || '';
+    entityEls.modalKind.value = e.kind || 'record';
+    entityEls.modalPurpose.value = e.purpose || '';
+    entityEls.modalFqn.value = e.existingFqn || '';
+    syncEntityModalKind();
+    renderEntityFields();
+    renderEntityValues();
+    renderEntityBehaviors();
+    renderEntityPermits();
+    entityEls.modal.classList.remove('hidden');
+    setTimeout(() => entityEls.modalName.focus(), 0);
+}
+
+function closeEntityModal() {
+    if (!entityModalId) return;
+    const e = findEntity(entityModalId);
+    if (e && !e.name.trim()) {
+        // discard empty entity on close
+        state.entities = state.entities.filter(x => x.id !== e.id);
+    }
+    entityModalId = null;
+    entityEls.modal.classList.add('hidden');
+    mergeDerivedEntities();
+    renderEntities();
+}
+
+// Toggle which body section is visible based on the current kind. Reuse
+// (FQN bound) hides all authoring bodies — the existing source is the
+// source of truth and the plugin won't codegen.
+function syncEntityModalKind() {
+    const kind = entityEls.modalKind.value;
+    const isReuse = (entityEls.modalFqn.value || '').trim().length > 0;
+    const showFields = !isReuse && (kind === 'record' || kind === 'class');
+    const showValues = !isReuse && kind === 'enum';
+    const showBehaviors = !isReuse && (kind === 'interface' || kind === 'sealed-interface');
+    const showPermits = !isReuse && kind === 'sealed-interface';
+    entityEls.modalFieldsField.classList.toggle('hidden', !showFields);
+    entityEls.modalValuesField.classList.toggle('hidden', !showValues);
+    if (entityEls.modalBehaviorsField) {
+        entityEls.modalBehaviorsField.classList.toggle('hidden', !showBehaviors);
+    }
+    if (entityEls.modalPermitsField) {
+        entityEls.modalPermitsField.classList.toggle('hidden', !showPermits);
+    }
+}
+
+function renderEntityFields() {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    entityEls.modalFields.innerHTML = '';
+    (e.fields || []).forEach((f, idx) => {
+        const row = document.createElement('div');
+        row.className = 'entity-field-row';
+        row.innerHTML = `
+            <input type="text" class="ef-name" placeholder="fieldName" value="${escapeAttr(f.name || '')}">
+            <span class="ef-sep">:</span>
+            <input type="text" class="ef-type" list="types-datalist" placeholder="Type" value="${escapeAttr(f.type || '')}">
+            <button type="button" class="ef-remove" aria-label="Remove field">×</button>
+        `;
+        row.querySelector('.ef-name').addEventListener('input', ev => {
+            e.fields[idx].name = ev.target.value;
+        });
+        row.querySelector('.ef-type').addEventListener('input', ev => {
+            e.fields[idx].type = ev.target.value;
+        });
+        row.querySelector('.ef-remove').addEventListener('click', () => {
+            e.fields.splice(idx, 1);
+            renderEntityFields();
+        });
+        entityEls.modalFields.appendChild(row);
+    });
+    entityEls.modalFieldsCount.textContent = String((e.fields || []).length);
+}
+
+function renderEntityValues() {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    entityEls.modalValues.innerHTML = '';
+    (e.values || []).forEach((v, idx) => {
+        const row = document.createElement('div');
+        row.className = 'entity-value-row';
+        row.innerHTML = `
+            <input type="text" class="ev-name" placeholder="VALUE_NAME" value="${escapeAttr(v || '')}">
+            <button type="button" class="ev-remove" aria-label="Remove value">×</button>
+        `;
+        row.querySelector('.ev-name').addEventListener('input', ev => {
+            e.values[idx] = ev.target.value;
+        });
+        row.querySelector('.ev-remove').addEventListener('click', () => {
+            e.values.splice(idx, 1);
+            renderEntityValues();
+        });
+        entityEls.modalValues.appendChild(row);
+    });
+    entityEls.modalValuesCount.textContent = String((e.values || []).length);
+}
+
+// Render the behavior editor (interface / sealed-interface): rows of
+// { name, args[], returns } — same shape as participant methods but with
+// the analyzer's field names (args / returns vs inputs / output). Each
+// row clones the participant method-block aesthetic for visual parity.
+function renderEntityBehaviors() {
+    if (!entityEls.modalBehaviors) return;
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    entityEls.modalBehaviors.innerHTML = '';
+    (e.behaviors || []).forEach((b, idx) => {
+        entityEls.modalBehaviors.appendChild(renderEntityBehaviorRow(e, b, idx));
+    });
+    if (entityEls.modalBehaviorsCount) {
+        entityEls.modalBehaviorsCount.textContent = String((e.behaviors || []).length);
+    }
+}
+
+function renderEntityBehaviorRow(entity, behavior, idx) {
+    const row = document.createElement('div');
+    row.className = 'method-block';
+
+    const head = document.createElement('div');
+    head.className = 'mb-head';
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'mb-name';
+    name.placeholder = 'operation';
+    name.value = behavior.name || '';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'icon-btn mb-remove';
+    remove.title = 'Remove behavior';
+    remove.textContent = '×';
+    head.append(name, remove);
+
+    const inRow = document.createElement('div');
+    inRow.className = 'mb-row';
+    const inTag = document.createElement('span');
+    inTag.className = 'io-tag';
+    inTag.textContent = 'in';
+    const argsWrap = document.createElement('div');
+    argsWrap.className = 'mb-inputs';
+    inRow.append(inTag, argsWrap);
+
+    const renderArgs = () => {
+        argsWrap.innerHTML = '';
+        const args = behavior.args || [];
+        if (args.length === 0) {
+            const empty = document.createElement('span');
+            empty.className = 'mb-empty';
+            empty.textContent = '(no parameters)';
+            argsWrap.appendChild(empty);
+        } else {
+            args.forEach((arg, i) => {
+                const pair = document.createElement('span');
+                pair.className = 'param-pair';
+                pair.innerHTML = `
+                    <input type="text" class="p-name" placeholder="name" value="${escapeHtml(arg.name || '')}">
+                    <input type="text" class="p-type" list="types-datalist" placeholder="type" value="${escapeHtml(arg.type || '')}">
+                    <button type="button" class="icon-btn p-remove" title="Remove parameter">×</button>
+                `;
+                const [pn, pt] = pair.querySelectorAll('input');
+                pn.addEventListener('input', ev => { args[i].name = ev.target.value; });
+                pt.addEventListener('input', ev => { args[i].type = ev.target.value; });
+                pair.querySelector('.p-remove').addEventListener('click', () => {
+                    args.splice(i, 1);
+                    renderArgs();
+                });
+                argsWrap.appendChild(pair);
+            });
+        }
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'mb-add-param';
+        add.textContent = '+ parameter';
+        add.addEventListener('click', () => {
+            if (!Array.isArray(behavior.args)) behavior.args = [];
+            behavior.args.push({ name: '', type: '' });
+            renderArgs();
+        });
+        argsWrap.appendChild(add);
+    };
+    renderArgs();
+
+    const outRow = document.createElement('div');
+    outRow.className = 'mb-row';
+    const outTag = document.createElement('span');
+    outTag.className = 'io-tag out';
+    outTag.textContent = 'out';
+    const ret = document.createElement('input');
+    ret.type = 'text';
+    ret.className = 'mb-output';
+    ret.setAttribute('list', 'types-datalist');
+    ret.placeholder = 'void';
+    ret.value = behavior.returns || '';
+    outRow.append(outTag, ret);
+
+    name.addEventListener('input', ev => { behavior.name = ev.target.value; });
+    ret.addEventListener('input', ev => { behavior.returns = ev.target.value; });
+    remove.addEventListener('click', () => {
+        entity.behaviors.splice(idx, 1);
+        renderEntityBehaviors();
+    });
+
+    row.append(head, inRow, outRow);
+    return row;
+}
+
+// Render the permits picker for a sealed-interface: a checkbox list of
+// every other entity whose kind is record (or class). Selection updates
+// entity.permits[] by name. Permits resolve by NAME because the plugin
+// contract uses names (not ids), and round-trip through .puml carries
+// only names.
+function renderEntityPermits() {
+    if (!entityEls.modalPermits) return;
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    entityEls.modalPermits.innerHTML = '';
+    const candidates = state.entities.filter(other =>
+        other.id !== e.id
+        && (other.kind === 'record' || other.kind === 'class')
+        && (other.name || '').trim().length > 0
+    );
+    if (candidates.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'entity-permits-empty';
+        empty.textContent = 'No record / class entities to permit yet. Create the variants first.';
+        entityEls.modalPermits.appendChild(empty);
+        return;
+    }
+    const selected = new Set(e.permits || []);
+    candidates.forEach(other => {
+        const label = document.createElement('label');
+        label.className = 'entity-permit-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = other.name;
+        cb.checked = selected.has(other.name);
+        cb.addEventListener('change', () => {
+            if (!Array.isArray(e.permits)) e.permits = [];
+            const idx = e.permits.indexOf(other.name);
+            if (cb.checked && idx < 0) e.permits.push(other.name);
+            if (!cb.checked && idx >= 0) e.permits.splice(idx, 1);
+        });
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'entity-permit-name';
+        nameSpan.textContent = other.name;
+        const kindChip = document.createElement('span');
+        kindChip.className = `entity-permit-kind kind-${other.kind}`;
+        kindChip.textContent = other.kind;
+        label.append(cb, nameSpan, kindChip);
+        entityEls.modalPermits.appendChild(label);
+    });
+}
+
+entityEls.modalName.addEventListener('input', () => {
+    const e = findEntity(entityModalId);
+    if (e) e.name = entityEls.modalName.value;
+});
+entityEls.modalKind.addEventListener('change', () => {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    e.kind = entityEls.modalKind.value;
+    syncEntityModalKind();
+    // The newly-visible section needs its rows rendered (the lists
+    // persist across kind switches — switching is a silent reset only
+    // visually; underlying arrays keep their content).
+    renderEntityBehaviors();
+    renderEntityPermits();
+});
+entityEls.modalPurpose.addEventListener('input', () => {
+    const e = findEntity(entityModalId);
+    if (e) e.purpose = entityEls.modalPurpose.value;
+});
+entityEls.modalFqn.addEventListener('input', () => {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    const v = entityEls.modalFqn.value.trim();
+    e.existingFqn = v || null;
+    syncEntityModalKind();
+});
+entityEls.modalAddField.addEventListener('click', () => {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    e.fields.push({ name: '', type: '' });
+    renderEntityFields();
+});
+entityEls.modalAddValue.addEventListener('click', () => {
+    const e = findEntity(entityModalId);
+    if (!e) return;
+    e.values.push('');
+    renderEntityValues();
+});
+if (entityEls.modalAddBehavior) {
+    entityEls.modalAddBehavior.addEventListener('click', () => {
+        const e = findEntity(entityModalId);
+        if (!e) return;
+        if (!Array.isArray(e.behaviors)) e.behaviors = [];
+        e.behaviors.push({ name: '', args: [], returns: 'void' });
+        renderEntityBehaviors();
+    });
+}
+entityEls.modalDelete.addEventListener('click', () => {
+    if (!entityModalId) return;
+    state.entities = state.entities.filter(x => x.id !== entityModalId);
+    entityModalId = null;
+    entityEls.modal.classList.add('hidden');
+    renderEntities();
+});
+entityEls.modalDone.addEventListener('click', closeEntityModal);
+entityEls.modalClose.addEventListener('click', closeEntityModal);
+entityEls.modal.addEventListener('click', (e) => {
+    if (e.target === entityEls.modal) closeEntityModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !entityEls.modal.classList.contains('hidden')) closeEntityModal();
 });
 
 function renderMethodRow(participant, method) {
@@ -2381,6 +3044,73 @@ function emitPlantUml() {
     // the user to fill it before save/run.
     if (state.targetPackage && state.targetPackage.trim()) {
         lines.push(`' @package ${state.targetPackage.trim()}`);
+    }
+
+    // Entity prelude: declare every record / enum / class the design uses.
+    // Emitted BEFORE the participant prelude so the .puml reads data-first
+    // (matches the Step 2 UX). The DisC plugin reads the <<record>> /
+    // <<enum>> / <<class>> stereotype to codegen Java source from the
+    // field/value listing. REUSE entities (existingFqn set) emit only the
+    // @class binding, no body — the plugin verifies the FQN resolves and
+    // otherwise leaves the file alone.
+    if (state.entities && state.entities.length > 0) {
+        lines.push("' @disc-entities type declarations the participants pass around (record / enum / class / interface / sealed-interface)");
+        for (const e of state.entities) {
+            const name = (e.name || '').trim();
+            if (!name) continue;
+            const fqn = (e.existingFqn || '').trim();
+            if (fqn) {
+                lines.push(`class ${name} <<@class:${fqn}>>`);
+                continue;
+            }
+            const allowed = new Set(['record', 'enum', 'class', 'interface', 'sealed-interface']);
+            const kind = allowed.has(e.kind) ? e.kind : 'record';
+            if (kind === 'enum') {
+                const values = (e.values || []).map(v => (v || '').trim()).filter(Boolean);
+                if (values.length === 0) {
+                    lines.push(`class ${name} <<enum>>`);
+                } else {
+                    lines.push(`class ${name} <<enum>> {`);
+                    for (const v of values) lines.push(`  + ${v}`);
+                    lines.push('}');
+                }
+            } else if (kind === 'interface' || kind === 'sealed-interface') {
+                const behaviors = (e.behaviors || []).filter(b => b && b.name);
+                const stereoBits = [`<<${kind}>>`];
+                if (kind === 'sealed-interface') {
+                    const permits = (e.permits || []).filter(Boolean);
+                    if (permits.length > 0) stereoBits.push(`<<@permits:${permits.join(',')}>>`);
+                }
+                const stereos = stereoBits.join(' ');
+                if (behaviors.length === 0) {
+                    lines.push(`class ${name} ${stereos}`);
+                } else {
+                    lines.push(`class ${name} ${stereos} {`);
+                    for (const b of behaviors) {
+                        const args = (b.args || [])
+                            .map(a => `${(a.name || '').trim() || '_'}: ${(a.type || '').trim() || 'Object'}`)
+                            .join(', ');
+                        const ret = (b.returns || '').trim() || 'void';
+                        lines.push(`  + ${b.name}(${args}): ${ret}`);
+                    }
+                    lines.push('}');
+                }
+            } else {
+                const fields = (e.fields || []).filter(f => f && (f.name || f.type));
+                if (fields.length === 0) {
+                    lines.push(`class ${name} <<${kind}>>`);
+                } else {
+                    lines.push(`class ${name} <<${kind}>> {`);
+                    for (const f of fields) {
+                        const fname = (f.name || '').trim() || '_';
+                        const ftype = (f.type || '').trim() || 'Object';
+                        lines.push(`  + ${fname}: ${ftype}`);
+                    }
+                    lines.push('}');
+                }
+            }
+        }
+        lines.push('');  // blank line before the participant prelude
     }
 
     // Participant prelude: declare every participant that appears in the
@@ -3974,6 +4704,7 @@ async function startSubDesign(participant, parentRelativePath, parentManifestFol
     state.userStory = `Design the internals of ${participant.name}. ` +
         `Called by ${parentPumlStem} with: ${(participant.methods || []).map(m => methodPreviewSignature(m)).join('; ')}.`;
     state.ac = [];
+    state.entities = [];
     state.participants = [];
     state.sequence = [];
     state.tree = null;
@@ -4019,6 +4750,7 @@ function snapshotWizardState() {
     return {
         userStory: state.userStory,
         ac: JSON.parse(JSON.stringify(state.ac || [])),
+        entities: JSON.parse(JSON.stringify(state.entities || [])),
         participants: JSON.parse(JSON.stringify(state.participants)),
         sequence: JSON.parse(JSON.stringify(state.sequence)),
         targetPackage: state.targetPackage,
@@ -4040,6 +4772,7 @@ function exitSubDesign() {
     }
     state.userStory = snapshot.userStory;
     state.ac = snapshot.ac || [];
+    state.entities = snapshot.entities || [];
     state.participants = snapshot.participants;
     state.sequence = snapshot.sequence;
     state.targetPackage = snapshot.targetPackage;
