@@ -299,6 +299,7 @@ Each node:
   "attributes":   [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
   "behaviors":    [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
   "isLeaf":       false,
+  "acIndices":    [ 0, 2 ],   // 0-based indices of AC rows whose `Then` clause this participant directly produces or enforces
   "children":     [ ...recursive... ]
 }
 ```
@@ -321,6 +322,13 @@ Each node:
 - `behaviors` — the public methods that fulfil the abstraction's
   responsibility. 1–4 is typical. `returns: "void"` is allowed.
 - `isLeaf` — set per the termination rule. Honour it strictly.
+- `acIndices` — 0-based indices of the acceptance-criteria rows this
+  participant carries. A participant carries an AC row when its
+  collaboration is on the path that produces the row's `Then` outcome.
+  Empty array `[]` when the design has no AC, or when the participant
+  is purely supportive (e.g. a generic carrier that flows through
+  many rows). The wizard uses this to compute per-participant
+  complexity (axes covered) and surface decomposition hints.
 - `children` — `[]` when `isLeaf` is true. Otherwise the direct collaborators
   this abstraction calls. Each child is a separate concept, not a sub-method.
 

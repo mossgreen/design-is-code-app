@@ -864,6 +864,13 @@ function flattenTreeToParticipants(root) {
                 existingFqn,
                 signatureConflicts,
                 kind,
+                // Acceptance-criteria indices this participant carries. The
+                // analyzer emits acIndices per tree node; we propagate them
+                // so the wizard can show per-participant complexity (axes
+                // covered, scenario count) on the card.
+                acIndices: Array.isArray(node.acIndices)
+                    ? node.acIndices.filter(i => Number.isInteger(i) && i >= 0)
+                    : [],
                 // Preserve the AI's sub-tree only for orchestrators; everything else
                 // discards it. Children we WALK into get their own top-level
                 // participants in this run (existing v0.6 behaviour) — capturing
@@ -1333,6 +1340,27 @@ function setEntryMethod(methodId) {
     renderSequence();
 }
 
+// Compute the variance-axis count for a single participant, derived
+// from the AC rows the analyzer assigned to it via acIndices. Per the
+// "Complexity budget per participant" rule in analyzer.md, an axis is
+// a dimension that varies across the participant's AC subset:
+//   - distinct `Given` patterns → one axis
+//   - distinct `When`  patterns → one axis
+// Both varying → 2 axes (the maximum within budget).
+// Returns null when the participant carries no AC rows (chip suppressed).
+function axesCoveredByParticipant(p) {
+    const indices = (p && Array.isArray(p.acIndices)) ? p.acIndices : [];
+    if (indices.length === 0) return null;
+    const acRows = state.ac || [];
+    const subset = indices.map(i => acRows[i]).filter(Boolean);
+    if (subset.length === 0) return null;
+    const norm = (s) => (s || '').toString().trim().toLowerCase();
+    const givens = new Set(subset.map(r => norm(r.given)).filter(Boolean));
+    const whens  = new Set(subset.map(r => norm(r.when)).filter(Boolean));
+    const axes = (givens.size > 1 ? 1 : 0) + (whens.size > 1 ? 1 : 0);
+    return { axes, scenarios: subset.length };
+}
+
 function renderParticipants() {
     const list = step2Els.participantsList;
     list.innerHTML = '';
@@ -1391,6 +1419,20 @@ function renderParticipants() {
             kindChip = `<span class="pc-kind-chip kind-leaf" title="Terminal — pure function, stereotype boundary, or single platform method">leaf</span>`;
         }
 
+        // Axes chip — surfaces the variance-axis count the participant
+        // carries (derived from acIndices + state.ac). Only shown when the
+        // participant carries at least one AC row. Per the 2-axis rule:
+        // axes >= 3 lights up the warning style so the user can decompose
+        // into a sub-design via the modal's kind selector.
+        const axesInfo = axesCoveredByParticipant(p);
+        let axesChip = '';
+        if (axesInfo) {
+            const label = `${axesInfo.axes} ${axesInfo.axes === 1 ? 'axis' : 'axes'}`;
+            const warn = axesInfo.axes >= 3 ? ' is-warn' : '';
+            const title = `${axesInfo.scenarios} acceptance criterion${axesInfo.scenarios === 1 ? '' : 'a'} across ${label} — ${axesInfo.axes >= 3 ? 'consider decomposing into a sub-design' : 'within the 2-axis budget'}`;
+            axesChip = `<span class="pc-axes-chip${warn}" title="${escapeAttr(title)}">${label}</span>`;
+        }
+
         // One-sentence purpose, surfaced from the analyzer (or user-typed
         // via the modal). Empty-state placeholder doubles as a discovery
         // hint that purpose is editable.
@@ -1403,6 +1445,7 @@ function renderParticipants() {
             <div class="pc-card-head">
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
                 ${kindChip}
+                ${axesChip}
                 ${sutChip}
             </div>
             ${fqnChip}

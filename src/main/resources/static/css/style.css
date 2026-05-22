@@ -3875,6 +3875,29 @@ button.small {
     background: color-mix(in srgb, #f97316 4%, var(--surface));
 }
 
+/* Axes chip — surfaces the variance-axis count this participant carries
+ * (derived from acIndices + state.ac). Neutral up to 2 axes (within
+ * budget); amber/red is-warn variant when >=3 (over budget — decompose). */
+.pc-axes-chip {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 4px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-left: 0.4rem;
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+    cursor: help;
+}
+.pc-axes-chip.is-warn {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+
 /* Modal: kind dropdown + help text. */
 .field.kind-field select {
     width: 100%;
