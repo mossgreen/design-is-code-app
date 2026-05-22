@@ -4730,6 +4730,17 @@ async function startSubDesign(participant, parentRelativePath, parentManifestFol
         ? `${parentManifestFolder}/${parentPumlStem}/${participant.name}.puml`
         : `${parentPumlStem}/${participant.name}.puml`;
 
+    // Carry forward the parent's AC rows this participant owns BEFORE we
+    // clear state. Seeded into the sub-design so the user (and the
+    // analyzer, if re-run at this level) inherits the scenarios the
+    // parent decomposed down to this participant.
+    const parentAc = Array.isArray(state.ac) ? state.ac : [];
+    const inheritedIndices = Array.isArray(participant.acIndices) ? participant.acIndices : [];
+    const inheritedAc = inheritedIndices
+        .map(i => parentAc[i])
+        .filter(Boolean)
+        .map(r => ({ given: r.given || '', when: r.when || '', then: r.then || '' }));
+
     // Snapshot the current wizard state. Used to restore when user clicks
     // "Back to parent design".
     subDesignStack.push(snapshotWizardState());
@@ -4746,7 +4757,7 @@ async function startSubDesign(participant, parentRelativePath, parentManifestFol
     // Reset state to a fresh wizard run, keeping the project context.
     state.userStory = `Design the internals of ${participant.name}. ` +
         `Called by ${parentPumlStem} with: ${(participant.methods || []).map(m => methodPreviewSignature(m)).join('; ')}.`;
-    state.ac = [];
+    state.ac = inheritedAc;
     state.entities = [];
     state.participants = [];
     state.sequence = [];
