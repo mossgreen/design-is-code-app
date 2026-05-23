@@ -43,6 +43,11 @@ public class DesignService {
         try {
             Files.createDirectories(containerDir);
             Files.writeString(target, request.content());
+            // Belt-and-braces: any _index.json next to a freshly-written .puml
+            // is a leftover from the parked multi-level mechanism. Delete it
+            // so the DisC plugin doesn't read stale deferred-child entries.
+            // See TODO.md "Multi-level design (parked for MVP — restore post-PMF)".
+            Files.deleteIfExists(containerDir.resolve("_index.json"));
         } catch (IOException e) {
             throw new RuntimeException("Failed to write design file: " + e.getMessage(), e);
         }

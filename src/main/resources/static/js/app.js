@@ -20,19 +20,25 @@ const state = {
     participants: [],
     sequence: [],
     targetPackage: '',
+    // True while the package field still reflects an auto-derived value.
+    // Flipped to false the moment the user types in the input — that makes
+    // the user's edit sticky, so subsequent re-analyzes won't clobber it.
+    targetPackageAutoFilled: true,
     // Marks which participant is the System Under Test. When set, the
     // wizard auto-manages the entry interaction ([*] -> SUT) and final
     // return ([*] <-- SUT) steps. DisC requires exactly one system_caller
     // per .puml; this is how we author it.
     sutParticipantId: null,
-    // Concept-tree state. tree is populated by POST /api/analyze on enterStep2
-    // when a user story is set; null means "haven't analysed yet" or
-    // "manual mode" (Start empty). story is the prose narrative rendered
-    // above the participant cards (tree is preserved as latent context, not
-    // visualised). analyzeError is set when claude is missing or the call
-    // fails — falls back to manual participant authoring.
-    tree: null,
+    // Story prose rendered above the participant cards in Step 2.
+    // Populated by POST /api/analyze on enterStep2 when a user story is
+    // set; empty string means "haven't analysed yet" or "manual mode".
+    // analyzeError is set when claude is missing or the call fails —
+    // falls back to manual participant authoring.
     story: '',
+    // The SUT's name as identified by the analyzer (the `sut` field in
+    // the analyzer JSON). Used to auto-select the SUT after analyze
+    // lands. Falls back to participants[0].name when absent.
+    sutName: '',
     analyzeError: null,
     analyzing: false,
     // Step 3 team-signoff gate — four hardcoded reviewers. All four must be
@@ -76,8 +82,7 @@ const FRAG_TYPES = {
     while:   { keyword: 'loop',  defaultLabel: 'while condition', allowsElse: false, glyph: '↻', label: 'while',  color: '#4f46e5', emitPrefix: 'while ' },
     foreach: { keyword: 'loop',  defaultLabel: 'for each item in items', allowsElse: false, glyph: '↻', label: 'for each', color: '#4f46e5', emitPrefix: 'for each ' },
     alt:     { keyword: 'alt',   defaultLabel: 'if condition',  allowsElse: true,  glyph: '◇', label: 'if',       color: '#0e7490' },
-    opt:     { keyword: 'opt',   defaultLabel: 'if optional',   allowsElse: false, glyph: '◇', label: 'opt',      color: '#7c3aed' },
-    par:     { keyword: 'par',   defaultLabel: 'branch A',      allowsElse: true,  glyph: '⇶', label: 'par',      color: '#0891b2' }
+    opt:     { keyword: 'opt',   defaultLabel: 'if optional',   allowsElse: false, glyph: '◇', label: 'opt',      color: '#7c3aed' }
 };
 
 function fragMeta(type) { return FRAG_TYPES[type] || FRAG_TYPES.loop; }
@@ -98,7 +103,6 @@ const els = {
     projectPanel: document.getElementById('project-panel'),
     form: document.getElementById('scan-form'),
     pathInput: document.getElementById('path-input'),
-    scanBtn: document.getElementById('scan-btn'),
     disconnectBtn: document.getElementById('disconnect-btn'),
     browseBtn: document.getElementById('browse-btn'),
     recentPaths: document.getElementById('recent-paths'),
@@ -150,7 +154,6 @@ async function runScan(path) {
     els.scanResult.classList.add('hidden');
     els.status.classList.remove('hidden');
     els.statusText.textContent = 'Scanning project…';
-    els.scanBtn.disabled = true;
     els.pathInput.disabled = true;
 
     try {
@@ -162,8 +165,10 @@ async function runScan(path) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Scan failed (${res.status})`);
 
+        const prevPath = state.projectPath;
         state.projectPath = data.path;
         state.codebaseCatalog = data;
+        applyTargetPackageHeuristics(prevPath, data);
         renderScanResult(data);
         populateTypesDatalist();
         addRecentPath(data.path);
@@ -173,7 +178,6 @@ async function runScan(path) {
         els.error.classList.remove('hidden');
     } finally {
         els.status.classList.add('hidden');
-        els.scanBtn.disabled = false;
         els.pathInput.disabled = false;
     }
 }
@@ -232,10 +236,10 @@ els.browseBtn.addEventListener('click', async () => {
         if (data.canceled) return;
         if (data.path) {
             els.pathInput.value = data.path;
-            // Keep state.projectPath + Continue gate in sync via the
-            // existing input listener.
+            // Auto-scan: connecting = scanning. The user picked a folder,
+            // they don't need to also click a Scan button to make it count.
             els.pathInput.dispatchEvent(new Event('input'));
-            els.pathInput.focus();
+            await runScan(data.path);
         }
     } catch (err) {
         els.error.textContent = err.message;
@@ -300,10 +304,10 @@ function renderRecentPaths() {
     els.recentPaths.innerHTML = `<span class="recent-label">Recent:</span>${chips}`;
     els.recentPaths.classList.remove('hidden');
     els.recentPaths.querySelectorAll('[data-recent]').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             els.pathInput.value = btn.dataset.recent;
             els.pathInput.dispatchEvent(new Event('input'));
-            els.pathInput.focus();
+            await runScan(btn.dataset.recent);
         });
     });
 }
@@ -402,9 +406,9 @@ if (storyInput) {
 // --- Step 2 acceptance criteria (Gherkin rows) ---
 
 // Participants that carry a specific AC row by index. The mapping is
-// produced by the analyzer (acIndices field on each tree node) and
-// propagated onto each participant by flattenTreeToParticipants. Used
-// by the per-row carrier-count chip and the cross-highlight hover.
+// produced by the analyzer (acIndices field on each participant) and
+// adopted onto state.participants by adoptParticipant. Used by the
+// per-row carrier-count chip and the cross-highlight hover.
 function participantsCoveringAc(rowIdx) {
     return (state.participants || []).filter(p =>
         Array.isArray(p.acIndices) && p.acIndices.includes(rowIdx));
@@ -532,10 +536,9 @@ if (step2Els.analyzeBtn) {
     step2Els.analyzeBtn.addEventListener('click', () => {
         if (!state.userStory || !state.userStory.trim()) return;
         // Re-analyzing wipes downstream design so the next state is
-        // produced fresh from the current story + AC. Sub-design context
-        // is preserved.
-        state.tree = null;
+        // produced fresh from the current story + AC.
         state.story = '';
+        state.sutName = '';
         state.participants = [];
         state.sequence = [];
         state.sutParticipantId = null;
@@ -609,6 +612,156 @@ function populatePackagesDatalist() {
 // useful immediately — before any scan has had a chance to run.
 populatePackagesDatalist();
 
+// Picks the catalog's "primary" package — the one that's the most likely
+// target for new code. Heuristic: shortest name (root package wins over
+// children, e.g. com.demo over com.demo.service); tie-break by highest
+// typeCount. The root is the natural default because new files typically
+// live under it, and the user can still override by typing.
+function pickPrimaryPackage(catalog) {
+    if (!catalog || !Array.isArray(catalog.packages) || catalog.packages.length === 0) {
+        return '';
+    }
+    const sorted = catalog.packages
+        .filter(p => p && p.name)
+        .slice()
+        .sort((a, b) => {
+            if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+            return (b.typeCount || 0) - (a.typeCount || 0);
+        });
+    return (sorted[0] && sorted[0].name) || '';
+}
+
+// Common Java role suffixes — stripped from the SUT name when deriving a
+// package leaf so e.g. "VisitFeeCalculator" yields "visitfee" rather than
+// "visitfeecalculator". Suffix match is case-insensitive on the final
+// PascalCase token only.
+const ROLE_SUFFIXES = [
+    'Calculator', 'Service', 'Controller', 'Manager', 'Handler',
+    'Processor', 'Engine', 'Resolver', 'Repository', 'Dao',
+    'Mapper', 'Converter', 'Configuration', 'Config', 'Validator'
+];
+
+// Turn a PascalCase SUT name into a Java package segment by stripping a
+// trailing role suffix and lowercasing the remaining domain tokens. Returns
+// null if the result wouldn't be a valid Java identifier (e.g. empty after
+// suffix strip, or starts with a digit).
+function deriveSutLeafName(sutName) {
+    if (!sutName) return null;
+    const tokens = sutName.match(/[A-Z][a-z0-9]*/g) || [sutName];
+    const last = tokens[tokens.length - 1];
+    const domainTokens = ROLE_SUFFIXES.some(s => s.toLowerCase() === last.toLowerCase())
+        ? tokens.slice(0, -1)
+        : tokens;
+    if (!domainTokens.length) return null;
+    const leaf = domainTokens.join('').toLowerCase();
+    return /^[a-z][a-z0-9_]*$/.test(leaf) ? leaf : null;
+}
+
+function packageOfFqn(fqn) {
+    if (!fqn) return '';
+    const i = fqn.lastIndexOf('.');
+    return i < 0 ? '' : fqn.slice(0, i);
+}
+
+function longestCommonPackagePrefix(pkgs) {
+    if (!pkgs.length) return '';
+    const split = pkgs.map(p => p.split('.'));
+    const minLen = Math.min(...split.map(s => s.length));
+    const out = [];
+    for (let i = 0; i < minLen; i++) {
+        const seg = split[0][i];
+        if (split.every(s => s[i] === seg)) out.push(seg);
+        else break;
+    }
+    return out.join('.');
+}
+
+// Recommend the package for the SUT and its co-generated entities. Anchors
+// on the packages of non-SUT participants that map to types already in the
+// project (existingFqn set). The new package is a sibling of those anchors
+// at their shared parent level, suffixed with a leaf derived from the SUT
+// name. Returns pickPrimaryPackage(catalog) when no anchor is available
+// (greenfield design) or when the SUT name can't be tokenised.
+function recommendSutPackage(participants, sutName, catalog) {
+    const fallback = () => pickPrimaryPackage(catalog);
+    const leaf = deriveSutLeafName(sutName);
+
+    const anchors = (participants || [])
+        .filter(p => p && p.name !== sutName && p.existingFqn)
+        .map(p => packageOfFqn(p.existingFqn))
+        .filter(Boolean);
+
+    if (!anchors.length || !leaf) return fallback();
+
+    const unique = Array.from(new Set(anchors));
+    let level;
+    if (unique.length === 1) {
+        const parts = unique[0].split('.');
+        level = parts.length > 1 ? parts.slice(0, -1).join('.') : unique[0];
+    } else {
+        level = longestCommonPackagePrefix(unique);
+    }
+
+    if (!level || level.split('.').length < 2) return fallback();
+
+    return `${level}.${leaf}`;
+}
+
+// Called after a successful scan to keep state.targetPackage honest:
+//   - If a DIFFERENT project was just connected, clear any package the user
+//     typed against the previous one.
+//   - If the current targetPackage doesn't match any scanned package prefix,
+//     it's almost certainly stale or a typo — clear it.
+//   - If targetPackage ends up empty, auto-fill from the catalog's primary
+//     package so the user doesn't have to type (or risk typos).
+// Sync the visible input + warning so the user sees the auto-fill happen.
+function applyTargetPackageHeuristics(prevPath, catalog) {
+    const projectChanged = prevPath && catalog && catalog.path && prevPath !== catalog.path;
+    if (projectChanged) {
+        state.targetPackage = '';
+        state.targetPackageAutoFilled = true;
+    }
+
+    const current = (state.targetPackage || '').trim();
+    if (current && catalog && Array.isArray(catalog.packages)) {
+        const matches = catalog.packages.some(p => {
+            const n = p && p.name;
+            return n && (n === current || n.startsWith(current + '.') || current.startsWith(n + '.'));
+        });
+        if (!matches) {
+            state.targetPackage = '';
+            state.targetPackageAutoFilled = true;
+        }
+    }
+
+    if (!state.targetPackage || state.targetPackageAutoFilled) {
+        state.targetPackage = recommendSutPackage(state.participants, state.sutName, catalog);
+        state.targetPackageAutoFilled = true;
+    }
+
+    if (saveEls && saveEls.pkg) {
+        saveEls.pkg.value = state.targetPackage;
+        refreshPackageWarning();
+    }
+}
+
+// Re-run the SUT-aware package recommendation after analyze lands. Only
+// updates the field when the value is still the wizard's auto-default —
+// the moment the user types anything in #puml-package, targetPackageAutoFilled
+// flips to false (see the input listener) and this becomes a no-op so the
+// user's choice stays put across re-analyzes.
+function maybeRefreshTargetPackage() {
+    if (!state.targetPackageAutoFilled) return;
+    const next = recommendSutPackage(state.participants, state.sutName, state.codebaseCatalog);
+    if (!next || next === state.targetPackage) return;
+    state.targetPackage = next;
+    if (saveEls && saveEls.pkg) {
+        saveEls.pkg.value = next;
+        refreshPackageWarning();
+        outputEl.textContent = emitPlantUml();
+    }
+}
+
 // --- Participant model ---
 
 function makeParticipant(name = '', implByDefault = true, purpose = '') {
@@ -620,11 +773,11 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
         purpose,
         existingFqn: null,
         signatureConflicts: [],
-        // v0.7 multi-level support:
+        // Participant kind (informs Step-2 chips; .puml emission is uniform
+        // in MVP — multi-level recursion parked, see TODO.md):
         //   'leaf'         — terminal, AI sees no further collaborators (default)
-        //   'orchestrator' — has its own internal call graph; design later in a
-        //                    sub-.puml via "Design this level". Emitted as
-        //                    <<defer-design:...>> in the parent's PlantUML.
+        //   'orchestrator' — non-leaf custom abstraction; collaborators are
+        //                    flattened into the same .puml at this level.
         //   'reuse'        — bound to an existing catalog type (existingFqn set).
         kind: 'leaf'
     };
@@ -633,8 +786,8 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
 function makeMethod(name = '', inputs = [], output = '') {
     // `isProposed` distinguishes AI-suggested NEW methods on a reused type
     // (which become `+method` extensions in the .puml prelude) from methods
-    // that already exist on the catalog type. Default false; the merge in
-    // flattenTreeToParticipants flips it for proposed extensions only.
+    // that already exist on the catalog type. Default false; adoptParticipant
+    // flips it to true for AI-proposed extensions on a reused type.
     return { id: newId(), name, inputs, output, isProposed: false };
 }
 
@@ -817,135 +970,108 @@ function mergeDerivedEntities() {
     }
 }
 
-// Walk a concept-tree (depth-first) and produce the participant array the
-// rest of the wizard already consumes. The hierarchy is a design aid for the
-// user; once flattened, parent/child relationships disappear — what survives
-// is the set of named interfaces and their methods. Behaviors[].args become
-// method inputs; behaviors[].returns becomes method output.
-//
-// When a node carries an `existingFqn`, the analyser is signalling reuse —
-// the participant's purpose and methods are pulled from the real catalog
-// entry (not the AI's invented signatures) so downstream sequencing uses
-// methods that genuinely exist on the user's type.
-function flattenTreeToParticipants(root) {
-    if (!root || typeof root !== 'object') return [];
-    const out = [];
+// Adopt one participant from the analyzer's flat `participants[]` array
+// into the wizard's participant-model shape. When the node carries an
+// `existingFqn`, methods are pulled from the catalog (not the AI's invented
+// signatures) so downstream sequencing uses methods that genuinely exist
+// on the user's type; AI-proposed methods that don't exist in the catalog
+// are kept as `isProposed: true` and become `+method` entries on the
+// .puml `<<@class:fqn, +method>>` stereotype.
+function adoptParticipant(node) {
+    if (!node || typeof node !== 'object') return null;
+    const name = (node.name || '').trim();
+    if (!name) return null;
+
     const catalog = state.codebaseCatalog;
     const byFqn = (catalog && Array.isArray(catalog.types))
         ? Object.fromEntries(catalog.types.map(t => [t.fqn, t]))
         : {};
 
-    function visit(node) {
-        if (!node || typeof node !== 'object') return;
-        const name = (node.name || '').trim();
-        if (name) {
-            const existingFqn = (node.existingFqn || '').trim() || null;
-            const catalogType = existingFqn ? byFqn[existingFqn] : null;
+    const existingFqn = (node.existingFqn || '').trim() || null;
+    const catalogType = existingFqn ? byFqn[existingFqn] : null;
 
-            let methods;
-            let purpose;
-            let implByDefault;
+    let methods;
+    let purpose;
+    let implByDefault;
+    let signatureConflicts = [];
 
-            let signatureConflicts = [];
+    if (catalogType) {
+        const catalogMethodNames = new Set((catalogType.publicMethods || []).map(m => m.name));
 
-            if (catalogType) {
-                // Reuse path: catalog methods are the source of truth (real
-                // signatures). AI-proposed methods that DON'T exist in the
-                // catalog are kept as "extensions" — these become `+method`
-                // entries in the .puml prelude so the plugin opens the
-                // existing type in UPDATE mode.
-                const catalogMethodNames = new Set((catalogType.publicMethods || []).map(m => m.name));
+        methods = (catalogType.publicMethods || []).map(m => {
+            const inputs = (m.params || [])
+                .filter(p => p && (p.name || p.type))
+                .map(p => ({ name: p.name || '', type: p.type || '' }));
+            const real = makeMethod(m.name || '', inputs, m.returnType || '');
+            real.isProposed = false;
+            return real;
+        });
 
-                methods = (catalogType.publicMethods || []).map(m => {
-                    const inputs = (m.params || [])
-                        .filter(p => p && (p.name || p.type))
-                        .map(p => ({ name: p.name || '', type: p.type || '' }));
-                    const real = makeMethod(m.name || '', inputs, m.returnType || '');
-                    real.isProposed = false;
-                    return real;
-                });
-
-                for (const b of (node.behaviors || [])) {
-                    const bname = (b.name || '').trim();
-                    if (!bname) continue;
-                    const inputs = (b.args || [])
-                        .filter(a => a && (a.name || a.type))
-                        .map(a => ({ name: a.name || '', type: a.type || '' }));
-                    if (!catalogMethodNames.has(bname)) {
-                        // AI proposed a NEW method on a reused type — keep it as
-                        // an extension. Maps to `<<@class:fqn, +bname>>` later.
-                        const added = makeMethod(bname, inputs, b.returns || '');
-                        added.isProposed = true;
-                        methods.push(added);
-                    } else {
-                        // AI's behavior overlaps a real method — compare
-                        // signatures and flag any mismatch. We keep the catalog
-                        // version; the user can resolve in Step 4.
-                        const real = methods.find(m => m.name === bname);
-                        const aiSig = renderSignature(bname, inputs, b.returns || '');
-                        const realSig = renderSignature(real.name, real.inputs, real.output);
-                        if (aiSig !== realSig) {
-                            signatureConflicts.push({
-                                methodName: bname,
-                                aiSignature: aiSig,
-                                catalogSignature: realSig
-                            });
-                        }
-                    }
-                }
-
-                purpose = (catalogType.purpose || node.purpose || '').trim();
-                implByDefault = false;  // existing type — don't (re)generate its impl
+        for (const b of (node.behaviors || [])) {
+            const bname = (b.name || '').trim();
+            if (!bname) continue;
+            const inputs = (b.args || [])
+                .filter(a => a && (a.name || a.type))
+                .map(a => ({ name: a.name || '', type: a.type || '' }));
+            if (!catalogMethodNames.has(bname)) {
+                const added = makeMethod(bname, inputs, b.returns || '');
+                added.isProposed = true;
+                methods.push(added);
             } else {
-                // New-abstraction path: use the AI's behaviors verbatim.
-                methods = (node.behaviors || []).map(b => {
-                    const inputs = (b.args || [])
-                        .filter(a => a && (a.name || a.type))
-                        .map(a => ({ name: a.name || '', type: a.type || '' }));
-                    const m = makeMethod(b.name || '', inputs, b.returns || '');
-                    m.isProposed = false;  // every method on a new type is "real"
-                    return m;
-                });
-                purpose = (node.purpose || '').trim();
-                implByDefault = true;
+                // AI's behavior overlaps a real method — compare signatures and
+                // flag any mismatch. We keep the catalog version; the user can
+                // resolve in Step 4.
+                const real = methods.find(m => m.name === bname);
+                const aiSig = renderSignature(bname, inputs, b.returns || '');
+                const realSig = renderSignature(real.name, real.inputs, real.output);
+                if (aiSig !== realSig) {
+                    signatureConflicts.push({
+                        methodName: bname,
+                        aiSignature: aiSig,
+                        catalogSignature: realSig
+                    });
+                }
             }
-
-            // Classify kind for the participant model:
-            //   reuse        — bound to an existing catalog type
-            //   leaf         — terminal (AI marked isLeaf, or no children)
-            //   orchestrator — non-leaf custom abstraction; the wizard treats
-            //                  this as a hint for the reader. Multi-level
-            //                  recursion (drill into the sub-design) is parked
-            //                  for MVP; see TODO.md "Multi-level design (parked)".
-            const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-            let kind;
-            if (existingFqn) kind = 'reuse';
-            else if (node.isLeaf === true) kind = 'leaf';
-            else if (hasChildren) kind = 'orchestrator';
-            else kind = 'leaf';     // non-leaf with empty children — treat as leaf
-
-            out.push({
-                id: newId(),
-                name,
-                implByDefault,
-                methods,
-                purpose,
-                existingFqn,
-                signatureConflicts,
-                kind,
-                // Acceptance-criteria indices this participant carries. The
-                // analyzer emits acIndices per tree node; we propagate them
-                // so the wizard can show per-participant complexity (axes
-                // covered, scenario count) on the card.
-                acIndices: Array.isArray(node.acIndices)
-                    ? node.acIndices.filter(i => Number.isInteger(i) && i >= 0)
-                    : []
-            });
         }
-        for (const c of (node.children || [])) visit(c);
+
+        purpose = (catalogType.purpose || node.purpose || '').trim();
+        implByDefault = false;  // existing type — don't (re)generate its impl
+    } else {
+        methods = (node.behaviors || []).map(b => {
+            const inputs = (b.args || [])
+                .filter(a => a && (a.name || a.type))
+                .map(a => ({ name: a.name || '', type: a.type || '' }));
+            const m = makeMethod(b.name || '', inputs, b.returns || '');
+            m.isProposed = false;
+            return m;
+        });
+        purpose = (node.purpose || '').trim();
+        implByDefault = true;
     }
-    visit(root);
-    return out;
+
+    // Classify kind for the participant model. The chip is a reader hint;
+    // the .puml composer emits all three the same way (bare or @class).
+    //   reuse        — bound to an existing catalog type
+    //   leaf         — terminal (analyzer marked isLeaf: true)
+    //   orchestrator — non-leaf custom abstraction
+    let kind;
+    if (existingFqn) kind = 'reuse';
+    else if (node.isLeaf === true) kind = 'leaf';
+    else kind = 'orchestrator';
+
+    return {
+        id: newId(),
+        name,
+        implByDefault,
+        methods,
+        purpose,
+        existingFqn,
+        signatureConflicts,
+        kind,
+        acIndices: Array.isArray(node.acIndices)
+            ? node.acIndices.filter(i => Number.isInteger(i) && i >= 0)
+            : []
+    };
 }
 
 function findParticipant(id) { return state.participants.find(p => p.id === id); }
@@ -1035,15 +1161,18 @@ async function runAnalyze(context) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
-        // New analyser contract: {tree, story, entities}. Tolerate the
-        // older shape (root tree object directly) so a stale-prompt
-        // response still works; entities[] is optional and just missing
-        // when an older prompt is in flight.
-        const tree  = (data && data.tree)  || (data && data.name ? data : null);
+        // Analyser contract: {sut, participants, story, entities}.
+        const rawParticipants = Array.isArray(data && data.participants) ? data.participants : [];
         const story = (data && data.story) || '';
-        state.tree = tree;
         state.story = story;
-        state.participants = flattenTreeToParticipants(tree);
+        state.participants = rawParticipants.map(adoptParticipant).filter(Boolean);
+        state.sutName = (data && data.sut && String(data.sut).trim())
+            || (state.participants[0] && state.participants[0].name)
+            || '';
+        // Now that we know the SUT + collaborators, re-derive the target
+        // package using the callee-anchored heuristic. Only fires if the
+        // user hasn't typed a custom value yet.
+        maybeRefreshTargetPackage();
         const aiEntities = Array.isArray(data && data.entities) ? data.entities : [];
         state.entities = aiEntities.map(adoptEntity).filter(e => e && e.name);
         mergeDerivedEntities();
@@ -1058,11 +1187,14 @@ async function runAnalyze(context) {
         // continuous progress indicator.
         if (state.participants.length > 0) {
             await runSequence();
-            // Auto-mark the use-case orchestrator (root of the concept
-            // tree = first flattened participant) as the SUT. Domain-
-            // correct default — the use case IS the system being
-            // designed. User can unmark via the SUT chip.
-            setSut(state.participants[0].id);
+            // Auto-mark the SUT (the analyzer's `sut` field, matched by
+            // name) so the entry interaction [*] -> SUT is auto-managed.
+            // Falls back to the first participant if the name doesn't
+            // resolve. User can unmark via the SUT chip.
+            const sut = state.sutName
+                ? state.participants.find(p => p.name === state.sutName)
+                : null;
+            setSut((sut || state.participants[0]).id);
         } else {
             hideAnalyzeBanner();
         }
@@ -1150,7 +1282,7 @@ function resolveSequence(aiResponse) {
                 seq.push({ id: newId(), kind: STEP_KIND.FRAG_END });
                 continue;
             }
-            if (fragKind === 'alt' || fragKind === 'par') {
+            if (fragKind === 'alt') {
                 seq.push({ id: newId(), kind: STEP_KIND.FRAG_START, fragType: fragKind, label: s.label || '' });
                 visit(s.steps || []);
                 if (Array.isArray(s.elseSteps) && s.elseSteps.length > 0) {
@@ -1269,12 +1401,12 @@ async function runSequence() {
     }
 }
 
-// --- Story narrative (replaces the concept-tree visualisation) ---
+// --- Story narrative ---
 //
-// The analyser returns {tree, story}. We keep state.tree as latent context
-// for future features (expand-further, sequence suggestion), but render
-// only the story prose here — coloured per participant so the user can
-// follow the link from "name in the paragraph" to "card below".
+// The analyser returns {sut, participants, story, entities}. The story is
+// a prose narrative rendered above the participant cards — coloured per
+// participant so the user can follow the link from "name in the paragraph"
+// to "card below".
 
 // Fixed palette, cycled by participant index. All six pass WCAG AA on
 // white. The hex values match the participant card's left-border
@@ -1475,7 +1607,7 @@ function renderParticipants() {
         // Three colors map 1:1 to the three values of state.participants[].kind.
         let kindChip = '';
         if (p.kind === 'orchestrator') {
-            kindChip = `<span class="pc-kind-chip kind-orchestrator" title="Non-leaf — will emit <<defer-design>>; design its internals in a sub-.puml">orchestrator</span>`;
+            kindChip = `<span class="pc-kind-chip kind-orchestrator" title="Non-leaf — internals are designed at this level alongside its collaborators">orchestrator</span>`;
             card.classList.add('is-orchestrator');
         } else if (p.kind === 'reuse') {
             kindChip = `<span class="pc-kind-chip kind-reuse" title="Bound to an existing class">reuse</span>`;
@@ -1584,7 +1716,7 @@ function updateKindHelp(p) {
     let msg;
     switch (kind) {
         case 'orchestrator':
-            msg = 'Emits <<defer-design>> in the .puml prelude. The plugin will generate the interface and a throwing stub-impl. Click "Design this level" in Step 4 to drill in and design the sub-.puml.';
+            msg = 'Bare participant in the .puml prelude — DisC will CREATE the interface + stub-impl; its collaborators are listed alongside it at this level.';
             break;
         case 'reuse':
             msg = 'Bound to an existing class via existingFqn. The plugin won\'t generate files for this participant; it\'s mocked at the SUT\'s test.';
@@ -2324,7 +2456,7 @@ function currentOpenFragType() {
 
 // Transient UI state for the inline fragment-insert mini-form. When non-null,
 // the composer renders the mini-form instead of the secondary buttons.
-// Shape: { type: 'loop'|'while'|'foreach'|'alt'|'opt'|'par', label: '' }
+// Shape: { type: 'loop'|'while'|'foreach'|'alt'|'opt', label: '' }
 let fragFormOpen = null;
 
 // Where the next "Add step" insertion should land. 'append' = push to end.
@@ -2593,13 +2725,13 @@ function renderSteps() {
             row.dataset.id = step.id;
             row.draggable = false;
             row.style.setProperty('--frag-color', meta.color);
-            const elseLabel = type === 'par' ? 'else (parallel branch)' : 'else if';
+            const elseLabel = 'else if';
             row.innerHTML = `
                 <span class="step-num frag-glyph" title="${escapeHtml(elseLabel)}">⇅</span>
                 <div class="step-lines">
                     <div class="step-line">
                         <span class="frag-tag">else</span>
-                        <input type="text" class="frag-label" placeholder="${escapeHtml(elseLabel === 'else if' ? 'else condition' : 'parallel branch label')}" value="${escapeHtml(step.label || '')}">
+                        <input type="text" class="frag-label" placeholder="else condition" value="${escapeHtml(step.label || '')}">
                     </div>
                 </div>
                 <button type="button" class="icon-btn step-remove" title="Remove else">×</button>
@@ -2952,7 +3084,6 @@ function renderAddStep() {
                <button type="button" class="as-frag-add" data-frag-type="foreach">+ for-each</button>
                <button type="button" class="as-frag-add" data-frag-type="alt">+ if/else</button>
                <button type="button" class="as-frag-add" data-frag-type="opt">+ opt</button>
-               <button type="button" class="as-frag-add" data-frag-type="par">+ par</button>
                ${elseBtn}
                <button type="button" class="as-frag-end-btn" ${depth > 0 ? '' : 'disabled'}>+ end${depth > 0 ? endLabel : ' (none open)'}</button>
            </div>`;
@@ -3242,13 +3373,6 @@ function emitPlantUml() {
         if (s.calleeId && !isSystemCaller(s.calleeId)) referenced.add(s.calleeId);
     }
     const preludeLines = [];
-    // Filename stem (without .puml) of the design currently being emitted.
-    // Used to build the default defer-design path for orchestrator children
-    // when the user hasn't authored one explicitly. Read from the Step-4
-    // filename input when it has been populated; fall back to defaultFileName().
-    const rawName = (saveEls && saveEls.filename && saveEls.filename.value && saveEls.filename.value.trim())
-        || defaultFileName();
-    const pumlStem = rawName.replace(/\.puml$/i, '');
     for (const p of state.participants) {
         if (!referenced.has(p.id)) continue;
         const name = (p.name || '').trim();
@@ -3256,21 +3380,19 @@ function emitPlantUml() {
         const fqn = (p.existingFqn || '').trim();
         const newMethods = (p.methods || []).filter(m => m.isProposed).map(m => '+' + m.name);
         let stereotype = '';
-        if (p.kind === 'orchestrator' && !fqn) {
-            // Non-leaf custom abstraction — defer to its own .puml. The path is
-            // sibling-folder convention: <parent-stem>/<ChildName>.puml relative
-            // to the parent's folder. The plugin reads this as defer:<path>.
-            const subPath = `${pumlStem}/${name}.puml`;
-            stereotype = ` <<defer-design:${subPath}>>`;
-        } else if (fqn && newMethods.length > 0) {
+        if (fqn && newMethods.length > 0) {
             stereotype = ` <<@class:${fqn}, ${newMethods.join(', ')}>>`;
         } else if (fqn) {
             stereotype = ` <<@class:${fqn}>>`;
         }
+        // Else: bare `participant Name` — DisC reads this as CREATE.
+        // `kind === 'orchestrator'` is a reader hint only; collaborators are
+        // listed alongside it at this level. Multi-level recursion is
+        // parked (see TODO.md).
         preludeLines.push(`participant ${name}${stereotype}`);
     }
     if (preludeLines.length > 0) {
-        lines.push("' @disc-classification CREATE (no stereotype), REUSE (@class), UPDATE (@class + +methods), DEFER (defer-design)");
+        lines.push("' @disc-classification CREATE (no stereotype), REUSE (@class), UPDATE (@class + +methods)");
         for (const line of preludeLines) lines.push(line);
         lines.push('');  // blank line before the sequence interactions
     }
@@ -4052,22 +4174,45 @@ function makeNdjsonReader() {
     };
 }
 
+// `@package` is mandatory — the DisC plugin refuses any .puml without it.
+// Soft-warning the user isn't enough; we also gate the save button.
+function isPackageValid(pkg) {
+    const v = (pkg || '').trim();
+    return v.length > 0 && JAVA_PACKAGE_RE.test(v);
+}
+
 function refreshPackageWarning() {
     const v = state.targetPackage.trim();
     if (!v) {
-        saveEls.pkgWarn.textContent = 'No package set — DisC will refuse this file. Enter a Java package like com.example.invoice.';
-        saveEls.pkgWarn.className = 'package-warn warn';
+        saveEls.pkgWarn.textContent = 'Required — DisC will refuse this file without a package. Enter a Java package like com.example.invoice.';
+        saveEls.pkgWarn.className = 'package-warn error';
     } else if (!JAVA_PACKAGE_RE.test(v)) {
-        saveEls.pkgWarn.textContent = `"${v}" doesn't look like a Java package (expected e.g. com.example.invoice). DisC may refuse this file.`;
-        saveEls.pkgWarn.className = 'package-warn warn';
+        saveEls.pkgWarn.textContent = `"${v}" doesn't look like a Java package (expected e.g. com.example.invoice). DisC will refuse this file.`;
+        saveEls.pkgWarn.className = 'package-warn error';
     } else {
         saveEls.pkgWarn.textContent = '';
         saveEls.pkgWarn.className = 'package-warn hidden';
     }
+    syncSaveButtonGate();
+}
+
+// Disable the save button when @package is empty or malformed. Hover-tooltip
+// explains why so the user doesn't get a silently-dead control.
+function syncSaveButtonGate() {
+    if (!saveEls || !saveEls.save) return;
+    const valid = isPackageValid(state.targetPackage);
+    saveEls.save.disabled = !valid;
+    saveEls.save.title = valid
+        ? ''
+        : 'Set a Java package (e.g. com.example.invoice) before saving';
 }
 
 saveEls.pkg.addEventListener('input', (e) => {
     state.targetPackage = e.target.value;
+    // Any keystroke means the user owns this value now; subsequent re-analyzes
+    // must not overwrite it. The flag only flips back to true if applyTargetPackageHeuristics
+    // explicitly resets the value (e.g. on project switch).
+    state.targetPackageAutoFilled = false;
     refreshPackageWarning();
     // Re-render the output preview so the user sees the @package header land.
     outputEl.textContent = emitPlantUml();
@@ -4422,6 +4567,15 @@ saveEls.save.addEventListener('click', async () => {
 
     if (!state.projectPath) {
         saveEls.error.textContent = 'No project path — go back to Step 1 and pick a folder (or paste a path).';
+        saveEls.error.classList.remove('hidden');
+        return;
+    }
+
+    // Pre-flight guard: @package is mandatory (plugin refuses without it).
+    // The button is also disabled via syncSaveButtonGate, but cover the
+    // case where the gate was bypassed (programmatic click, stale state).
+    if (!isPackageValid(state.targetPackage)) {
+        saveEls.error.textContent = 'Set a Java package (e.g. com.example.invoice) in the field above before saving — DisC will refuse the file without one.';
         saveEls.error.classList.remove('hidden');
         return;
     }

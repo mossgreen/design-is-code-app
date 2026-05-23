@@ -40,20 +40,19 @@
             <div class="step1-subblock" id="connect-project-block">
                 <div class="step1-subblock-head">
                     <h3>Your project</h3>
-                    <span class="hint inline">Scan a Java/Spring project to ground the design in your existing code.</span>
+                    <span class="hint inline">Pick a Java/Spring project — it's scanned on connect to ground the design in your existing code.</span>
                 </div>
                 <div id="project-panel" class="project-panel">
                     <div id="recent-paths" class="recent-paths hidden" aria-label="Recent project paths"></div>
                     <form id="scan-form" autocomplete="off">
                         <div class="path-input-wrap">
-                            <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app" spellcheck="false">
+                            <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app (or click the folder icon)" spellcheck="false" title="Type a path and press Enter to scan, or use the folder picker">
                             <button type="button" id="browse-btn" class="browse-btn" aria-label="Browse for project folder" title="Open the OS folder picker">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
                                 </svg>
                             </button>
                         </div>
-                        <button type="submit" id="scan-btn">Scan</button>
                         <button type="button" id="disconnect-btn" class="secondary hidden">Disconnect</button>
                     </form>
                     <div id="scan-status" class="status hidden">
@@ -266,7 +265,7 @@
                             <label for="modal-kind">Kind</label>
                             <select id="modal-kind">
                                 <option value="leaf">leaf — pure function or stereotype boundary (full impl + tests at this level)</option>
-                                <option value="orchestrator">orchestrator — has its own collaborators (defer-design; design in a sub-.puml)</option>
+                                <option value="orchestrator">orchestrator — has its own collaborators (designed at this level)</option>
                                 <option value="reuse">reuse — bound to an existing codebase type (set FQN below)</option>
                             </select>
                             <div class="kind-help hint" id="modal-kind-help"></div>

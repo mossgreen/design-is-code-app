@@ -3117,8 +3117,8 @@ button.small {
     color: #1f2937;
 }
 
-.review-participants .muted { color: #9ca3af; }
-.review-participants .review-fqn { color: var(--text-3); font-size: 0.78rem; }
+.review-participants .muted { color: var(--text-2); }
+.review-participants .review-fqn { color: #6b7280; font-size: 0.78rem; }
 
 .review-warn {
     margin-top: 0.6rem;
@@ -3362,9 +3362,6 @@ button.small {
 .as-frag-add[data-frag-type="opt"] {
     color: #7c3aed; border-color: color-mix(in srgb, #7c3aed 35%, transparent);
 }
-.as-frag-add[data-frag-type="par"] {
-    color: #0891b2; border-color: color-mix(in srgb, #0891b2 35%, transparent);
-}
 .as-frag-else-btn { color: #0e7490; border-color: color-mix(in srgb, #0e7490 35%, transparent); }
 .as-frag-end-btn  { color: var(--text-2); }
 
@@ -3470,6 +3467,12 @@ button.small {
     background: #fffbeb;
     border: 1px solid #fde68a;
     color: #92400e;
+}
+
+.package-warn.error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
 }
 
 /* --- Decision-table chip on step rows --- */

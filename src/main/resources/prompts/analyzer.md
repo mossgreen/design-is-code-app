@@ -191,14 +191,14 @@ method body. Count axes by clustering AC rows:
 - Each distinct `Given` condition pattern is one axis.
 - Each distinct `When` condition pattern is another axis.
 
-If a participant would need more than 2 axes:
-- Mark it `"isLeaf": false` (orchestrator) so its internals are designed
-  at the next level. Don't expand its children inline at this level —
-  downstream tooling treats such nodes as deferred sub-designs.
-- The sub-design inherits the AC subset that maps to this participant.
+If a participant would need more than 2 axes, mark it `"isLeaf": false`
+(orchestrator) — the user is reading this signal to decide whether the
+abstraction is carrying too much, and to consider redistributing
+responsibilities across participants.
 
 This budget corresponds to the DisC plugin's 2-level test-nesting limit:
 each axis the participant owns becomes one `@Nested` class in its test.
+Past two, the test class becomes hard to read.
 
 ## The orchestrator must be linear
 
@@ -233,16 +233,20 @@ because nothing else matches).
 
 # Task
 
-Produce a single tree. Each node is an interface — a named concept with a
-one-sentence purpose, optional attributes, and behaviours (methods).
+Produce a flat list of participants. Each participant is an interface — a
+named concept with a one-sentence purpose, optional attributes, and
+behaviours (methods).
 
-The **root** is the orchestrator / use-case entry point. Its children are
-the collaborators it needs. Their children are *their* collaborators, and
-so on, until termination.
+One participant is the **SUT** (system under test) — the use-case entry
+point that the caller invokes. The rest are its direct collaborators.
+Name the SUT explicitly via the top-level `sut` field; list every
+collaborator alongside it in `participants[]`. The wizard composes the
+call sequence between them in a separate pass — your job is to identify
+WHO, not WHO-CALLS-WHOM.
 
-## Termination rule — stop decomposing when ANY of these is true
+## Termination rule — when to mark a participant `"isLeaf": true`
 
-Mark the node `"isLeaf": true` and set `"children": []`:
+Mark a participant `"isLeaf": true`:
 
 - It maps to a **pure function** (e.g. `validate`, `normalise`, `format`,
   `parse`). Pure functions have no collaborators.
@@ -253,43 +257,40 @@ Mark the node `"isLeaf": true` and set `"children": []`:
 - It maps to **a single method on an existing JDK / Spring type** (e.g.
   `RestTemplate.postForObject`, `Files.write`). Don't model the platform.
 
-Prefer 2–5 nodes per level. Never go deeper than 4 levels. If you're tempted
-to add a 5th sibling or a 5th level, consolidate or stop.
+Prefer 2–5 participants total (SUT + 1–4 collaborators). If you're tempted
+to add a 6th, consolidate two of the existing ones or stop.
 
 ## Orchestrator vs leaf — when to leave a node non-leaf
 
 If a node represents a custom abstraction with its own internal call graph
 (it would orchestrate further collaborators when implemented), leave it
-**non-leaf** (`isLeaf: false`) even if you don't expand its children in
-this output. Downstream tooling treats such nodes as deferred sub-designs:
-they get a stub at this level and a separate design pass for their
-internals. Don't force-flatten an orchestrator into a leaf just to meet
-the depth limit — better to truncate the tree (omit children) than to
-mis-classify a multi-step concern as a pure function.
+**non-leaf** (`isLeaf: false`). The wizard surfaces this as a reader hint
+on the participant card so the user can see at a glance which abstractions
+carry internal complexity vs. which are terminal.
 
 A participant whose AC subset spans more than 2 variance axes is by
-definition an orchestrator (`isLeaf: false`), even when you don't expand
-its children at this level. See "Complexity budget per participant" in
-the Variance-handling patterns section.
+definition an orchestrator (`isLeaf: false`). See "Complexity budget per
+participant" in the Variance-handling patterns section.
 
 # Output
 
 **Strict JSON. No prose. No markdown fences. The very first character of your
 output must be `{` and the very last must be `}`.**
 
-The top-level shape has THREE fields:
+The top-level shape has FOUR fields:
 
 ```
 {
-  "tree":     { ...the recursive node shape below... },
-  "story":    "...",
-  "entities": [ ...record/enum/class entries the participants pass around... ]
+  "sut":          "PascalCaseSutName",
+  "participants": [ ...the per-participant shape below... ],
+  "story":        "...",
+  "entities":     [ ...record/enum/class entries the participants pass around... ]
 }
 ```
 
-## `tree` — the recursive node shape
+## `participants` — flat list, each entry one participant
 
-Each node:
+Each participant:
 
 ```
 {
@@ -299,12 +300,11 @@ Each node:
   "attributes":   [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
   "behaviors":    [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
   "isLeaf":       false,
-  "acIndices":    [ 0, 2 ],   // 0-based indices of AC rows whose `Then` clause this participant directly produces or enforces
-  "children":     [ ...recursive... ]
+  "acIndices":    [ 0, 2 ]   // 0-based indices of AC rows whose `Then` clause this participant directly produces or enforces
 }
 ```
 
-### Rules for tree fields
+### Rules for participant fields
 
 - `name` — PascalCase, no `Impl`/`Default` suffixes (these are interfaces, not
   implementations). Don't add `Service`/`Manager`/`Handler` unless the
@@ -329,8 +329,13 @@ Each node:
   is purely supportive (e.g. a generic carrier that flows through
   many rows). The wizard uses this to compute per-participant
   complexity (axes covered) and surface decomposition hints.
-- `children` — `[]` when `isLeaf` is true. Otherwise the direct collaborators
-  this abstraction calls. Each child is a separate concept, not a sub-method.
+
+## `sut` — the use-case entry point
+
+One participant from `participants[]` is the SUT — the abstraction whose
+method the caller invokes to drive the use case. Set `"sut"` to the
+matching `name`. The SUT is typically (but not always) `isLeaf: false`
+because it orchestrates calls to its collaborators.
 
 ## `story` — a short prose narrative
 
@@ -339,7 +344,7 @@ plain English. This is read by humans, not by code.
 
 ### Rules for the story
 
-- **Mention every abstraction by name at least once.** Each tree node's
+- **Mention every abstraction by name at least once.** Each participant's
   `name` field should appear somewhere in the story.
 - **Every occurrence of a participant name MUST be wrapped in square
   brackets**: write `[OrderCheckout]`, not `OrderCheckout`. The brackets are
@@ -356,7 +361,7 @@ plain English. This is read by humans, not by code.
 
 ## `entities` — the data types and contract types the design passes around
 
-Independent of the participant tree, list every named **type** the
+Independent of the participants, list every named **type** the
 behaviours reference. This includes both **data carriers** (record,
 enum, class) and **contract types** (interface, sealed-interface).
 Participants are the verbs, entities are the nouns and abstract
@@ -401,8 +406,8 @@ Each entry:
   `boolean`, `void`. No `List`, `Map`, `Set`, `Optional` — but the
   *element* types inside them (e.g. `Visit` inside `List<Visit>`) DO go
   in `entities` if domain-specific.
-- **Participants are NOT entities.** A type that appears in `tree` (a
-  service, repository, orchestrator) must not also appear in `entities`.
+- **Participants are NOT entities.** A type that appears in `participants[]`
+  (a service, repository, orchestrator) must not also appear in `entities`.
 - **Reuse takes precedence.** When a type already exists in the
   codebase (visible under "Existing codebase" above), set `existingFqn`
   to its fully-qualified class name AND **omit** `fields` / `values` /
@@ -432,48 +437,50 @@ Input: *"Schedule a meeting at a time that works for all attendees."*
 Output:
 ```
 {
-  "tree": {
-    "name": "MeetingScheduler",
-    "purpose": "Books a meeting time that works for all attendees.",
-    "attributes": [],
-    "behaviors": [
-      { "name": "schedule", "args": [{"name":"request","type":"MeetingRequest"}], "returns": "Meeting" }
-    ],
-    "isLeaf": false,
-    "children": [
-      {
-        "name": "CalendarRepository",
-        "purpose": "Reads and writes attendees' calendar entries.",
-        "attributes": [],
-        "behaviors": [
-          { "name": "loadFor",     "args": [{"name":"attendees","type":"List<Attendee>"}], "returns": "List<Calendar>" },
-          { "name": "recordBlock", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
-        ],
-        "isLeaf": true,
-        "children": []
-      },
-      {
-        "name": "AvailabilityFinder",
-        "purpose": "Computes the earliest overlap of free slots across calendars.",
-        "attributes": [],
-        "behaviors": [
-          { "name": "firstOverlap", "args": [{"name":"calendars","type":"List<Calendar>"},{"name":"duration","type":"Duration"}], "returns": "TimeSlot" }
-        ],
-        "isLeaf": true,
-        "children": []
-      },
-      {
-        "name": "InviteDispatcher",
-        "purpose": "Sends meeting invites once the slot is chosen.",
-        "attributes": [],
-        "behaviors": [
-          { "name": "send", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
-        ],
-        "isLeaf": true,
-        "children": []
-      }
-    ]
-  },
+  "sut": "MeetingScheduler",
+  "participants": [
+    {
+      "name": "MeetingScheduler",
+      "purpose": "Books a meeting time that works for all attendees.",
+      "attributes": [],
+      "behaviors": [
+        { "name": "schedule", "args": [{"name":"request","type":"MeetingRequest"}], "returns": "Meeting" }
+      ],
+      "isLeaf": false,
+      "acIndices": []
+    },
+    {
+      "name": "CalendarRepository",
+      "purpose": "Reads and writes attendees' calendar entries.",
+      "attributes": [],
+      "behaviors": [
+        { "name": "loadFor",     "args": [{"name":"attendees","type":"List<Attendee>"}], "returns": "List<Calendar>" },
+        { "name": "recordBlock", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
+      ],
+      "isLeaf": true,
+      "acIndices": []
+    },
+    {
+      "name": "AvailabilityFinder",
+      "purpose": "Computes the earliest overlap of free slots across calendars.",
+      "attributes": [],
+      "behaviors": [
+        { "name": "firstOverlap", "args": [{"name":"calendars","type":"List<Calendar>"},{"name":"duration","type":"Duration"}], "returns": "TimeSlot" }
+      ],
+      "isLeaf": true,
+      "acIndices": []
+    },
+    {
+      "name": "InviteDispatcher",
+      "purpose": "Sends meeting invites once the slot is chosen.",
+      "attributes": [],
+      "behaviors": [
+        { "name": "send", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
+      ],
+      "isLeaf": true,
+      "acIndices": []
+    }
+  ],
   "story": "The [MeetingScheduler] orchestrates the booking flow. It asks the [CalendarRepository] for everyone's calendars, hands them to the [AvailabilityFinder] to compute the earliest overlap that fits the requested duration, and once a slot is chosen the [InviteDispatcher] sends invites to all attendees. The [CalendarRepository] also records the new meeting block so future scheduling sees it.",
   "entities": [
     {
@@ -532,7 +539,7 @@ Output:
 }
 ```
 
-Why each child is a leaf — one termination reason each:
+Why each collaborator is a leaf — one termination reason each:
 
 - `CalendarRepository` — maps to a Spring `@Repository` stereotype. The
   storage backend (a DB, a Google Calendar API) is out of scope.
@@ -540,6 +547,8 @@ Why each child is a leaf — one termination reason each:
   returns the earliest overlap. No collaborators.
 - `InviteDispatcher` — a single method on a platform type (an HTTP / SMTP
   send). The transport is out of scope.
+- `MeetingScheduler` is the SUT (named at the top via `"sut"`), and it is
+  `isLeaf: false` — it has its own call graph (the three collaborators).
 
 Notice how the `story` mentions each name in `[brackets]` every time, reads
 as plain English, and describes the flow rather than the structure.
