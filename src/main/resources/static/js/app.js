@@ -318,19 +318,11 @@ document.addEventListener('click', (e) => {
 });
 
 function goToStep(n) {
-    // Sub-designs inherit the parent's project, so Step 1 (Connect) is
-    // off-limits — redirect to Step 2 instead. subDesignContext is declared
-    // later but goToStep is only invoked from user gestures / nested
-    // handlers, so the binding is initialised by then.
-    const inSub = !!subDesignContext;
-    if (n === 1 && inSub) n = 2;
     els.panels.forEach(p => p.classList.toggle('hidden', p.id !== `panel-${n}`));
     els.steps.forEach(s => {
         const step = parseInt(s.dataset.step, 10);
         s.classList.toggle('active', step === n);
         s.classList.toggle('done', step < n);
-        // Dim Step 1 in sub-design context (Connect is inherited from parent).
-        s.classList.toggle('disabled', inSub && step === 1);
     });
     if (n === 2) enterStep2();
     if (n === 3) enterStep3();
@@ -634,11 +626,7 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
         //                    sub-.puml via "Design this level". Emitted as
         //                    <<defer-design:...>> in the parent's PlantUML.
         //   'reuse'        — bound to an existing catalog type (existingFqn set).
-        kind: 'leaf',
-        // The AI's sub-tree for an orchestrator child, preserved so the drill-in
-        // wizard can pre-populate the inner level instead of re-asking the AI.
-        // Null for leaf and reuse participants.
-        subDesignNode: null
+        kind: 'leaf'
     };
 }
 
@@ -922,11 +910,13 @@ function flattenTreeToParticipants(root) {
                 implByDefault = true;
             }
 
-            // Classify kind for v0.7 multi-level support:
+            // Classify kind for the participant model:
             //   reuse        — bound to an existing catalog type
             //   leaf         — terminal (AI marked isLeaf, or no children)
-            //   orchestrator — non-leaf custom abstraction; its children are
-            //                  held in subDesignNode for later drill-in
+            //   orchestrator — non-leaf custom abstraction; the wizard treats
+            //                  this as a hint for the reader. Multi-level
+            //                  recursion (drill into the sub-design) is parked
+            //                  for MVP; see TODO.md "Multi-level design (parked)".
             const hasChildren = Array.isArray(node.children) && node.children.length > 0;
             let kind;
             if (existingFqn) kind = 'reuse';
@@ -949,12 +939,7 @@ function flattenTreeToParticipants(root) {
                 // covered, scenario count) on the card.
                 acIndices: Array.isArray(node.acIndices)
                     ? node.acIndices.filter(i => Number.isInteger(i) && i >= 0)
-                    : [],
-                // Preserve the AI's sub-tree only for orchestrators; everything else
-                // discards it. Children we WALK into get their own top-level
-                // participants in this run (existing v0.6 behaviour) — capturing
-                // the raw node here is for the future "Design this level" flow.
-                subDesignNode: kind === 'orchestrator' ? node : null
+                    : []
             });
         }
         for (const c of (node.children || [])) visit(c);
@@ -4156,7 +4141,7 @@ function renderPlanPanel() {
         const target = describeTarget(p, action);
         const safeName = escapeAttr(p.name || '');
         return `<div class="plan-row action-${action.toLowerCase()}" data-participant-id="${escapeAttr(p.id)}" data-name="${safeName}">
-            <span class="plan-participant"><span class="build-status-dot" data-build-status-for="${safeName}" title="Build state — pending"></span>${escapeHtml(p.name || '(unnamed)')}</span>
+            <span class="plan-participant">${escapeHtml(p.name || '(unnamed)')}</span>
             <span class="plan-action">
                 <select data-plan-action data-participant-id="${escapeAttr(p.id)}">
                     <option value="CREATE" ${action === 'CREATE' ? 'selected' : ''}>CREATE — new</option>
@@ -4178,43 +4163,6 @@ function renderPlanPanel() {
     });
 
     renderPlanConflicts(used);
-
-    // Async per-participant build-state fetch. Non-blocking; dots stay
-    // at the neutral pre-fetch state if the request fails. Skip entirely
-    // when the project isn't connected (typical in demo / fresh state).
-    if (state.projectPath) {
-        const names = used.map(p => (p.name || '').trim()).filter(Boolean);
-        if (names.length > 0) fetchAndRenderBuildStatus(host, names);
-    }
-}
-
-// One-shot fetch of build-status for the participants currently in the
-// plan-panel. Updates each `.build-status-dot` in place. Defensive on
-// every failure path — a 5xx or a fetch error leaves the dots at their
-// neutral pre-fetch appearance.
-async function fetchAndRenderBuildStatus(host, names) {
-    try {
-        const res = await fetch('/api/build-status', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath: state.projectPath, participantNames: names })
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const map = (data && data.statusByName) || {};
-        for (const dot of host.querySelectorAll('.build-status-dot')) {
-            const name = dot.getAttribute('data-build-status-for');
-            const status = map[name] || 'pending';
-            // Clear any prior status class before applying the new one so
-            // repeat renders (e.g. after action toggles) don't accumulate.
-            dot.classList.remove('status-real', 'status-stubbed', 'status-pending');
-            dot.classList.add(`status-${status}`);
-            dot.title = `Build state — ${status}`;
-        }
-    } catch (e) {
-        // Silent — the panel remains usable, dots just stay neutral.
-        console.warn('build-status fetch failed (non-fatal):', e);
-    }
 }
 
 // Default action for a participant, derived from its current state:
@@ -4499,12 +4447,7 @@ saveEls.save.addEventListener('click', async () => {
     }
 
     try {
-        // If a parent design context is active (we're saving a sub-level),
-        // write at the explicit relativePath; otherwise legacy design/<fileName>.
-        const designBody = subDesignContext
-            ? { projectPath: state.projectPath, relativePath: subDesignContext.relativePath, content, decisionTables }
-            : { projectPath: state.projectPath, fileName, content, decisionTables };
-
+        const designBody = { projectPath: state.projectPath, fileName, content, decisionTables };
         const res = await fetch('/api/design', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4522,18 +4465,6 @@ saveEls.save.addEventListener('click', async () => {
         saveEls.runConsole.textContent = '';
         if (saveEls.runPanel) saveEls.runPanel.classList.add('hidden');
         saveEls.result.classList.remove('hidden');
-
-        // After writing the .puml, write the _index.json manifest alongside.
-        // Failures here are non-fatal — the .puml is saved either way, but
-        // multi-level tree-walking won't work until the manifest exists.
-        try {
-            await saveManifestForCurrentDesign(data.relativePath);
-        } catch (err) {
-            console.warn('manifest write failed (non-fatal):', err);
-        }
-
-        // Show the tree-view if any orchestrator children were declared.
-        renderTreeView(data.relativePath);
     } catch (err) {
         saveEls.error.textContent = err.message;
         saveEls.error.classList.remove('hidden');
@@ -4542,498 +4473,6 @@ saveEls.save.addEventListener('click', async () => {
         saveEls.save.textContent = originalLabel;
     }
 });
-
-// --- Multi-level state -----------------------------------------------------
-//
-// When the user clicks "Design this level" on an orchestrator participant,
-// the wizard re-enters Step 2 with this context populated. Re-export at
-// Step 4 will write the child .puml at subDesignContext.relativePath and
-// the child manifest with parent contract hashing.
-//
-// Null on the root-level wizard run (default state).
-let subDesignContext = null;
-// Stack of snapshots so the user can step back up after finishing a sub-design.
-const subDesignStack = [];
-
-async function saveManifestForCurrentDesign(savedRelativePath) {
-    // savedRelativePath is the path of the just-written .puml, relative to
-    // the project root. The manifest's folder is its parent directory.
-    const slash = savedRelativePath.lastIndexOf('/');
-    const manifestFolder = slash < 0 ? '' : savedRelativePath.substring(0, slash);
-    const pumlBasename = slash < 0 ? savedRelativePath : savedRelativePath.substring(slash + 1);
-    const pumlStem = pumlBasename.replace(/\.puml$/i, '');
-
-    // Children list — every orchestrator participant becomes a defer entry.
-    const orchestrators = state.participants.filter(p => p.kind === 'orchestrator');
-    const children = orchestrators.map(p => ({
-        name: p.name,
-        puml: `${pumlStem}/${p.name}.puml`,
-        kind: 'orchestrator'
-    }));
-
-    // contractHash hashes THIS design as a whole-file fingerprint. When a
-    // future child is created from this parent, it stores its own
-    // contract_hash for its specific slice; this overall hash is purely
-    // diagnostic ("did anything in this file change?").
-    const ownHash = await fetchContractHash(savedRelativePath, '__self__');
-
-    const manifest = {
-        puml: pumlBasename,
-        parent: subDesignContext
-            ? { puml: relativeUp(manifestFolder, subDesignContext.parentRelativePath),
-                contractHash: subDesignContext.parentContractHash }
-            : null,
-        children,
-        contractHash: ownHash
-    };
-
-    await fetch('/api/tree/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            projectPath: state.projectPath,
-            manifestFolder,
-            manifest
-        })
-    });
-
-    // If we just saved a child, also append ourselves to the parent manifest's
-    // children list (if not already present). Idempotent.
-    if (subDesignContext) {
-        await appendChildToParentManifest(subDesignContext);
-    }
-}
-
-async function fetchContractHash(parentPumlRelativePath, childName) {
-    try {
-        const res = await fetch('/api/tree/contract-hash', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                projectPath: state.projectPath,
-                parentPuml: parentPumlRelativePath,
-                childName
-            })
-        });
-        const data = await res.json();
-        return data.contractHash || null;
-    } catch (e) {
-        console.warn('contract-hash fetch failed:', e);
-        return null;
-    }
-}
-
-// Compute path from manifestFolder back up to parentRelativePath. Both
-// are project-relative. Returns a relative path usable inside the child
-// manifest's "parent.puml" field, e.g. "../CreateSale.puml".
-function relativeUp(manifestFolder, parentRelativePath) {
-    const fromParts = manifestFolder ? manifestFolder.split('/') : [];
-    const toParts = parentRelativePath.split('/');
-    let common = 0;
-    while (common < fromParts.length && common < toParts.length
-            && fromParts[common] === toParts[common]) common++;
-    const ups = fromParts.length - common;
-    const down = toParts.slice(common);
-    const parts = [];
-    for (let i = 0; i < ups; i++) parts.push('..');
-    return parts.concat(down).join('/');
-}
-
-async function appendChildToParentManifest(ctx) {
-    // Load parent manifest, ensure our entry is in children, save back.
-    const parentFolder = ctx.parentManifestFolder;
-    const childName = ctx.childName;
-    const childPuml = `${ctx.parentPumlStem}/${childName}.puml`;
-    try {
-        const loadRes = await fetch('/api/tree/load', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath: state.projectPath, rootFolder: parentFolder })
-        });
-        const tree = (await loadRes.json()).manifests || {};
-        const pm = tree[parentFolder];
-        if (!pm) return;
-        const next = {
-            ...pm,
-            children: Array.isArray(pm.children) ? pm.children.slice() : []
-        };
-        if (!next.children.some(c => c.name === childName)) {
-            next.children.push({ name: childName, puml: childPuml, kind: 'orchestrator' });
-            await fetch('/api/tree/save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    projectPath: state.projectPath,
-                    manifestFolder: parentFolder,
-                    manifest: next
-                })
-            });
-        }
-    } catch (e) {
-        console.warn('parent manifest append failed:', e);
-    }
-}
-
-// --- Tree view + Design this level + Build all ----------------------------
-
-const treeEls = {
-    panel: document.getElementById('tree-view'),
-    list: document.getElementById('tree-view-list'),
-    meta: document.getElementById('tree-view-meta'),
-    banner: document.getElementById('tree-view-banner'),
-    buildAll: document.getElementById('build-all'),
-    buildAllProgress: document.getElementById('build-all-progress'),
-    buildAllStatus: document.getElementById('build-all-status'),
-    buildAllNodes: document.getElementById('build-all-nodes'),
-    exitSub: document.getElementById('exit-sub-design')
-};
-
-async function renderTreeView(rootRelativePath) {
-    if (!treeEls.panel) return;
-    const slash = rootRelativePath.lastIndexOf('/');
-    const rootFolder = slash < 0 ? '' : rootRelativePath.substring(0, slash);
-
-    let manifests = {};
-    try {
-        const res = await fetch('/api/tree/load', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath: state.projectPath, rootFolder })
-        });
-        manifests = (await res.json()).manifests || {};
-    } catch (e) {
-        console.warn('tree/load failed:', e);
-    }
-
-    // If there's no manifest yet and no orchestrators in current state, the
-    // tree view has nothing to show — hide and bail.
-    const hasOrchestrators = state.participants.some(p => p.kind === 'orchestrator');
-    if (Object.keys(manifests).length === 0 && !hasOrchestrators) {
-        treeEls.panel.classList.add('hidden');
-        return;
-    }
-
-    // Build a renderable list. Root first, then each child (and recursively).
-    // Each row shows: kind chip, name, status, "Design this level" button when
-    // it's an orchestrator with no sub-design yet.
-    const rows = [];
-    const root = manifests[rootFolder];
-    if (root) {
-        walkManifestForView(rootFolder, root, manifests, rows, 0);
-    } else {
-        // No manifest written — render orchestrators from in-memory state as
-        // pending design-this-level prompts. This shouldn't normally happen
-        // after a successful save; it's a defensive fallback.
-        rows.push({ depth: 0, label: 'this design', status: 'designed', folder: rootFolder, manifest: null });
-        for (const p of state.participants.filter(p => p.kind === 'orchestrator')) {
-            rows.push({ depth: 1, label: p.name, status: 'pending', folder: null, manifest: null, participant: p });
-        }
-    }
-
-    treeEls.list.innerHTML = rows.map(r => {
-        const pad = '&nbsp;'.repeat(r.depth * 4);
-        let chip;
-        if (r.status === 'designed') chip = '<span class="tree-chip tree-chip-designed">☑ designed</span>';
-        else if (r.status === 'stale') chip = '<span class="tree-chip tree-chip-stale">⚠ stale</span>';
-        else chip = '<span class="tree-chip tree-chip-pending">☐ design pending</span>';
-
-        const action = (r.status === 'pending' && r.participant)
-            ? `<button type="button" class="link-btn tree-design-this" data-participant-id="${escapeHtml(r.participant.id)}">Design this level →</button>`
-            : '';
-        return `<li class="tree-row tree-row-${r.status}">
-            ${pad}<span class="tree-row-name">${escapeHtml(r.label)}</span>
-            ${chip}
-            ${action}
-        </li>`;
-    }).join('');
-
-    // Wire design-this-level buttons.
-    treeEls.list.querySelectorAll('.tree-design-this').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const pid = btn.getAttribute('data-participant-id');
-            const p = state.participants.find(x => String(x.id) === pid);
-            if (p) startSubDesign(p, rootRelativePath, rootFolder);
-        });
-    });
-
-    const total = rows.length;
-    const designed = rows.filter(r => r.status === 'designed').length;
-    treeEls.meta.textContent = `${designed} / ${total} designed`;
-
-    // Build-all is enabled only when every orchestrator has a manifest.
-    const pending = rows.filter(r => r.status === 'pending').length;
-    if (treeEls.buildAll) {
-        treeEls.buildAll.disabled = pending > 0;
-        treeEls.buildAll.title = pending > 0
-            ? `${pending} sub-design${pending === 1 ? '' : 's'} pending — design them first`
-            : 'Walk the tree bottom-up, run the plugin per .puml';
-    }
-
-    treeEls.panel.classList.remove('hidden');
-}
-
-// Recursive view-row builder. Each manifest's puml file is one row; its
-// children are rendered indented underneath. Pending children (declared as
-// orchestrators in the parent manifest but with no child manifest yet) get
-// a "Design this level" button instead of a status chip.
-function walkManifestForView(folder, manifest, allManifests, rows, depth) {
-    rows.push({
-        depth,
-        label: manifest.puml,
-        status: 'designed',
-        folder,
-        manifest
-    });
-    if (!Array.isArray(manifest.children)) return;
-    for (const child of manifest.children) {
-        const childFolderRel = child.puml.includes('/')
-            ? child.puml.substring(0, child.puml.lastIndexOf('/'))
-            : '';
-        const childFolder = folder ? (childFolderRel ? `${folder}/${childFolderRel}` : folder) : childFolderRel;
-        const childManifest = allManifests[childFolder];
-        if (childManifest) {
-            walkManifestForView(childFolder, childManifest, allManifests, rows, depth + 1);
-        } else {
-            // Find the in-memory participant matching this name so the
-            // design-this-level button can pass it through.
-            const participant = state.participants.find(p => p.name === child.name && p.kind === 'orchestrator');
-            rows.push({
-                depth: depth + 1,
-                label: child.name + ' (sub-design)',
-                status: 'pending',
-                folder: childFolder,
-                manifest: null,
-                participant
-            });
-        }
-    }
-}
-
-async function startSubDesign(participant, parentRelativePath, parentManifestFolder) {
-    // Compute parent's contract hash slice for this child so we can detect
-    // drift later. Failures are non-fatal; null hash means "no drift check".
-    const parentHash = await fetchContractHash(parentRelativePath, participant.name);
-    const parentPumlBasename = parentRelativePath.substring(parentRelativePath.lastIndexOf('/') + 1);
-    const parentPumlStem = parentPumlBasename.replace(/\.puml$/i, '');
-    const childRelative = parentManifestFolder
-        ? `${parentManifestFolder}/${parentPumlStem}/${participant.name}.puml`
-        : `${parentPumlStem}/${participant.name}.puml`;
-
-    // Carry forward the parent's AC rows this participant owns BEFORE we
-    // clear state. Seeded into the sub-design so the user (and the
-    // analyzer, if re-run at this level) inherits the scenarios the
-    // parent decomposed down to this participant.
-    const parentAc = Array.isArray(state.ac) ? state.ac : [];
-    const inheritedIndices = Array.isArray(participant.acIndices) ? participant.acIndices : [];
-    const inheritedAc = inheritedIndices
-        .map(i => parentAc[i])
-        .filter(Boolean)
-        .map(r => ({ given: r.given || '', when: r.when || '', then: r.then || '' }));
-
-    // Snapshot the current wizard state. Used to restore when user clicks
-    // "Back to parent design".
-    subDesignStack.push(snapshotWizardState());
-
-    subDesignContext = {
-        parentRelativePath,
-        parentManifestFolder,
-        parentPumlStem,
-        parentContractHash: parentHash,
-        childName: participant.name,
-        relativePath: childRelative
-    };
-
-    // Reset state to a fresh wizard run, keeping the project context.
-    state.userStory = `Design the internals of ${participant.name}. ` +
-        `Called by ${parentPumlStem} with: ${(participant.methods || []).map(m => methodPreviewSignature(m)).join('; ')}.`;
-    state.ac = inheritedAc;
-    state.entities = [];
-    state.participants = [];
-    state.sequence = [];
-    state.tree = null;
-    state.story = '';
-    state.sutParticipantId = null;
-    state.signoffs = { peter: false, john: false, chen: false, wang: false };
-
-    // Seed the SUT participant from the parent's call signature on this child.
-    // The user can then add its own internal collaborators.
-    const sut = makeParticipant(participant.name, true, participant.purpose || '');
-    sut.kind = 'leaf';
-    sut.methods = (participant.methods || []).map(m => {
-        const copy = makeMethod(m.name, (m.inputs || []).map(i => ({ name: i.name, type: i.type })), m.output || '');
-        copy.isProposed = false;
-        return copy;
-    });
-    state.participants.push(sut);
-    state.sutParticipantId = sut.id;
-
-    // If the analyser provided a sub-tree for this orchestrator, expand its
-    // children into participants now so the user starts with the AI's
-    // suggested collaborators instead of an empty canvas.
-    if (participant.subDesignNode && Array.isArray(participant.subDesignNode.children)) {
-        for (const childNode of participant.subDesignNode.children) {
-            const fromTree = flattenTreeToParticipants(childNode);
-            for (const np of fromTree) state.participants.push(np);
-        }
-    }
-
-    // Suggest a child file name in the save panel.
-    if (saveEls.filename) {
-        saveEls.filename.value = `${participant.name}.puml`;
-    }
-
-    // Reveal the "back to parent" button.
-    if (treeEls.exitSub) treeEls.exitSub.classList.remove('hidden');
-
-    // Jump to Step 2 to let the user refine.
-    goToStep(2);
-}
-
-function snapshotWizardState() {
-    return {
-        userStory: state.userStory,
-        ac: JSON.parse(JSON.stringify(state.ac || [])),
-        entities: JSON.parse(JSON.stringify(state.entities || [])),
-        participants: JSON.parse(JSON.stringify(state.participants)),
-        sequence: JSON.parse(JSON.stringify(state.sequence)),
-        targetPackage: state.targetPackage,
-        sutParticipantId: state.sutParticipantId,
-        tree: state.tree ? JSON.parse(JSON.stringify(state.tree)) : null,
-        story: state.story,
-        signoffs: { ...state.signoffs },
-        subDesignContext,
-        lastSavedRelativePath
-    };
-}
-
-function exitSubDesign() {
-    const snapshot = subDesignStack.pop();
-    if (!snapshot) {
-        subDesignContext = null;
-        if (treeEls.exitSub) treeEls.exitSub.classList.add('hidden');
-        return;
-    }
-    state.userStory = snapshot.userStory;
-    state.ac = snapshot.ac || [];
-    state.entities = snapshot.entities || [];
-    state.participants = snapshot.participants;
-    state.sequence = snapshot.sequence;
-    state.targetPackage = snapshot.targetPackage;
-    state.sutParticipantId = snapshot.sutParticipantId;
-    state.tree = snapshot.tree;
-    state.story = snapshot.story;
-    state.signoffs = snapshot.signoffs;
-    subDesignContext = snapshot.subDesignContext;
-    lastSavedRelativePath = snapshot.lastSavedRelativePath;
-    if (treeEls.exitSub && subDesignStack.length === 0) {
-        treeEls.exitSub.classList.add('hidden');
-    }
-    goToStep(4);  // back to parent's Step 4 (export)
-}
-
-if (treeEls.exitSub) {
-    treeEls.exitSub.addEventListener('click', exitSubDesign);
-}
-
-if (treeEls.buildAll) {
-    treeEls.buildAll.addEventListener('click', runBuildAll);
-}
-
-async function runBuildAll() {
-    if (!state.projectPath || !lastSavedRelativePath) return;
-    treeEls.buildAllProgress.classList.remove('hidden');
-    treeEls.buildAllNodes.innerHTML = '';
-    treeEls.buildAllStatus.textContent = 'Building…';
-    treeEls.buildAll.disabled = true;
-    const originalLabel = treeEls.buildAll.textContent;
-    treeEls.buildAll.textContent = 'Building…';
-
-    const modelSelect = document.getElementById('run-model');
-    const reader = makeNdjsonReader();
-    const nodeRows = new Map();   // puml path -> <li> element
-
-    try {
-        const response = await fetch('/api/build-all', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                projectPath: state.projectPath,
-                filePath: lastSavedRelativePath,
-                model: modelSelect ? modelSelect.value : null
-            })
-        });
-        if (!response.ok || !response.body) {
-            treeEls.buildAllStatus.textContent = `Failed (${response.status})`;
-            return;
-        }
-        const decoder = new TextDecoder();
-        const bodyReader = response.body.getReader();
-        while (true) {
-            const { done, value } = await bodyReader.read();
-            if (done) break;
-            const events = reader.push(decoder.decode(value, { stream: true }));
-            for (const ev of events) handleBuildAllEvent(ev, nodeRows);
-        }
-        treeEls.buildAllStatus.textContent = 'Done';
-    } catch (e) {
-        treeEls.buildAllStatus.textContent = 'Failed';
-        const li = document.createElement('li');
-        li.className = 'build-all-node build-all-node-failed';
-        li.textContent = String(e);
-        treeEls.buildAllNodes.appendChild(li);
-    } finally {
-        treeEls.buildAll.disabled = false;
-        treeEls.buildAll.textContent = originalLabel;
-    }
-}
-
-function handleBuildAllEvent(ev, nodeRows) {
-    if (!ev || !ev.event) return;
-    switch (ev.event) {
-        case 'build-all-start':
-            treeEls.buildAllStatus.textContent = `Building ${ev.nodes} nodes…`;
-            break;
-        case 'node-start': {
-            const li = document.createElement('li');
-            li.className = 'build-all-node build-all-node-running';
-            li.innerHTML = `<span class="build-all-node-status">▶</span> <code>${escapeHtml(ev.puml)}</code>`;
-            treeEls.buildAllNodes.appendChild(li);
-            nodeRows.set(ev.puml, li);
-            break;
-        }
-        case 'node-done': {
-            const li = nodeRows.get(ev.puml);
-            if (!li) return;
-            li.classList.remove('build-all-node-running');
-            if (ev.error || ev.exit !== 0) {
-                li.classList.add('build-all-node-failed');
-                li.querySelector('.build-all-node-status').textContent = '✗';
-                if (ev.error) {
-                    const errSpan = document.createElement('div');
-                    errSpan.className = 'build-all-node-error';
-                    errSpan.textContent = String(ev.error);
-                    li.appendChild(errSpan);
-                }
-            } else {
-                li.classList.add('build-all-node-done');
-                li.querySelector('.build-all-node-status').textContent = '✓';
-            }
-            break;
-        }
-        case 'build-all-done':
-            treeEls.buildAllStatus.textContent = ev.error
-                ? `Stopped: ${ev.error} (${ev.succeeded}/${ev.total} done)`
-                : `Done — ${ev.succeeded}/${ev.total} succeeded`;
-            // Refresh the tree-view so newly-implemented nodes flip to ☑.
-            if (lastSavedRelativePath) renderTreeView(lastSavedRelativePath);
-            break;
-        default:
-            // Per-step plugin events from inside each node — render only their
-            // raw stdout into the most-recent node row's hover-output (kept
-            // simple for v1; users wanting full output run them one at a time).
-            break;
-    }
-}
 
 saveEls.runBtn.addEventListener('click', async () => {
     if (!lastSavedRelativePath || !state.projectPath) return;

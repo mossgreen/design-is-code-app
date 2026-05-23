@@ -216,6 +216,116 @@ they rule out. Append new entries on top of older ones in each subsection.
   with the manual click path; manual-add flow never auto-marks.
 
 
+## Multi-level design (parked for MVP — restore post-PMF)
+
+This capability is **critical to the product long-term**. It was implemented
+through several iterations (sub-design stack, manifest tree, build-status
+walker, AC inheritance) and then cut wholesale for MVP because demos rarely
+surface it. This section preserves the intent so a future revive starts
+from an informed position, not a from-scratch redesign.
+
+### Capability description
+
+The wizard models orchestrator participants as deferred sub-designs.
+
+- When the analyzer marks a participant `isLeaf: false` (because it exceeds
+  the 2-axis complexity budget defined in [analyzer.md](src/main/resources/prompts/analyzer.md),
+  or carries its own internal call graph), the user can "Design this level"
+  to drill in.
+- A new wizard run opens with:
+  - That participant as the SUT.
+  - The parent's AC subset inherited, filtered by `acIndices` (the
+    AC-inheritance logic that closes the loop).
+  - The parent's call signature on the child captured as the entry-point
+    method.
+- The sub-design produces its own .puml file under a nested folder, parented
+  to the original via a manifest tree (`_index.json`).
+- Recursion stacks arbitrarily: sub-designs can have their own orchestrators
+  that drill further.
+
+### Why it matters
+
+The 2-axis budget per participant is a hard rule because Java test classes
+hit cognitive overload at >2 levels of `@Nested`. Once a real domain has
+3+ axes anywhere, multi-level recursion is the **only** way to keep each
+test class within budget. Without it, complex domains compile into single
+oversized designs that defeat the discipline.
+
+### Why we cut for MVP
+
+- Senior-dev demos are one-shot ("here's a story; here's clean Java").
+  They don't surface 3-axis domains in 30 seconds.
+- Implementation cost was high: 2 controllers, 2 services, 4 DTOs,
+  contract-drift hashing, build-status walker, tree UI, manifest
+  persistence, sub-design stack.
+- Demo-time benefit was approximately zero.
+- Bringing it back AFTER core PMF is the right sequencing.
+
+### Artifacts to restore when reviving
+
+Backend (deleted):
+- `controller/TreeController.java`
+- `controller/BuildStatusController.java`
+- `service/TreeService.java`
+- `service/BuildStatusService.java`
+- `dto/TreeLoadRequest.java`
+- `dto/TreeSaveRequest.java`
+- `dto/BuildStatusRequest.java`
+- `dto/Manifest.java`
+- Manifest-write paths inside `service/DesignService.java` and parent-relative-path handling in `dto/DesignRequest.java`
+
+Frontend (deleted from `static/js/app.js`):
+- `subDesignStack`, `subDesignContext` declarations
+- `snapshotWizardState()`, `exitSubDesign()`, `startSubDesign()`
+- `fetchContractHash()`, `relativeUp()` helpers
+- The whole `#tree-view-list` rendering + `tree-design-this` click wiring
+- The Build-all walker + per-node build-status dots
+- The `inSub` branch in `goToStep()`
+
+HTML (deleted from `static/index.html`):
+- `#tree-view-list`, `#build-all`, `#build-all-progress`, `#build-all-nodes`
+- "Design this level" buttons
+- "Back to parent design" affordance
+
+CSS (deleted from `static/css/style.css`):
+- `.tree-list`, `.tree-row-*`, `.tree-design-this`, `.tree-chevron`,
+  `.build-all-*` rules
+
+Persistence format (no code, but the convention):
+- Nested folder structure: `parent.puml` → `parent/Child.puml` → `parent/_index.json` linking them.
+
+Critical slice that goes with this revival:
+- **Slice C (commit `e9b3bf8`)**: the `inheritedAc` derivation inside
+  `startSubDesign`. This is the AC-inheritance logic that closes the
+  multi-level loop. Restore it exactly when bringing back multi-level.
+
+### Open questions for the revival
+
+- **Persistence format**: keep the manifest-as-JSON-sidecar (`_index.json`)
+  or fold parent/child relationships into a single `.puml` stereotype
+  (`<<@parent:...>>`) so the wizard stops needing a separate manifest
+  file? The latter would simplify save/load but couple .puml to the
+  parent/child concept.
+- **Drift detection**: re-introduce contract-drift hashing
+  (`parentContractHash`), or replace with simple file-mtime checks?
+  Hashing is more accurate but more expensive.
+- **Entry-point UX**: surface "Design this level" on the orchestrator
+  participant CARD in Step 2 (where the user already is), instead of
+  buried in a Step 3 tree view? See slice G below for context.
+
+### What's still in place that the revival can build on
+
+- The discipline that triggers the need for multi-level is intact:
+  `acIndices` per participant (slice B, commit `c6798e2`) + the 2-axis
+  rule in [analyzer.md](src/main/resources/prompts/analyzer.md).
+- The analyzer already emits `isLeaf: false` as a hint when a participant
+  would overflow — the wizard just doesn't drill in. A future revive
+  re-wires that hint to a clickable affordance.
+- Participant model carries `acIndices`; `flattenTreeToParticipants` still
+  reads and propagates it.
+
+---
+
 ## UI improvement roadmap (post-discipline iterations)
 
 After slices A–D (analyzer discipline + abstraction kinds + axes chip +

@@ -124,8 +124,7 @@ public class RunService {
      * Spawn the plugin subprocess and pump its stdout (parsed via
      * {@link StreamJsonMapper}) into the supplied emitter. Does <b>not</b>
      * emit a terminal {@code done} event or close the emitter — the caller
-     * decides how to finalise. Used by {@link #runProcess} (single-shot) and
-     * by {@link TreeService#buildAll} (multi-shot, one per .puml in a tree).
+     * decides how to finalise.
      */
     ProcessResult streamProcess(String runId, List<String> cmd, File workingDir, ResponseBodyEmitter emitter) {
         emit(emitter, rawLine("$ cd " + workingDir.getAbsolutePath()));
@@ -179,9 +178,7 @@ public class RunService {
 
     /** Builds the {@code claude --output-format stream-json --verbose -p
      *  /design-is-code:disc <relPath>} command, validating model and
-     *  paths the same way {@link #run} does. Used by {@link TreeService}
-     *  so the build-all walker can spawn one process per .puml in a tree
-     *  without re-implementing the validation. */
+     *  paths the same way {@link #run} does. */
     List<String> buildDiscCommand(String relPath, String requestedModel) {
         String slashCommand = DISC_SLASH_COMMAND + " " + relPath;
         List<String> cmd = new ArrayList<>(List.of(
