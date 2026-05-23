@@ -3864,10 +3864,10 @@ let pluginStatus = null;
 
 async function refreshPluginStatus() {
     try {
-        const res = await fetch('/api/disc-plugin-status');
+        const res = await fetch('/api/generator/status');
         pluginStatus = await res.json();
     } catch {
-        pluginStatus = { installed: false, version: null, installPath: null };
+        pluginStatus = { state: 'NOT_INSTALLED', version: null, installPath: null, latestVersion: null, installCommand: null };
     }
     renderPluginStatus();
 }
@@ -3875,26 +3875,32 @@ async function refreshPluginStatus() {
 function renderPluginStatus() {
     if (!saveEls.pluginPill || !saveEls.pluginMissing) return;
 
-    // Three branches: not installed → install prompt; installed and outdated
-    // → update prompt (Run still enabled, the old plugin still works);
-    // installed and current (or unable to check upstream) → quiet pill.
-    if (!pluginStatus || !pluginStatus.installed) {
+    // State drives three branches: NOT_INSTALLED → install prompt;
+    // OUTDATED → update prompt (Run still enabled, current version still
+    // works); READY → quiet pill.
+    const state = (pluginStatus && pluginStatus.state) || 'NOT_INSTALLED';
+
+    if (state === 'NOT_INSTALLED') {
         saveEls.pluginPill.classList.add('hidden');
         saveEls.pluginPill.removeAttribute('data-state');
         saveEls.pluginMissing.classList.remove('hidden');
         if (saveEls.pluginUpdate) saveEls.pluginUpdate.classList.add('hidden');
         if (saveEls.runBtn) {
             saveEls.runBtn.disabled = true;
-            saveEls.runBtn.title = 'Install the design-is-code plugin first';
+            saveEls.runBtn.title = 'Configure the code generator first';
         }
+        // Generator surfaces its own install command — render it from the
+        // status payload rather than hard-coding a Claude-specific string
+        // in the UI.
+        const cmdHost = document.getElementById('plugin-install-command');
+        if (cmdHost) cmdHost.textContent = (pluginStatus && pluginStatus.installCommand) || '';
         return;
     }
 
-    // Installed. Now decide between "current" and "outdated."
     const installed = pluginStatus.version;
     const latest = pluginStatus.latestVersion;
     const skipped = sessionStorage.getItem(SKIPPED_UPDATE_KEY);
-    const outdated = latest && installed && latest !== installed && skipped !== latest;
+    const outdated = state === 'OUTDATED' && latest && installed && skipped !== latest;
 
     saveEls.pluginPill.classList.remove('hidden');
     saveEls.pluginMissing.classList.add('hidden');
@@ -3904,7 +3910,7 @@ function renderPluginStatus() {
     }
 
     if (outdated) {
-        saveEls.pluginPill.textContent = `DisC plugin v${installed} → v${latest} ↻`;
+        saveEls.pluginPill.textContent = `Generator v${installed} → v${latest} ↻`;
         saveEls.pluginPill.dataset.state = 'outdated';
         if (saveEls.pluginUpdate) {
             saveEls.pluginUpdate.classList.remove('hidden');
@@ -3915,7 +3921,7 @@ function renderPluginStatus() {
                 `https://github.com/mossgreen/design-is-code-plugin/releases/tag/v${latest}`;
         }
     } else {
-        saveEls.pluginPill.textContent = `DisC plugin v${installed} ✓`;
+        saveEls.pluginPill.textContent = `Generator v${installed} ✓`;
         saveEls.pluginPill.dataset.state = 'current';
         if (saveEls.pluginUpdate) saveEls.pluginUpdate.classList.add('hidden');
     }
@@ -4269,7 +4275,7 @@ function renderPlanConflicts(participants) {
 }
 
 // "Preview changes" — writes the .puml to disk first (same path the user
-// would Export to), then calls /api/plan-disc to ask the plugin what it
+// would Export to), then calls /api/generator/plan to ask the generator what it
 // would do without mutating anything. Renders the response in the
 // preview-result panel.
 async function previewPlan() {
@@ -4312,7 +4318,7 @@ async function previewPlan() {
         // Step 2: ask the plugin for the plan.
         const modelSelect = document.getElementById('run-model');
         const model = modelSelect ? modelSelect.value : null;
-        const planRes = await fetch('/api/plan-disc', {
+        const planRes = await fetch('/api/generator/plan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ projectPath, filePath: saveData.relativePath, model })
@@ -4496,7 +4502,7 @@ saveEls.runBtn.addEventListener('click', async () => {
         ticker: startElapsedTicker(),
         startedAt: Date.now(),
         currentStep: 0,
-        cancelUrl: '/api/run-disc/cancel'
+        cancelUrl: '/api/generator/cancel'
     };
 
     const reader = makeNdjsonReader();
@@ -4504,7 +4510,7 @@ saveEls.runBtn.addEventListener('click', async () => {
 
     try {
         const modelSelect = document.getElementById('run-model');
-        const response = await fetch('/api/run-disc', {
+        const response = await fetch('/api/generator/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4700,9 +4706,9 @@ async function streamPluginAction({ button, fetchUrl, cancelUrl, runningLabel, b
 if (saveEls.installBtn) {
     saveEls.installBtn.addEventListener('click', () => streamPluginAction({
         button: saveEls.installBtn,
-        fetchUrl: '/api/install-plugin',
-        cancelUrl: '/api/install-plugin/cancel',
-        runningLabel: 'Installing plugin…',
+        fetchUrl: '/api/generator/install',
+        cancelUrl: '/api/generator/cancel',
+        runningLabel: 'Installing generator…',
         busyLabel: 'Installing…',
         doneLabel: '✓ Installed',
         failLabel: '✗ Install failed'
@@ -4717,8 +4723,8 @@ if (saveEls.updateBtn) {
         const targetVersion = pluginStatus && pluginStatus.latestVersion;
         return streamPluginAction({
             button: saveEls.updateBtn,
-            fetchUrl: '/api/update-plugin',
-            cancelUrl: '/api/update-plugin/cancel',
+            fetchUrl: '/api/generator/update',
+            cancelUrl: '/api/generator/cancel',
             runningLabel: 'Updating plugin…',
             busyLabel: 'Updating…',
             doneLabel: '✓ Updated',

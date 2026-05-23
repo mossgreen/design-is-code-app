@@ -475,12 +475,12 @@
                 <div id="plugin-missing" class="plugin-missing hidden">
                     <div class="plugin-missing-head">
                         <span class="plugin-missing-icon" aria-hidden="true">⚠</span>
-                        <strong>design-is-code plugin is not installed in Claude Code.</strong>
+                        <strong>Code generator is not configured.</strong>
                     </div>
                     <div class="plugin-missing-body">
-                        <button type="button" id="install-plugin">Install plugin</button>
-                        <span class="plugin-missing-hint">Runs <code>claude plugin install design-is-code@mossgreen-design-is-code --scope user</code></span>
-                        <button type="button" class="plugin-recheck" data-recheck title="Re-fetch plugin status">Re-check ↻</button>
+                        <button type="button" id="install-plugin">Install</button>
+                        <span class="plugin-missing-hint">Runs <code id="plugin-install-command"></code></span>
+                        <button type="button" class="plugin-recheck" data-recheck title="Re-fetch generator status">Re-check ↻</button>
                     </div>
                 </div>
                 <div id="plugin-update" class="plugin-update hidden">
