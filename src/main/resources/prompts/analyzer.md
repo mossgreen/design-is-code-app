@@ -149,6 +149,19 @@ satisfies the discipline.
    patterns' criteria genuinely fail. See the "composition-over-inheritance"
    rule below.
 
+6. **Variance plan consistency.** Every `variancePlan` entry has
+   matching shape in `participants[]`/`entities[]`. `rule-table` → a
+   `Repository` + `Applier` shape (or method on the orchestrator)
+   exists; NO `sealed-interface` entity for that axis. `resolver` →
+   an `XxxResolver` participant + N strategy participants exist; NO
+   `sealed-interface` entity for that axis. `sealed-polymorphism` →
+   a `kind: "sealed-interface"` entity with non-empty `behaviors[]`
+   and a `permits[]` list of variant records exists. `pattern-matching`
+   → a `kind: "sealed-interface"` entity with EMPTY `behaviors[]` and
+   a `permits[]` list of pure-data records exists. Rewrite anything
+   that contradicts the plan — do not weaken the plan to match a
+   sloppy design.
+
 The full rule bodies — including worked examples — appear at the end
 of this prompt under "Rule details", composed in from
 `prompts/rules/*.md`. Treat the four checks above and the rule bodies
@@ -342,16 +355,61 @@ participant" in the Variance-handling patterns section.
 **Strict JSON. No prose. No markdown fences. The very first character of your
 output must be `{` and the very last must be `}`.**
 
-The top-level shape has FOUR fields:
+The top-level shape has FIVE fields:
 
 ```
 {
+  "variancePlan": [ ...one entry per variance axis; [] when the AC has no variance... ],
   "sut":          "PascalCaseSutName",
   "participants": [ ...the per-participant shape below... ],
   "story":        "...",
   "entities":     [ ...record/enum/class entries the participants pass around... ]
 }
 ```
+
+## `variancePlan` — declare your pattern choice before producing the design
+
+For each variance axis the AC exposes, walk the priority list in
+"Variance-handling patterns" (above) in order — ask criterion 1 first;
+only if it fails consider 2; only if 1 and 2 fail consider 3; only if
+1, 2, and 3 fail consider 4 — and record the pick.
+
+Each entry:
+
+```
+{
+  "axis":      "<short discriminator → output(s)>",
+  "pattern":   "rule-table" | "resolver" | "sealed-polymorphism" | "pattern-matching",
+  "criterion": 1 | 2 | 3 | 4,
+  "rationale": "one sentence; genuinely justify why this pattern fits, not just restate the criterion text"
+}
+```
+
+### Rules for `variancePlan`
+
+- **One entry per variance axis.** A variance axis is a distinct
+  "Given X / When Y" pattern in the AC that produces different
+  outcomes across cases. Most ACs have 0–2 axes. If the AC has no
+  variance — every row reaches the same outcome through the same
+  shape — emit `[]`.
+- **Walk the priority list honestly.** Lower-numbered criteria have
+  lower coupling and lower test-nesting cost. Pick the first whose
+  test holds.
+- **Commitment contract.** The `participants[]` and `entities[]` you
+  produce below MUST be consistent with the patterns you declare here:
+  - `rule-table` → a `Repository` + `Applier` shape (or method on the
+    orchestrator); NO `sealed-interface` entity for this axis.
+  - `resolver` → a `XxxResolver` participant + N strategy participants;
+    NO `sealed-interface` entity for this axis.
+  - `sealed-polymorphism` → a `kind: "sealed-interface"` entity in
+    `entities[]` with non-empty `behaviors[]` and a `permits[]` list
+    of variant records, also in `entities[]`.
+  - `pattern-matching` → a `kind: "sealed-interface"` entity with
+    EMPTY `behaviors[]` (pure sum type) and a `permits[]` list of
+    pure-data records.
+- **No rationalisation.** `rationale` is a one-sentence justification
+  the user can audit. If you cannot honestly justify the pick, the
+  pick is wrong — walk the priority list again.
 
 ## `participants` — flat list, each entry one participant
 
@@ -545,6 +603,7 @@ Input: *"Schedule a meeting at a time that works for all attendees."*
 Output:
 ```
 {
+  "variancePlan": [],
   "sut": "MeetingScheduler",
   "participants": [
     {
