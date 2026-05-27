@@ -24,7 +24,7 @@ public class AnalyzeController {
     public ResponseEntity<?> analyze(@RequestBody AnalyzeRequest request) {
         try {
             return ResponseEntity.ok(analyzeService.analyze(
-                    request.context(), request.catalog(), request.acceptanceCriteria()));
+                    request.context(), request.catalog(), request.acceptanceCriteria(), request.model()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (InterruptedException e) {

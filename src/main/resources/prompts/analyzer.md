@@ -71,6 +71,33 @@ same shape.
    exchanged between them, name branches taken inside them, or
    paraphrase the rule tables.
 
+## A `purpose` is a user need, not a function description
+
+A `purpose` answers *what need does this abstraction exist to meet?* —
+not *what does this abstraction do?* Function descriptions name the
+mechanism; purposes name the need the mechanism serves.
+
+Three criteria every `purpose` must satisfy:
+
+1. **Need-focused.** The purpose names a need (of the user, or of the
+   calling participant), not the operation that satisfies it.
+   - Mechanism (wrong): "computes the earliest overlap of free slots."
+   - Need (right):      "guarantees every attendee can attend the booked time."
+
+2. **Specific to this abstraction.** The purpose distinguishes this
+   participant from every other in the design. If two purposes are
+   paraphrases of each other, at least one participant is misplaced.
+
+3. **Evaluable.** Reading the purpose, you can ask "did this design
+   meet that need?" and get a yes/no.
+   - Evaluable:     "allow undeletion."
+   - Not evaluable: "makes the system safer."
+
+Reframe trick: if your draft purpose names an operation (verb on data),
+ask what NEED that operation serves and rewrite as the need. Canonical
+example: `Trash`'s purpose isn't "softly removes files," it's "allow
+undeletion."
+
 ## Variance is governed by the patterns below
 
 When the AC implies variance — different cases producing different
@@ -84,10 +111,48 @@ sentence — that invariance from rules 1–3 above is unconditional.
 
 ## Self-check before returning
 
-After producing the design, verify every `purpose` field and every
-sentence of the `story` against the invariance test. If any sentence
-would need to change to accommodate a hypothetical new case in the
-implementation, rewrite it before returning.
+Before returning, walk the design against every rule below. Each rule
+is **unconditional** — when a rule fires, rewrite the offending field
+before emitting. Do not surface lint; produce a design that already
+satisfies the discipline.
+
+1. **Invariance.** Every `purpose` and every sentence of `story` passes
+   the invariance test — if any sentence would need to change to
+   accommodate a hypothetical new case in the implementation, rewrite
+   it. See the "invariance" rule below for examples.
+
+2. **Leaf freestandingness.** No leaf participant's `purpose` names
+   another participant. Leaves must be describable in isolation — if
+   a leaf needs to name its caller to make sense, the leaf is misplaced.
+
+3. **Purpose specificity (R2).** Every `purpose` is need-focused,
+   specific to this abstraction, and evaluable. Rewrite any purpose
+   that joins two needs with "and", names a mechanism instead of a
+   need, paraphrases another participant's purpose, or hides behind
+   vague qualifiers. See the "R2" rule below.
+
+4. **Feature envy (R4a).** No participant's method writes to fields of
+   an entity it doesn't own. For every entry in `behaviors[].touches[]`
+   with `mode: "write"`, the target entity's `ownedBy` must equal the
+   participant's `name`. When it doesn't, move the operation onto the
+   owner, reassign ownership, or downgrade the touch to a read. See
+   the "R4a" rule below.
+
+5. **Composition over inheritance.** When two abstractions share
+   behaviour or data, model the sharing through delegation, not
+   through a type hierarchy. No participant `purpose` may frame
+   itself as a "specialised variant of" or "subtype of" another
+   participant; no entity's role in the design may rely on implicit
+   extension. The variance-priority list above codifies this — the
+   first two patterns (rule table, resolver) are pure composition,
+   and you only reach for sealed polymorphism when the lower-numbered
+   patterns' criteria genuinely fail. See the "composition-over-inheritance"
+   rule below.
+
+The full rule bodies — including worked examples — appear at the end
+of this prompt under "Rule details", composed in from
+`prompts/rules/*.md`. Treat the four checks above and the rule bodies
+as one tier of discipline: silent, mandatory, applied before emission.
 
 # Variance-handling patterns
 
@@ -296,9 +361,20 @@ Each participant:
 {
   "name":         "PascalCaseTypeName",
   "existingFqn":  "com.foo.order.OrderRepository",   // ONLY when reusing an existing codebase type; OMIT otherwise
-  "purpose":      "one sentence describing why this abstraction exists",
+  "purpose":      "one sentence naming the user need this abstraction exists to meet (see 'A purpose is a user need'); not a function description",
+  "operationalPrinciple": "After <archetypal action>, <observable outcome>.",   // ONE Jackson-style scenario per participant; see notes below
+  "invariants":   [ "<promise the participant guarantees, in 'after X, Y' form>" ],   // OPTIONAL; 0–3 entries; Meyer/DbC-style
   "attributes":   [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
-  "behaviors":    [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
+  "behaviors":    [
+    {
+      "name": "camelCase",
+      "args": [{"name":"x","type":"Foo"}],
+      "returns": "Type",
+      "touches": [   // OPTIONAL; what entity state this method's body would touch — fuel for the feature-envy rule
+        { "entity": "EntityName", "fields": ["fieldA"], "mode": "write" }
+      ]
+    }
+  ],
   "isLeaf":       false,
   "acIndices":    [ 0, 2 ]   // 0-based indices of AC rows whose `Then` clause this participant directly produces or enforces
 }
@@ -306,6 +382,26 @@ Each participant:
 
 ### Rules for participant fields
 
+- `operationalPrinciple` — ONE sentence in Jackson's "after X, then Y"
+  form describing the archetypal scenario of using this participant.
+  This is *what happens when it's used*, distinct from `purpose`
+  (which is *what need it exists to meet*). Example for
+  `AvailabilityFinder`: "After firstOverlap(calendars, duration), the
+  returned slot fits inside every calendar's free time." Same
+  invariance discipline as `purpose` — no specific values, no
+  thresholds.
+- `invariants` — OPTIONAL list of "after each action, X holds"
+  contracts (Meyer / Design-by-Contract style). Empty is fine. When
+  a participant has a meaningful invariant that callers will rely on,
+  declare it here so the contract is visible at sign-off.
+- `behaviors[].touches` — OPTIONAL list of {entity, fields, mode}
+  describing what entity state the method's body would read or write.
+  Be conservative — only entities/fields the method would plausibly
+  touch based on its name and purpose. `touches: []` is fine for pure
+  functions or methods that only deal in primitives. The feature-envy
+  self-check (R4a) reads this — if a method's `write` touch targets
+  an entity whose `ownedBy` is a different participant, rewrite
+  before emitting.
 - `name` — PascalCase, no `Impl`/`Default` suffixes (these are interfaces, not
   implementations). Don't add `Service`/`Manager`/`Handler` unless the
   abstraction genuinely is one (an `InviteDispatcher` is an
@@ -315,8 +411,9 @@ Each participant:
   over the `*Impl` class when both exist. **Omit** (do not set to null)
   when proposing a new abstraction. The bar is "obvious match" — when in
   doubt, propose new.
-- `purpose` — one sentence, present tense, "this thing does X." Not docs;
-  rationale.
+- `purpose` — one sentence naming the user need this abstraction exists
+  to meet (see `## A `purpose` is a user need`). Present tense; not a
+  function description, not docs.
 - `attributes` — only the data the abstraction *holds*. Most interfaces have
   none; that's fine — return `[]`.
 - `behaviors` — the public methods that fulfil the abstraction's
@@ -375,6 +472,8 @@ Each entry:
   "kind":        "record" | "enum" | "class" | "interface" | "sealed-interface",
   "existingFqn": "com.foo.dto.VisitFeeRequest",   // ONLY when reusing
   "purpose":     "one sentence...",
+  "ownedBy":     "OwningParticipantName",  // the participant whose purpose justifies controlling this entity's lifecycle
+  "exposure":    "internal",                // "internal" (default) | "boundary-dto" — boundary-dto entities cross architectural layers safely
   "fields":      [ { "name": "camelCase", "type": "PascalCase or primitive" } ],
   "values":      [ "UPPERCASE_VALUE" ],
   "behaviors":   [ { "name": "camelCase", "args": [{"name":"x","type":"Foo"}], "returns": "Type" } ],
@@ -384,6 +483,15 @@ Each entry:
 
 ### Rules for entities
 
+- **`ownedBy`** — name of the participant whose purpose justifies
+  controlling this entity's lifecycle (the one that creates / mutates
+  it). One owner per entity; pick the single most-responsible
+  participant. Every entity must have an owner before you emit — if
+  no participant clearly owns it, assign ownership during the
+  self-check (don't leave `null`).
+- **`exposure`** — `"internal"` (default) or `"boundary-dto"`.
+  `boundary-dto` entities are designed to cross architectural layers
+  (e.g. HTTP request/response shapes). Most entities are `internal`.
 - **`kind` is mandatory.** Choose based on what the type IS:
   - `record` — immutable data carrier (default for DTOs and value objects).
   - `enum` — finite named set with no per-variant behaviour.
@@ -451,7 +559,7 @@ Output:
     },
     {
       "name": "CalendarRepository",
-      "purpose": "Reads and writes attendees' calendar entries.",
+      "purpose": "Provides the source of truth for who is busy when.",
       "attributes": [],
       "behaviors": [
         { "name": "loadFor",     "args": [{"name":"attendees","type":"List<Attendee>"}], "returns": "List<Calendar>" },
@@ -462,7 +570,7 @@ Output:
     },
     {
       "name": "AvailabilityFinder",
-      "purpose": "Computes the earliest overlap of free slots across calendars.",
+      "purpose": "Guarantees every attendee can attend the booked time.",
       "attributes": [],
       "behaviors": [
         { "name": "firstOverlap", "args": [{"name":"calendars","type":"List<Calendar>"},{"name":"duration","type":"Duration"}], "returns": "TimeSlot" }
@@ -472,7 +580,7 @@ Output:
     },
     {
       "name": "InviteDispatcher",
-      "purpose": "Sends meeting invites once the slot is chosen.",
+      "purpose": "Ensures every attendee knows about a meeting they are part of.",
       "attributes": [],
       "behaviors": [
         { "name": "send", "args": [{"name":"meeting","type":"Meeting"}], "returns": "void" }
@@ -552,5 +660,15 @@ Why each collaborator is a leaf — one termination reason each:
 
 Notice how the `story` mentions each name in `[brackets]` every time, reads
 as plain English, and describes the flow rather than the structure.
+
+# Rule details
+
+The rules referenced in "Self-check before returning" are spelled out
+below, one per file from `prompts/rules/`. Each is a constraint you
+satisfy *before* emitting — never a finding to surface. When a rule
+fires, rewrite the offending field until it passes. The user sees the
+final design, not the discipline that produced it.
+
+{RULES}
 
 # Now produce the analysis for the input at the top of this prompt.

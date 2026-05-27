@@ -1,6 +1,7 @@
 package com.designiscode.app.service;
 
 import com.designiscode.app.dto.RunRequest;
+import com.designiscode.app.dto.ValidateRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
@@ -17,7 +18,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,15 +37,6 @@ public class RunService {
 
     private static final String DISC_SLASH_COMMAND = "/design-is-code:disc";
     private static final int READER_BUFFER_BYTES = 1 << 16;  // 64 KB
-
-    // Allowlist of model IDs the wizard may request. Anything else is dropped
-    // and we fall back to Claude Code's configured default — never pass an
-    // unvalidated string to the subprocess.
-    private static final Set<String> ALLOWED_MODELS = Set.of(
-            "claude-sonnet-4-6",
-            "claude-opus-4-7",
-            "claude-haiku-4-5"
-    );
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final StreamJsonMapper streamJsonMapper;
@@ -92,11 +83,7 @@ public class RunService {
                 "--output-format", "stream-json",
                 "--verbose"
         ));
-        String requestedModel = request.model();
-        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
-            cmd.add("--model");
-            cmd.add(requestedModel);
-        }
+        Models.appendIfValid(cmd, request.model());
         cmd.add("-p");
         cmd.add(slashCommand);
 
@@ -187,10 +174,7 @@ public class RunService {
                 "--output-format", "stream-json",
                 "--verbose"
         ));
-        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
-            cmd.add("--model");
-            cmd.add(requestedModel);
-        }
+        Models.appendIfValid(cmd, requestedModel);
         cmd.add("-p");
         cmd.add(slashCommand);
         return cmd;
@@ -241,11 +225,7 @@ public class RunService {
                 "claude",
                 "--dangerously-skip-permissions"
         ));
-        String requestedModel = request.model();
-        if (requestedModel != null && ALLOWED_MODELS.contains(requestedModel)) {
-            cmd.add("--model");
-            cmd.add(requestedModel);
-        }
+        Models.appendIfValid(cmd, request.model());
         cmd.add("-p");
         cmd.add(slashCommand);
 
@@ -296,6 +276,161 @@ public class RunService {
         } catch (tools.jackson.core.JacksonException e) {
             throw new java.io.IOException("plugin did not return valid JSON in plan mode. First 500 chars: " + truncate(body, 500), e);
         }
+    }
+
+    /**
+     * Validate mode — runs the DisC plugin with the {@code --validate-only}
+     * flag. The plugin walks Step 1 only (refusal-grade contract checks) and
+     * exits. On pass it emits {@code {"ok": true}}; on refusal it emits the
+     * same {@code #### REFUSAL — STOP} markdown the user sees from a normal
+     * run. The wizard renders that markdown verbatim — no parsing of refusal
+     * content, no rule mirroring on the wizard side.
+     *
+     * <p>Unlike {@link #plan}, the design is not yet saved to the project.
+     * The caller hands us the rendered {@code .puml} text inline; we write
+     * it to a temp file inside {@code projectPath/.disc-tmp/} so the plugin
+     * still sees real project context (CWD for language-profile pick-up and
+     * FQN resolution), then clean up afterwards.
+     *
+     * <p>Returns:
+     * <ul>
+     *   <li>{@code {refused: false}} — plugin's Step 1 passed</li>
+     *   <li>{@code {refused: true, message: <markdown>}} — plugin's Step 1
+     *       refused; message is the raw markdown block</li>
+     *   <li>{@code {refused: false, error: <hint>}} — transport failure
+     *       (process couldn't start, timed out, etc.). Treated as soft pass:
+     *       we don't block the user on our own inability to preflight; the
+     *       eventual Step 4 Run will surface real generator errors.</li>
+     * </ul>
+     */
+    public java.util.Map<String, Object> validate(ValidateRequest req)
+            throws java.io.IOException, InterruptedException {
+        if (req == null || req.projectPath() == null || req.projectPath().isBlank()) {
+            throw new IllegalArgumentException("projectPath is required");
+        }
+        if (req.puml() == null || req.puml().isBlank()) {
+            throw new IllegalArgumentException("puml is required");
+        }
+
+        Path projectRoot = Paths.get(req.projectPath()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(projectRoot)) {
+            throw new IllegalArgumentException("project path is not a directory: " + projectRoot);
+        }
+
+        // Temp file inside the project so the plugin's CWD-based context
+        // (language profile, FQN scan) works. .disc-tmp is project-local and
+        // user-visible; we clean up the file but not the directory (cheap to
+        // keep around between calls).
+        Path tmpDir = projectRoot.resolve(".disc-tmp");
+        Files.createDirectories(tmpDir);
+        Path tmpFile = Files.createTempFile(tmpDir, "validate-", ".puml");
+
+        try {
+            Files.writeString(tmpFile, req.puml(), StandardCharsets.UTF_8);
+            Path relPath = projectRoot.relativize(tmpFile);
+
+            String slashCommand = DISC_SLASH_COMMAND + " " + relPath.toString() + " --validate-only";
+            List<String> cmd = new ArrayList<>(List.of(
+                    "claude",
+                    "--dangerously-skip-permissions"
+            ));
+            Models.appendIfValid(cmd, req.model());
+            cmd.add("-p");
+            cmd.add(slashCommand);
+
+            ProcessBuilder pb = new ProcessBuilder(cmd)
+                    .directory(projectRoot.toFile())
+                    .redirectErrorStream(true)
+                    .redirectInput(new File("/dev/null"));
+
+            Process process;
+            try {
+                process = pb.start();
+            } catch (java.io.IOException e) {
+                String msg = e.getMessage() == null ? "" : e.getMessage();
+                if (msg.contains("No such file") || msg.contains("error=2")) {
+                    // Transport failure — soft pass with diagnostic hint.
+                    return java.util.Map.of(
+                            "refused", false,
+                            "error", "`claude` CLI not found on PATH"
+                    );
+                }
+                throw e;
+            }
+
+            StringBuilder buf = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8),
+                    READER_BUFFER_BYTES)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    buf.append(line).append('\n');
+                    if (buf.length() > PLAN_MAX_BYTES) {
+                        process.destroyForcibly();
+                        return java.util.Map.of(
+                                "refused", false,
+                                "error", "validate output exceeded " + PLAN_MAX_BYTES + " bytes"
+                        );
+                    }
+                }
+            }
+            boolean exited = process.waitFor(VALIDATE_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            if (!exited) {
+                process.destroyForcibly();
+                return java.util.Map.of(
+                        "refused", false,
+                        "error", "validate timed out after " + VALIDATE_TIMEOUT_SECONDS + "s"
+                );
+            }
+
+            String stdout = stripFences(buf.toString()).trim();
+
+            // Three shapes possible from the plugin: {"ok": true} JSON,
+            // REFUSAL markdown, or noise. Try JSON pass first.
+            if (stdout.startsWith("{") && stdout.contains("\"ok\"")) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    java.util.Map<String, Object> parsed = planJson.readValue(stdout, java.util.Map.class);
+                    if (Boolean.TRUE.equals(parsed.get("ok"))) {
+                        return java.util.Map.of("refused", false);
+                    }
+                } catch (tools.jackson.core.JacksonException ignored) {
+                    // Fall through to refusal detection.
+                }
+            }
+
+            if (looksLikeRefusal(stdout)) {
+                return java.util.Map.of(
+                        "refused", true,
+                        "message", stdout
+                );
+            }
+
+            // Neither a clean pass nor an identifiable refusal — soft pass
+            // with a diagnostic so the frontend can show it if it wants.
+            return java.util.Map.of(
+                    "refused", false,
+                    "error", "validate returned unexpected output: " + truncate(stdout, 200)
+            );
+        } finally {
+            try {
+                Files.deleteIfExists(tmpFile);
+            } catch (java.io.IOException ignored) {
+                // Best-effort cleanup; leftover .disc-tmp/validate-*.puml is
+                // harmless and gitignorable.
+            }
+        }
+    }
+
+    /** Validate is Step-1 only — should finish in seconds. Cap at 60s. */
+    private static final long VALIDATE_TIMEOUT_SECONDS = 60;
+
+    /** One regex to identify the plugin's refusal output. The plugin's SKILL.md
+     *  uses these stable markers; matching either is sufficient. The wizard
+     *  never parses *what* the refusal says — just whether one happened. */
+    private static boolean looksLikeRefusal(String stdout) {
+        if (stdout == null || stdout.isEmpty()) return false;
+        return stdout.contains("REFUSAL — STOP") || stdout.contains("#### REFUSAL");
     }
 
     /** Hard cap on plan-mode stdout. The envelope should be a few KB; 256 KB

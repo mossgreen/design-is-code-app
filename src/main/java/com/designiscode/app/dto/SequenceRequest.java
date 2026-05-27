@@ -14,9 +14,23 @@ import java.util.Map;
  * empty/null if none. If set, the prompt instructs the model to make every
  * call originate from this orchestrator and to omit the [*] boundary rows
  * (which the wizard manages separately).
+ *
+ * <p>{@code model} is optional — when present and on the allowlist
+ * ({@link com.designiscode.app.service.Models#ALLOWED}) it's forwarded as
+ * {@code --model X} to the {@code claude} subprocess. Otherwise the CLI's
+ * configured default model is used.
+ *
+ * <p>{@code refusalFeedback} is set only on retry. When the plugin's
+ * validator refuses the first attempt, the wizard re-posts the sequence
+ * request with the refusal markdown in this field; the prompt threads it
+ * into a "Previous attempt" section so the model can produce a corrected
+ * sequence. Null/blank on the first attempt — the prompt substitutes a
+ * "first attempt" sentinel.
  */
 public record SequenceRequest(
         String story,
         List<Map<String, Object>> participants,
-        String sut
+        String sut,
+        String model,
+        String refusalFeedback
 ) {}

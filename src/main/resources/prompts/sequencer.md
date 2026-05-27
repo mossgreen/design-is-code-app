@@ -32,6 +32,10 @@ If non-empty, the first call MUST have `caller` equal to this exact name.
 The wizard separately manages the `[*] -> SUT` entry and `[*] <-- SUT`
 return rows — do NOT include those.
 
+## Previous attempt (if any)
+
+{REFUSAL_FEEDBACK}
+
 # Task
 
 Produce an ordered sequence of calls that implements the story using the

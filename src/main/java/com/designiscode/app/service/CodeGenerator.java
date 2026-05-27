@@ -2,6 +2,7 @@ package com.designiscode.app.service;
 
 import com.designiscode.app.dto.GenerationOptions;
 import com.designiscode.app.dto.GenerationStatus;
+import com.designiscode.app.dto.ValidateRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
 /**
@@ -26,6 +27,14 @@ public interface CodeGenerator {
 
     /** Plan mode (dry-run): synchronous JSON envelope of what generation would do. */
     Object plan(GenerationOptions opts);
+
+    /** Validate mode (preflight): synchronous Step-1-only contract check on an
+     *  unsaved design. Returns {@code {refused: false}} on pass, or
+     *  {@code {refused: true, message: <plugin's refusal markdown>}} when the
+     *  plugin would refuse to generate. Transport failures return
+     *  {@code {refused: false, error: ...}} — treated as soft pass; the eventual
+     *  Run at Step 4 will surface real generator errors. */
+    Object validate(ValidateRequest req);
 
     /** Stream the generator's install / first-time setup over the emitter. */
     void streamInstall(ResponseBodyEmitter emitter);

@@ -2,6 +2,9 @@ package com.designiscode.app.service;
 
 import com.designiscode.app.dto.AcRow;
 import com.designiscode.app.dto.ScanCatalog;
+import com.designiscode.app.service.render.ElidedTreeRenderer;
+import com.designiscode.app.service.render.MarkdownRenderer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -13,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -40,27 +44,43 @@ import java.util.concurrent.TimeUnit;
 public class AnalyzeService {
 
     private static final String PROMPT_RESOURCE = "/prompts/analyzer.md";
+    private static final String RULES_DIR_RESOURCE = "/prompts/rules";
     private static final String PH_CONTEXT = "{CONTEXT}";
     private static final String PH_CODEBASE_SUMMARY = "{CODEBASE_SUMMARY}";
     private static final String PH_CODEBASE_TYPES = "{CODEBASE_TYPES}";
     private static final String PH_ACCEPTANCE_CRITERIA = "{ACCEPTANCE_CRITERIA}";
+    private static final String PH_RULES = "{RULES}";
 
     /** How many lexically-matched types to inject as grounding. Tuned to
      *  fit ~2 KB of prompt budget on a typical Spring sample. */
     private static final int TOP_K_TYPES = 20;
+
+    /** Soft byte cap passed to the renderer. ~2 KB matches the prior implicit
+     *  budget of the markdown renderer; ElidedTreeRenderer degrades detail
+     *  gracefully when it would exceed this. */
+    private static final int CODEBASE_TYPES_MAX_BYTES = 2048;
 
     /** Hard timeout for the subprocess. Claude calls usually return in
      *  ~10–30 s; anything past 2 min is almost certainly a hang. */
     private static final long TIMEOUT_SECONDS = 120;
 
     private final String promptTemplate;
+    private final String rulesSection;
+    private final CatalogRenderer renderer;
     private final ObjectMapper json = JsonMapper.builder().build();
 
-    public AnalyzeService() throws IOException {
+    public AnalyzeService(
+            @Value("${disc.catalog.renderer:elided}") String rendererName
+    ) throws IOException {
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
+        this.rulesSection = loadRulesSection();
+        this.renderer = switch (rendererName == null ? "elided" : rendererName.toLowerCase()) {
+            case "markdown" -> new MarkdownRenderer();
+            default -> new ElidedTreeRenderer();
+        };
     }
 
-    public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria)
+    public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria, String model)
             throws IOException, InterruptedException {
         if (context == null || context.isBlank()) {
             throw new IllegalArgumentException("context is required");
@@ -68,20 +88,25 @@ public class AnalyzeService {
 
         CatalogFilter.FilteredCatalog filtered = CatalogFilter.filter(context, catalog, TOP_K_TYPES);
         String summaryMd = renderSummary(filtered);
-        String typesMd = renderTypes(filtered);
+        String typesMd = renderer.render(filtered, CODEBASE_TYPES_MAX_BYTES);
         String acMd = renderAcceptanceCriteria(acceptanceCriteria);
 
         String prompt = promptTemplate
                 .replace(PH_CONTEXT, context.trim())
                 .replace(PH_CODEBASE_SUMMARY, summaryMd)
                 .replace(PH_CODEBASE_TYPES, typesMd)
-                .replace(PH_ACCEPTANCE_CRITERIA, acMd);
+                .replace(PH_ACCEPTANCE_CRITERIA, acMd)
+                .replace(PH_RULES, rulesSection);
 
-        ProcessBuilder pb = new ProcessBuilder(
+        List<String> args = new ArrayList<>(List.of(
                 "claude",
-                "--dangerously-skip-permissions",
-                "-p", prompt
-        )
+                "--dangerously-skip-permissions"
+        ));
+        Models.appendIfValid(args, model);
+        args.add("-p");
+        args.add(prompt);
+
+        ProcessBuilder pb = new ProcessBuilder(args)
                 .redirectErrorStream(true)
                 .redirectInput(new File("/dev/null"));
 
@@ -181,45 +206,6 @@ public class AnalyzeService {
         return sb.toString().trim();
     }
 
-    /** Lexically top-K types with their signatures. Empty string when nothing matches. */
-    private String renderTypes(CatalogFilter.FilteredCatalog f) {
-        if (f.topTypes().isEmpty()) {
-            return "_No directly-relevant existing types in this codebase for this story._";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (ScanCatalog.TypeRecord t : f.topTypes()) {
-            sb.append("- `").append(t.fqn()).append("` (").append(t.role()).append(", ").append(t.kind()).append(")");
-            if (t.purpose() != null && !t.purpose().isBlank()) {
-                sb.append("\n    Purpose: ").append(t.purpose());
-            }
-            if (t.extendsType() != null) {
-                sb.append("\n    Extends: ").append(t.extendsType());
-            }
-            if (!t.implementsTypes().isEmpty()) {
-                sb.append("\n    Implements: ").append(String.join(", ", t.implementsTypes()));
-            }
-            if (!t.fields().isEmpty()) {
-                sb.append("\n    Fields: ");
-                sb.append(t.fields().stream()
-                        .limit(8)
-                        .map(fld -> fld.name() + ": " + fld.type())
-                        .reduce((a, b) -> a + ", " + b).orElse(""));
-            }
-            List<ScanCatalog.MethodRecord> methods = t.publicMethods();
-            if (!methods.isEmpty()) {
-                sb.append("\n    Methods:");
-                for (ScanCatalog.MethodRecord m : methods.stream().limit(8).toList()) {
-                    sb.append("\n      - ").append(m.signature());
-                    if (m.purpose() != null && !m.purpose().isBlank()) {
-                        sb.append("  // ").append(m.purpose());
-                    }
-                }
-            }
-            sb.append("\n\n");
-        }
-        return sb.toString().trim();
-    }
-
     // --- helpers ---
 
     private static String loadResource(String path) throws IOException {
@@ -227,6 +213,101 @@ public class AnalyzeService {
             if (in == null) throw new IOException("classpath resource not found: " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    /**
+     * Concatenate every rule under {@code /prompts/rules/} into a single
+     * block. Each rule's frontmatter is stripped — only the body reaches
+     * the model, headed with the rule id from the frontmatter so the
+     * model can reference it from the "Self-check before returning"
+     * section of {@code analyzer.md}.
+     *
+     * <p>Falls back to a sentinel string when the rules dir is missing so
+     * the {@code {RULES}} placeholder is never left literal in the prompt.
+     */
+    private String loadRulesSection() {
+        try {
+            java.net.URL dirUrl = AnalyzeService.class.getResource(RULES_DIR_RESOURCE);
+            if (dirUrl == null) return "_No LLM-judged rules registered._";
+            java.nio.file.Path dirPath;
+            try {
+                dirPath = java.nio.file.Paths.get(dirUrl.toURI());
+            } catch (Exception jarOrOdd) {
+                // When running from a packaged jar the resources aren't a
+                // walkable Path. We fall back to a hard-coded list of known
+                // rule files at the top level. Add new rule files here OR
+                // run from gradle bootRun (which exposes classpath as files).
+                return loadRulesFromKnownList();
+            }
+            if (!java.nio.file.Files.isDirectory(dirPath)) return "_No LLM-judged rules registered._";
+
+            StringBuilder out = new StringBuilder();
+            try (var stream = java.nio.file.Files.list(dirPath)) {
+                java.util.List<java.nio.file.Path> files = stream
+                        .filter(p -> p.toString().endsWith(".md"))
+                        .filter(java.nio.file.Files::isRegularFile)
+                        .sorted()
+                        .toList();
+                for (java.nio.file.Path p : files) {
+                    String body = new String(java.nio.file.Files.readAllBytes(p), StandardCharsets.UTF_8);
+                    String stripped = stripFrontmatter(body);
+                    String id = extractFrontmatterId(body);
+                    if (stripped.isBlank()) continue;
+                    out.append("## Rule ").append(id == null ? p.getFileName().toString() : id).append("\n\n");
+                    out.append(stripped.trim()).append("\n\n");
+                }
+            }
+            return out.length() == 0 ? "_No LLM-judged rules registered._" : out.toString().trim();
+        } catch (IOException e) {
+            return "_Failed to load rules: " + e.getMessage() + "_";
+        }
+    }
+
+    /** Jar-mode fallback: the known rule filenames. Mirrors the
+     *  Files.list() result when running from the IDE / gradle bootRun. */
+    private String loadRulesFromKnownList() {
+        String[] knownFiles = {
+                "composition-over-inheritance.md",
+                "invariance.md",
+                "leaf-freestandingness.md",
+                "R2-purpose-specificity.md",
+                "R4a-feature-envy.md"
+        };
+        StringBuilder out = new StringBuilder();
+        for (String fname : knownFiles) {
+            try (InputStream in = AnalyzeService.class.getResourceAsStream(RULES_DIR_RESOURCE + "/" + fname)) {
+                if (in == null) continue;
+                String body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                String stripped = stripFrontmatter(body);
+                String id = extractFrontmatterId(body);
+                if (stripped.isBlank()) continue;
+                out.append("## Rule ").append(id == null ? fname : id).append("\n\n");
+                out.append(stripped.trim()).append("\n\n");
+            } catch (IOException ignored) {
+            }
+        }
+        return out.length() == 0 ? "_No LLM-judged rules registered._" : out.toString().trim();
+    }
+
+    private static String stripFrontmatter(String md) {
+        String t = md == null ? "" : md;
+        if (!t.startsWith("---")) return t;
+        int end = t.indexOf("\n---", 3);
+        if (end < 0) return t;
+        int next = t.indexOf('\n', end + 4);
+        return next < 0 ? "" : t.substring(next + 1);
+    }
+
+    private static String extractFrontmatterId(String md) {
+        if (md == null || !md.startsWith("---")) return null;
+        int fmEnd = md.indexOf("\n---", 3);
+        if (fmEnd < 0) return null;
+        String fm = md.substring(0, fmEnd);
+        for (String line : fm.split("\n")) {
+            String l = line.trim();
+            if (l.startsWith("id:")) return l.substring(3).trim();
+        }
+        return null;
     }
 
     private static String readAll(InputStream in) throws IOException {

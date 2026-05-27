@@ -5,22 +5,34 @@ import com.designiscode.app.dto.ScanCatalog;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Pure utility — given a user story and a full {@link ScanCatalog}, return
- * the top-K types most lexically relevant to the story plus the always-
- * compact summary slices (packages, glossary, conventions).
+ * the types most relevant to the story (lexical seeds + 1-hop structural
+ * neighbors) plus the always-compact summary slices (packages, glossary,
+ * conventions).
+ *
+ * <p>Pipeline: {@code score → seeds (top K/2) → expand 1-hop → merge → truncate}.
+ * The neighborhood expansion uses edges already extracted by ScanService
+ * ({@code extends}, {@code implements}, field types, method param/return
+ * types), so a relevant type whose <em>name</em> doesn't appear in the story
+ * still surfaces if a name-matched type points at it.
  *
  * <p>Why lexical not embeddings? Embeddings need a model call or a local
- * model bundle; lexical is good enough to ground "the codebase has Cart,
- * CartRepository, CartItem" when the story mentions "cart". For synonym
- * misses (story says "basket", codebase has "ShoppingBag") the user can
- * still rename in Step 2 — embeddings is a v2 upgrade if accuracy stalls.
+ * model bundle; lexical seeds + structural expansion are good enough to
+ * ground "the codebase has Cart, CartRepository, CartItem" when the story
+ * mentions "cart", and to surface {@code Cart} when the story says
+ * "checkout" but {@code CheckoutService} has a {@code Cart} field —
+ * embeddings is a v2 upgrade if accuracy stalls.
  *
- * <p>Scoring (per type):
+ * <p>Scoring (per type, used for seed selection):
  * <ul>
  *   <li>type-name token matches story token → +5 (camelCase-split)</li>
  *   <li>method-name token matches story token → +2</li>
@@ -28,8 +40,8 @@ import java.util.Set;
  *   <li>role boost: entity / service / repository / value-object × 1.3;
  *       dto / controller / config / exception × 0.7</li>
  * </ul>
- * Types scoring 0 are dropped; the survivors are sorted high-to-low and
- * truncated at {@code topK}.
+ * Types scoring 0 are dropped as seed candidates but can still surface as
+ * structural neighbors of a higher-scoring seed.
  */
 public final class CatalogFilter {
 
@@ -67,10 +79,20 @@ public final class CatalogFilter {
             if (s > 0) scored.add(new Scored(t, s));
         }
         scored.sort(Comparator.comparingDouble(Scored::score).reversed());
-        List<ScanCatalog.TypeRecord> top = scored.stream()
-                .limit(Math.max(0, topK))
+
+        // Split budget: half for high-scoring lexical seeds, half for 1-hop
+        // neighbors of those seeds. This keeps a lexical-noise-heavy story
+        // (many name matches) from crowding out structural neighbors entirely,
+        // while still letting an all-structural story fall back to seeds.
+        int safeK   = Math.max(0, topK);
+        int seedCap = Math.max(1, safeK / 2);
+        List<ScanCatalog.TypeRecord> seeds = scored.stream()
+                .limit(seedCap)
                 .map(Scored::type)
                 .toList();
+
+        List<ScanCatalog.TypeRecord> neighbors = expandNeighborhood(seeds, catalog.types());
+        List<ScanCatalog.TypeRecord> top = mergeRespectingOrder(seeds, neighbors, safeK);
 
         return new FilteredCatalog(
                 catalog.packages(),
@@ -78,6 +100,87 @@ public final class CatalogFilter {
                 catalog.conventions(),
                 top
         );
+    }
+
+    // --- neighborhood expansion ---
+
+    /** Generics + arrays + nested-generic separators. Captures every
+     *  PascalCase identifier from a rendered type string like
+     *  {@code Map<String, List<Order>>}. */
+    private static final Pattern TYPE_IDENT = Pattern.compile("([A-Z][A-Za-z0-9_]*)");
+
+    /**
+     * For each seed, walk one hop along edges already extracted by ScanService —
+     * {@code extends}, {@code implements}, field types, method param types,
+     * method return types — and collect every catalog type whose FQN or simple
+     * name appears as an edge target. The result excludes the seeds themselves
+     * and de-duplicates across seeds.
+     *
+     * <p>Match policy: an edge token (often a simple name like "Order" or a
+     * generic-wrapped string like "List&lt;Order&gt;") matches a catalog type
+     * if either (a) the token equals the type's FQN, or (b) one of the
+     * PascalCase identifiers inside the token equals the type's simple name.
+     * Simple-name collisions across packages will over-include, but at our
+     * scale that's a feature (more candidates) not a bug.
+     */
+    static List<ScanCatalog.TypeRecord> expandNeighborhood(
+            List<ScanCatalog.TypeRecord> seeds,
+            List<ScanCatalog.TypeRecord> allTypes
+    ) {
+        if (seeds.isEmpty() || allTypes.isEmpty()) return List.of();
+
+        Set<String> seedFqns = new HashSet<>();
+        for (ScanCatalog.TypeRecord s : seeds) seedFqns.add(s.fqn());
+
+        // Collect all edge tokens emitted by any seed.
+        Set<String> edgeIdents = new HashSet<>();
+        Set<String> edgeFqns   = new HashSet<>();
+        for (ScanCatalog.TypeRecord s : seeds) {
+            addEdge(edgeIdents, edgeFqns, s.extendsType());
+            for (String impl : s.implementsTypes()) addEdge(edgeIdents, edgeFqns, impl);
+            for (ScanCatalog.FieldRecord f : s.fields()) addEdge(edgeIdents, edgeFqns, f.type());
+            for (ScanCatalog.MethodRecord m : s.publicMethods()) {
+                addEdge(edgeIdents, edgeFqns, m.returnType());
+                for (ScanCatalog.FieldRecord p : m.params()) addEdge(edgeIdents, edgeFqns, p.type());
+            }
+        }
+
+        // Index catalog by simple name; preserve insertion order for stable output.
+        Map<String, List<ScanCatalog.TypeRecord>> bySimple = new LinkedHashMap<>();
+        for (ScanCatalog.TypeRecord t : allTypes) {
+            bySimple.computeIfAbsent(t.name(), k -> new ArrayList<>()).add(t);
+        }
+
+        LinkedHashSet<ScanCatalog.TypeRecord> out = new LinkedHashSet<>();
+        for (ScanCatalog.TypeRecord t : allTypes) {
+            if (seedFqns.contains(t.fqn())) continue;
+            if (edgeFqns.contains(t.fqn())) { out.add(t); continue; }
+            if (edgeIdents.contains(t.name())) out.add(t);
+        }
+        return new ArrayList<>(out);
+    }
+
+    /** Pull every PascalCase identifier out of a possibly-generic type string
+     *  ("Map&lt;String, Order&gt;" → {Map, String, Order}) and also record
+     *  the raw token in case it's already an FQN. */
+    private static void addEdge(Set<String> idents, Set<String> fqns, String raw) {
+        if (raw == null || raw.isBlank()) return;
+        String trimmed = raw.trim();
+        if (trimmed.contains(".")) fqns.add(trimmed);
+        Matcher m = TYPE_IDENT.matcher(trimmed);
+        while (m.find()) idents.add(m.group(1));
+    }
+
+    /** Concatenate seeds (in score order) with neighbors (in catalog order),
+     *  de-duplicated by FQN, truncated to {@code cap}. */
+    static List<ScanCatalog.TypeRecord> mergeRespectingOrder(
+            List<ScanCatalog.TypeRecord> seeds,
+            List<ScanCatalog.TypeRecord> neighbors,
+            int cap
+    ) {
+        LinkedHashSet<ScanCatalog.TypeRecord> merged = new LinkedHashSet<>(seeds);
+        merged.addAll(neighbors);
+        return merged.stream().limit(Math.max(0, cap)).toList();
     }
 
     // --- internals ---

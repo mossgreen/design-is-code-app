@@ -624,6 +624,16 @@ button.secondary {
 
 button.secondary:hover { background: #f9fafb; }
 
+button.secondary.danger {
+    color: #991b1b;
+    border-color: #fecaca;
+}
+
+button.secondary.danger:hover {
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+
 button.small {
     padding: 0.45rem 0.85rem;
     font-size: 0.85rem;
@@ -743,6 +753,57 @@ button.small {
 .plan-row.action-update  { background: rgba(217, 119, 6, 0.05); }
 .plan-row.action-skip    { background: rgba(225, 29, 72, 0.05); color: var(--text-3); }
 
+/* Plan-preview group headers (Entities | Participants) and entity rows. */
+.plan-group-header {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    padding: 0.45rem 0.75rem 0.25rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2, #f8fafc);
+}
+
+.plan-row.plan-row-entity .plan-action-static {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--text-2);
+    text-align: center;
+}
+
+.plan-row.plan-row-indent .plan-participant {
+    padding-left: 1rem;
+    position: relative;
+}
+
+.plan-row.plan-row-indent .plan-participant::before {
+    content: '↳';
+    position: absolute;
+    left: 0;
+    color: var(--text-3);
+}
+
+.plan-kind-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-2);
+    background: var(--surface);
+    font-family: var(--font-mono);
+}
+
+.plan-kind-note {
+    margin-left: 0.4rem;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+    font-weight: 400;
+}
+
 .plan-conflicts {
     margin-top: 0.6rem;
     padding: 0.55rem 0.7rem;
@@ -778,63 +839,6 @@ button.small {
 }
 
 /* Plugin's plan response (rendered after /api/plan returns) */
-.preview-result {
-    margin-top: 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    padding: 0.65rem 0.85rem;
-}
-
-.preview-result-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.4rem;
-}
-
-.preview-result-meta {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    color: var(--text-3);
-}
-
-.preview-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    color: var(--text);
-}
-
-.preview-list .preview-action-create  { color: var(--emerald); }
-.preview-list .preview-action-update  { color: var(--amber); }
-.preview-list .preview-action-reuse   { color: var(--text-3); }
-
-.preview-list .preview-action-marker {
-    display: inline-block;
-    width: 1rem;
-}
-
-.preview-list .preview-detail {
-    display: block;
-    padding-left: 1rem;
-    color: var(--text-3);
-}
-
-.preview-warnings {
-    margin-top: 0.5rem;
-    padding: 0.4rem 0.6rem;
-    border-left: 3px solid var(--amber);
-    background: #fffbeb;
-    color: #92400e;
-    font-size: var(--fs-xs);
-}
-
 .field { margin-bottom: 1.25rem; }
 
 .field label {
@@ -1624,6 +1628,58 @@ button.small {
     border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--border));
     border-left: 3px solid var(--amber);
     border-radius: var(--radius);
+}
+
+/* Step-2 preflight refusal panel — surfaced when /api/generator/validate
+   returns refused:true. Renders the plugin's REFUSAL markdown verbatim in a
+   <pre> (it's already plain text with code fences etc.); the wizard never
+   reinterprets the content. Red palette to distinguish from the amber
+   .plugin-missing warning. */
+.plugin-refusal-panel {
+    margin-top: 0.9rem;
+    padding: 0.85rem 1rem;
+    background: color-mix(in srgb, var(--rose) 7%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--rose) 35%, var(--border));
+    border-left: 3px solid var(--rose);
+    border-radius: var(--radius);
+}
+
+.plugin-refusal-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.55rem;
+    color: var(--text);
+    font-size: var(--fs-sm);
+}
+
+.plugin-refusal-icon {
+    color: var(--rose);
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.plugin-refusal-sub {
+    color: var(--text-3);
+    font-size: 0.82rem;
+    font-weight: 400;
+}
+
+.plugin-refusal-body {
+    margin: 0;
+    padding: 0.75rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--rose) 20%, var(--border));
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 480px;
+    overflow-y: auto;
 }
 
 .plugin-missing-head {
@@ -3173,19 +3229,11 @@ button.small {
     margin: 0;
 }
 
-.signoff-avatar {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent);
-    border: 1px solid var(--accent-border);
-    font-family: var(--font-sans);
-    font-weight: 700;
-    font-size: 0.8rem;
+.signoff-message {
+    margin: 0 0 0.55rem;
+    font-size: 0.88rem;
+    color: var(--text-2);
+    line-height: 1.45;
 }
 
 .signoff-name {
@@ -3473,6 +3521,44 @@ button.small {
     background: #fef2f2;
     border: 1px solid #fecaca;
     color: #991b1b;
+}
+
+.package-suggest {
+    margin-top: 0.4rem;
+    padding: 0.4rem 0.65rem;
+    border-radius: 6px;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    font-size: 0.82rem;
+    color: #075985;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+}
+
+.package-suggest code {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    background: #e0f2fe;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    color: #075985;
+}
+
+.package-suggest-apply {
+    background: #0284c7;
+    color: #ffffff;
+    border: none;
+    padding: 0.25rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.package-suggest-apply:hover {
+    background: #0369a1;
 }
 
 /* --- Decision-table chip on step rows --- */
@@ -4385,3 +4471,74 @@ body[data-participant-hover] #ac-rows .ac-row.participant-covers {
     font-style: italic;
     font-size: 0.85rem;
 }
+
+/* === Findings engine: R2 / R4a / R4c chips, declared-only fields,
+       step-purpose copy lines. ============================================ */
+
+/* Jackson-style operational principle, declared per participant; sits
+   between the purpose and the methods list as muted italic. */
+.pc-card-op-principle {
+    padding: 0.35rem 0.75rem 0.5rem;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: #6b7280;
+    font-style: italic;
+    border-bottom: 1px solid var(--border);
+    background: #fafbfc;
+    overflow-wrap: anywhere;
+}
+
+/* Meyer/DbC-style invariants — a tiny foldable so cards don't grow. */
+.pc-card-invariants {
+    padding: 0.35rem 0.75rem 0.5rem;
+    font-size: 0.78rem;
+    color: #4b5563;
+    border-top: 1px solid var(--border);
+    background: #fafbfc;
+}
+.pc-card-invariants summary {
+    cursor: pointer;
+    color: #6b7280;
+    font-weight: 500;
+    list-style: disclosure-closed;
+}
+.pc-card-invariants[open] summary { list-style: disclosure-open; }
+.pc-card-invariants ul {
+    margin: 0.35rem 0 0;
+    padding-left: 1.1rem;
+}
+.pc-card-invariants li { margin: 0.15rem 0; line-height: 1.4; }
+
+/* Step-3 review: surface declared op-principle + invariants under each
+   participant line for the sign-off ritual. */
+.review-op-principle {
+    margin-top: 0.2rem;
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.85rem;
+}
+.review-invariants-label {
+    margin-top: 0.3rem;
+    color: #6b7280;
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+.review-invariants {
+    margin: 0.1rem 0 0;
+    padding-left: 1.1rem;
+    color: #4b5563;
+    font-size: 0.85rem;
+}
+
+/* R3 — one-line purpose under each wizard step heading. Designed copy,
+   not a description. Sits directly below the <h2>, before the first
+   section block, in muted italic. */
+.step-purpose {
+    margin: -0.35rem 0 1rem;
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.93rem;
+    max-width: 64ch;
+    line-height: 1.45;
+}
+

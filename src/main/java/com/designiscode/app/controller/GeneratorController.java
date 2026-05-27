@@ -3,6 +3,7 @@ package com.designiscode.app.controller;
 import com.designiscode.app.dto.CancelRequest;
 import com.designiscode.app.dto.GenerationOptions;
 import com.designiscode.app.dto.GenerationStatus;
+import com.designiscode.app.dto.ValidateRequest;
 import com.designiscode.app.service.CodeGenerator;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -54,6 +55,18 @@ public class GeneratorController {
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Plan failed: " + e.getMessage()));
         }
+    }
+
+    @PostMapping(value = "/validate", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> validate(@RequestBody ValidateRequest req) {
+        try {
+            return ResponseEntity.ok(generator.validate(req));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+        // Transport failures inside the generator are turned into a soft-pass
+        // envelope ({refused:false, error:...}) by ClaudeCodePluginGenerator,
+        // so no catch-all is needed here — those reach the client as 200 OK.
     }
 
     @PostMapping(value = "/install", produces = MediaType.TEXT_PLAIN_VALUE)

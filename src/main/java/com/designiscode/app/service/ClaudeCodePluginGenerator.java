@@ -4,6 +4,7 @@ import com.designiscode.app.dto.GenerationOptions;
 import com.designiscode.app.dto.GenerationStatus;
 import com.designiscode.app.dto.PluginStatus;
 import com.designiscode.app.dto.RunRequest;
+import com.designiscode.app.dto.ValidateRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 
@@ -64,6 +65,24 @@ public class ClaudeCodePluginGenerator implements CodeGenerator {
             // stays free of Claude-specific checked types. Controller maps
             // RuntimeException to 500.
             throw new RuntimeException("Plan failed: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public Object validate(ValidateRequest req) {
+        try {
+            return runService.validate(req);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            // Validate is a preflight — a transport-level failure should not
+            // block the user. Return a soft-pass envelope with an error note
+            // so the frontend can advance to Step 3 (the eventual Run will
+            // surface the real failure if any).
+            return java.util.Map.of(
+                    "refused", false,
+                    "error", "Preflight failed: " + e.getMessage()
+            );
         }
     }
 

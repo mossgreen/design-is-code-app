@@ -41,10 +41,15 @@ const state = {
     sutName: '',
     analyzeError: null,
     analyzing: false,
-    // Step 3 team-signoff gate — four hardcoded reviewers. All four must be
-    // checked before the Generate button enables. In-memory only; resets on
-    // page reload. Persists across step-back navigation in the same session.
-    signoffs: { peter: false, john: false, chen: false, wang: false }
+    // Step 3 team-signoff gate — single checkbox confirming the team has
+    // reviewed and approved the design. Must be checked before the Generate
+    // button enables. In-memory only; resets on page reload. Persists across
+    // step-back navigation in the same session.
+    teamSignedOff: false,
+    // True when the most recent Analyze chain ended with the plugin still
+    // refusing after the one allowed retry. Blocks Continue-to-Sign-off
+    // until the next Analyze. Cleared at the start of every runAnalyze().
+    validatorRefused: false
 };
 
 // Java package name validator: at least two segments, each starting with a
@@ -468,12 +473,18 @@ function renderAcRows() {
         wrap.className = 'ac-row';
         wrap.setAttribute('data-ac-index', String(idx));
 
+        const hasParticipants = (state.participants || []).length > 0;
         const carriers = participantsCoveringAc(idx);
-        const carrierWarn = carriers.length === 0 ? ' is-warn' : '';
-        const carrierTitle = carriers.length === 0
-            ? 'no participant covers this scenario — analyse again, or this AC may be redundant'
-            : `Carried by: ${carriers.map(p => p.name || '?').join(', ')}`;
-        const carrierChip = `<span class="ac-carrier-chip${carrierWarn}" title="${escapeAttr(carrierTitle)}">${carriers.length} ${carriers.length === 1 ? 'participant' : 'participants'}</span>`;
+        // Hide the per-row carrier pill until the analyzer has produced
+        // participants — otherwise an empty proposal renders as "0
+        // PARTICIPANTS" in red on every row, which reads as an error.
+        const carrierChip = !hasParticipants ? '' : (() => {
+            const carrierWarn = carriers.length === 0 ? ' is-warn' : '';
+            const carrierTitle = carriers.length === 0
+                ? 'no participant covers this scenario — analyse again, or this AC may be redundant'
+                : `Carried by: ${carriers.map(p => p.name || '?').join(', ')}`;
+            return `<span class="ac-carrier-chip${carrierWarn}" title="${escapeAttr(carrierTitle)}">${carriers.length} ${carriers.length === 1 ? 'participant' : 'participants'}</span>`;
+        })();
 
         wrap.innerHTML = `
             <div class="ac-field">
@@ -513,7 +524,11 @@ function renderAcRows() {
     }
     if (step2Els.acCoverage) {
         const { covered, total } = acCoverageStats();
-        if (total === 0) {
+        const hasParticipants = (state.participants || []).length > 0;
+        if (total === 0 || !hasParticipants) {
+            // Coverage is only meaningful after the analyzer has produced
+            // participants. Before that, a "0 / N covered" warning would
+            // read as an error when nothing has even been proposed yet.
             step2Els.acCoverage.textContent = '';
             step2Els.acCoverage.classList.remove('is-warn');
         } else {
@@ -535,6 +550,10 @@ if (step2Els.acAdd) {
 if (step2Els.analyzeBtn) {
     step2Els.analyzeBtn.addEventListener('click', () => {
         if (!state.userStory || !state.userStory.trim()) return;
+        // Block double-clicks while the Analyze chain (analyzer + sequencer
+        // + validator + optional retry) is in flight — worst case ~2.5 min,
+        // long enough that concurrent chains would race on state.* mutations.
+        if (state.analyzing) return;
         // Re-analyzing wipes downstream design so the next state is
         // produced fresh from the current story + AC.
         state.story = '';
@@ -771,6 +790,10 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
         implByDefault,
         methods: [],
         purpose,
+        // Declared-only metadata. Defaults are empty/blank so a hand-added
+        // participant doesn't synthesise fake scenarios or invariants.
+        operationalPrinciple: '',
+        invariants: [],
         existingFqn: null,
         signatureConflicts: [],
         // Participant kind (informs Step-2 chips; .puml emission is uniform
@@ -878,6 +901,11 @@ function adoptEntity(raw) {
         kind,
         purpose: (raw.purpose || '').trim(),
         existingFqn,
+        // ownedBy / exposure are analyzer-supplied design metadata. The
+        // analyzer reads ownedBy in its R4a self-check before emitting;
+        // here it's pass-through with safe defaults, never required for codegen.
+        ownedBy: (raw.ownedBy || '').trim() || null,
+        exposure: (raw.exposure || '').trim() || 'internal',
         // Reuse entities defer to the existing source — keep authoring
         // arrays empty so the UI doesn't pretend to author them.
         fields: existingFqn ? [] : fields,
@@ -1059,12 +1087,36 @@ function adoptParticipant(node) {
     else if (node.isLeaf === true) kind = 'leaf';
     else kind = 'orchestrator';
 
+    // Capture analyzer-supplied metadata. operationalPrinciple + invariants
+    // are declared-only (rendered, not checked); per-method touches are
+    // kept as design metadata even though no rule engine reads them now
+    // (the analyzer self-applies R4a before emitting).
+    const operationalPrinciple = (node.operationalPrinciple || '').trim();
+    const invariants = Array.isArray(node.invariants)
+        ? node.invariants.map(s => (s || '').toString().trim()).filter(Boolean)
+        : [];
+    const behaviorsByName = Object.fromEntries((node.behaviors || []).map(b => [b && b.name, b]));
+    methods.forEach(m => {
+        const src = behaviorsByName[m.name];
+        m.touches = (src && Array.isArray(src.touches))
+            ? src.touches
+                .filter(t => t && t.entity)
+                .map(t => ({
+                    entity: (t.entity || '').trim(),
+                    fields: Array.isArray(t.fields) ? t.fields.map(f => (f || '').toString().trim()).filter(Boolean) : [],
+                    mode: (t.mode || 'read').toString().trim().toLowerCase()
+                }))
+            : [];
+    });
+
     return {
         id: newId(),
         name,
         implByDefault,
         methods,
         purpose,
+        operationalPrinciple,
+        invariants,
         existingFqn,
         signatureConflicts,
         kind,
@@ -1147,6 +1199,10 @@ function enterStep2() {
 }
 
 async function runAnalyze(context) {
+    // Every Analyze starts from a clean slate — the prior refusal (if any)
+    // is no longer load-bearing as soon as the user asks for a fresh design.
+    state.validatorRefused = false;
+    hidePluginRefusal();
     state.analyzing = true;
     state.analyzeError = null;
     showAnalyzeBanner('Analysing your story…', { spinning: true });
@@ -1154,10 +1210,11 @@ async function runAnalyze(context) {
         // Drop empty AC rows so the prompt only includes meaningful criteria.
         const ac = (state.ac || []).filter(r =>
             (r.given || '').trim() || (r.when || '').trim() || (r.then || '').trim());
+        const model = (document.getElementById('analyze-model') || {}).value || null;
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac })
+            body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac, model })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
@@ -1181,12 +1238,14 @@ async function runAnalyze(context) {
         renderEntities();
         renderSequence();
 
-        // Chain straight into sequence composition. Two-phase LLM flow:
-        // analyse → participants land → compose → sequence + live diagram.
-        // The banner stays visible across both phases for a single
-        // continuous progress indicator.
+        // Chain straight into sequence composition + plugin validation.
+        // Three-phase LLM flow: analyse → compose → validate. One feedback
+        // retry on the sequencer if the validator refuses; if it refuses
+        // again, surface the refusal panel and stop. The banner narrates
+        // each phase across the single continuous progress indicator.
         if (state.participants.length > 0) {
-            await runSequence();
+            const ok1 = await runSequence();
+            if (!ok1) return;
             // Auto-mark the SUT (the analyzer's `sut` field, matched by
             // name) so the entry interaction [*] -> SUT is auto-managed.
             // Falls back to the first participant if the name doesn't
@@ -1195,6 +1254,24 @@ async function runAnalyze(context) {
                 ? state.participants.find(p => p.name === state.sutName)
                 : null;
             setSut((sut || state.participants[0]).id);
+
+            // Phase 3: validate against the codegen plugin. One retry on refusal.
+            showAnalyzeBanner('Validating the design…', { spinning: true });
+            let result = await runValidator();
+            if (result && result.refused) {
+                showAnalyzeBanner('Refining the sequence…', { spinning: true });
+                const ok2 = await runSequence(result.message);
+                if (!ok2) return;
+                showAnalyzeBanner('Validating the design…', { spinning: true });
+                result = await runValidator();
+                if (result && result.refused) {
+                    state.validatorRefused = true;
+                    hideAnalyzeBanner();
+                    showPluginRefusal(result.message);
+                    return;
+                }
+            }
+            hideAnalyzeBanner();
         } else {
             hideAnalyzeBanner();
         }
@@ -1341,10 +1418,10 @@ function applyResolvedSequence(resolved) {
     if (ret) state.sequence.push(ret);
 }
 
-async function runSequence() {
+async function runSequence(refusalFeedback = null) {
     if (!state.userStory || state.participants.length === 0) {
         hideAnalyzeBanner();
-        return;
+        return false;
     }
     showAnalyzeBanner('Composing the sequence…', { spinning: true });
     try {
@@ -1361,7 +1438,9 @@ async function runSequence() {
                     args: m.inputs || [],
                     returns: m.output || ''
                 }))
-            }))
+            })),
+            model: (document.getElementById('analyze-model') || {}).value || null,
+            refusalFeedback: refusalFeedback || null
         };
         const res = await fetch('/api/sequence', {
             method: 'POST',
@@ -1377,7 +1456,7 @@ async function runSequence() {
                 'AI returned no resolvable calls. Edit the story or add participants manually.',
                 { spinning: false, error: true, dismissable: true }
             );
-            return;
+            return false;
         }
         applyResolvedSequence(resolved);
         // AI sequence composition can invent new methods on participants
@@ -1389,15 +1468,53 @@ async function runSequence() {
         renderSequence();
 
         if (warnings.length > 0) {
+            // Non-fatal — sequence is populated, just imperfect. Surface the
+            // warnings but keep the success contract so the validator phase
+            // can still run.
             showAnalyzeBanner(warnings.join(' · '), { spinning: false, error: true, dismissable: true });
-        } else {
-            hideAnalyzeBanner();
         }
+        return true;
     } catch (err) {
         showAnalyzeBanner(
             "Couldn't compose the sequence: " + err.message + '. Add steps manually if needed.',
             { spinning: false, error: true, dismissable: true }
         );
+        return false;
+    }
+}
+
+// --- Plugin validator (chained at the end of runAnalyze) ---
+//
+// Asks the codegen plugin's Step 1 (--validate-only) whether the in-progress
+// .puml would be refused. Three outcomes from the server:
+//   {refused: false}              → ok
+//   {refused: false, error: ...}  → transport failure; soft-pass (Step 4 will
+//                                   surface real generator errors anyway)
+//   {refused: true, message}      → plugin refused; caller decides retry
+// We never throw — failures are advisory at the wizard level.
+async function runValidator() {
+    if (!state.projectPath) return { ok: true };
+    try {
+        const res = await fetch('/api/generator/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                projectPath: state.projectPath,
+                puml: emitPlantUml(),
+                model: 'claude-haiku-4-5'
+            })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (body && body.refused === true) {
+            return { refused: true, message: body.message || '(no message from plugin)' };
+        }
+        if (body && body.error) {
+            console.warn('validator transport failure:', body.error);
+        }
+        return { ok: true };
+    } catch (err) {
+        console.warn('runValidator failed:', err);
+        return { ok: true };
     }
 }
 
@@ -1637,6 +1754,24 @@ function renderParticipants() {
             ? `<div class="pc-card-purpose" title="${escapeAttr(purposeText)}">${escapeHtml(purposeText)}</div>`
             : `<div class="pc-card-purpose is-empty">Click to describe what this does</div>`;
 
+        // Jackson-style operational principle ("After X, then Y"). Declared-
+        // only — no rule fires on it; rendered as muted italic under the
+        // purpose so the reviewer reads scenarios, not just names.
+        const opPrinciple = (p.operationalPrinciple || '').trim();
+        const opPrincipleRow = opPrinciple
+            ? `<div class="pc-card-op-principle" title="Operational principle (scenario)">${escapeHtml(opPrinciple)}</div>`
+            : '';
+
+        // Meyer/DbC-style invariants. Declared-only; rendered as a tiny
+        // foldable so cards don't grow tall when invariants are present.
+        const invariants = Array.isArray(p.invariants) ? p.invariants : [];
+        const invariantsRow = invariants.length > 0
+            ? `<details class="pc-card-invariants" onclick="event.stopPropagation()">
+                  <summary>Promises (${invariants.length})</summary>
+                  <ul>${invariants.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+               </details>`
+            : '';
+
         card.innerHTML = `
             <div class="pc-card-head">
                 <span class="pc-card-name">${escapeHtml(p.name || '(unnamed)')}</span>
@@ -1646,10 +1781,12 @@ function renderParticipants() {
             </div>
             ${fqnChip}
             ${purposeRow}
+            ${opPrincipleRow}
             <div class="pc-card-methods">
                 ${p.methods.length === 0 ? '<span class="pc-card-empty">no methods</span>' : previewMethods}
                 ${moreCount > 0 ? `<div class="pc-card-more">+${moreCount} more</div>` : ''}
             </div>
+            ${invariantsRow}
         `;
         card.addEventListener('click', (e) => {
             // SUT chip clicks (and keyboard activations) shouldn't open the modal.
@@ -3219,14 +3356,44 @@ function renderAddStep() {
     });
 }
 
+// Continue-to-Sign-off is pure navigation. The plugin pre-flight that used
+// to live here has moved upstream into runAnalyze, so by the time the user
+// reaches this button the design is either already validated or already
+// known-refused (in which case state.validatorRefused gates the advance).
 step2Els.flowNext.addEventListener('click', () => {
     if (state.sequence.length === 0) {
         step2Els.sequenceHint.classList.add('warn');
         return;
     }
     step2Els.sequenceHint.classList.remove('warn');
+    if (state.validatorRefused) return;   // refusal panel is visible; user must re-Analyze
     goToStep(3);
 });
+
+function showPluginRefusal(message) {
+    const panel = document.getElementById('plugin-refusal-panel');
+    const body = document.getElementById('plugin-refusal-body');
+    if (!panel || !body) return;
+    body.textContent = message;
+    panel.classList.remove('hidden');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    syncFlowNext();
+}
+
+function hidePluginRefusal() {
+    const panel = document.getElementById('plugin-refusal-panel');
+    const body = document.getElementById('plugin-refusal-body');
+    if (panel) panel.classList.add('hidden');
+    if (body) body.textContent = '';
+    syncFlowNext();
+}
+
+// Continue-to-Sign-off is disabled while a refusal is on screen. The button
+// also blocks the click handler internally — this is the primary visual cue.
+function syncFlowNext() {
+    if (!step2Els.flowNext) return;
+    step2Els.flowNext.disabled = !!state.validatorRefused;
+}
 
 // --- UML emission + parsing (preserved for Step 3 preview & Step 4 generate) ---
 
@@ -3836,38 +4003,30 @@ const reviewEls = {
 // --- Step 3 team-signoff gate ---
 
 function syncSignoffUI() {
-    const inputs = Array.from(document.querySelectorAll('#review-signoff input[data-signoff]'));
-    let signed = 0;
-    for (const input of inputs) {
-        const key = input.dataset.signoff;
-        input.checked = !!state.signoffs[key];
-        if (input.checked) signed++;
-    }
-    const total = inputs.length;
-    const all = signed === total && total > 0;
+    const input = document.getElementById('signoff-team');
+    const signed = !!state.teamSignedOff;
+    if (input) input.checked = signed;
 
     const status = document.getElementById('signoff-status');
     if (status) {
-        status.textContent = all
-            ? `All ${total} signoffs received — ready to generate.`
-            : `${signed} of ${total} signed off`;
-        status.classList.toggle('complete', all);
+        status.textContent = signed
+            ? 'Team signoff received — ready to generate.'
+            : 'Not yet signed off';
+        status.classList.toggle('complete', signed);
     }
     const nextBtn = document.getElementById('preview-next');
-    if (nextBtn) nextBtn.disabled = !all;
+    if (nextBtn) nextBtn.disabled = !signed;
 }
 
 function allSignedOff() {
-    return ['peter', 'john', 'chen', 'wang'].every(k => !!state.signoffs[k]);
+    return !!state.teamSignedOff;
 }
 
 (() => {
-    const signoffGroup = document.getElementById('review-signoff');
-    if (!signoffGroup) return;
-    signoffGroup.addEventListener('change', (e) => {
-        const key = e.target?.dataset?.signoff;
-        if (!key) return;
-        state.signoffs[key] = !!e.target.checked;
+    const input = document.getElementById('signoff-team');
+    if (!input) return;
+    input.addEventListener('change', (e) => {
+        state.teamSignedOff = !!e.target.checked;
         syncSignoffUI();
     });
 })();
@@ -3911,7 +4070,15 @@ function enterStep3() {
         const fqn = p.existingFqn
             ? ` <span class="review-fqn">(${escapeHtml(p.existingFqn)})</span>`
             : '';
-        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(desc)}</span>${fqn}</li>`;
+        const op = (p.operationalPrinciple || '').trim();
+        const opLine = op
+            ? `<div class="review-op-principle">${escapeHtml(op)}</div>`
+            : '';
+        const invs = Array.isArray(p.invariants) ? p.invariants : [];
+        const invsBlock = invs.length > 0
+            ? `<div class="review-invariants-label">Promises:</div><ul class="review-invariants">${invs.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>`
+            : '';
+        return `<li><strong>${escapeHtml(p.name || '(unnamed)')}</strong> <span class="muted">— ${escapeHtml(desc)}</span>${fqn}${opLine}${invsBlock}</li>`;
     }).join('');
     const unusedLine = unused.length > 0
         ? `<div class="review-warn">${unused.length} unused participant${unused.length === 1 ? '' : 's'}: ${unused.map(p => escapeHtml(p.name || '(unnamed)')).join(', ')}</div>`
@@ -3947,6 +4114,7 @@ const saveEls = {
     filename: document.getElementById('puml-filename'),
     pkg: document.getElementById('puml-package'),
     pkgWarn: document.getElementById('package-warn'),
+    pkgSuggest: document.getElementById('package-suggest'),
     save: document.getElementById('save-to-project'),
     result: document.getElementById('save-result'),
     resultPath: document.getElementById('save-result-path'),
@@ -4193,7 +4361,42 @@ function refreshPackageWarning() {
         saveEls.pkgWarn.textContent = '';
         saveEls.pkgWarn.className = 'package-warn hidden';
     }
+    refreshPackageSuggestion();
     syncSaveButtonGate();
+}
+
+// Surface the callee-anchored recommendation as a clickable chip so the user
+// can see what DisC would pick — even after they've typed something different
+// or cleared the field. Hidden when the field already equals the suggestion or
+// when no suggestion is available (greenfield + no REUSE anchors + empty catalog).
+function refreshPackageSuggestion() {
+    if (!saveEls || !saveEls.pkgSuggest) return;
+    const suggestion = recommendSutPackage(state.participants, state.sutName, state.codebaseCatalog);
+    const current = (state.targetPackage || '').trim();
+    if (!suggestion || suggestion === current) {
+        saveEls.pkgSuggest.classList.add('hidden');
+        saveEls.pkgSuggest.textContent = '';
+        return;
+    }
+    saveEls.pkgSuggest.classList.remove('hidden');
+    saveEls.pkgSuggest.textContent = '';
+    const label = document.createElement('span');
+    label.textContent = 'Suggested:';
+    const code = document.createElement('code');
+    code.textContent = suggestion;
+    const sep = document.createTextNode(' — ');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'package-suggest-apply';
+    btn.textContent = 'use this';
+    btn.addEventListener('click', () => {
+        state.targetPackage = suggestion;
+        state.targetPackageAutoFilled = true;
+        saveEls.pkg.value = suggestion;
+        refreshPackageWarning();
+        outputEl.textContent = emitPlantUml();
+    });
+    saveEls.pkgSuggest.append(label, code, sep, btn);
 }
 
 // Disable the save button when @package is empty or malformed. Hover-tooltip
@@ -4209,10 +4412,11 @@ function syncSaveButtonGate() {
 
 saveEls.pkg.addEventListener('input', (e) => {
     state.targetPackage = e.target.value;
-    // Any keystroke means the user owns this value now; subsequent re-analyzes
-    // must not overwrite it. The flag only flips back to true if applyTargetPackageHeuristics
-    // explicitly resets the value (e.g. on project switch).
-    state.targetPackageAutoFilled = false;
+    // A non-empty keystroke means the user owns this value — block re-analyze
+    // from overwriting it. But if they clear the field back to empty, treat
+    // it as "give me the suggestion back" so the next analyze re-fills, and
+    // the suggestion chip immediately re-appears (since suggestion !== '').
+    state.targetPackageAutoFilled = !e.target.value.trim();
     refreshPackageWarning();
     // Re-render the output preview so the user sees the @package header land.
     outputEl.textContent = emitPlantUml();
@@ -4251,9 +4455,6 @@ function enterStep4() {
     }
     saveEls.result.classList.add('hidden');
     saveEls.error.classList.add('hidden');
-    // Hide any stale plugin-plan preview from a previous visit.
-    const pr = document.getElementById('preview-result');
-    if (pr) pr.classList.add('hidden');
     // Plugin status drives whether the Run button is enabled. Always refresh
     // on enter — the user might have installed the plugin in a separate
     // terminal between visits.
@@ -4287,7 +4488,8 @@ function renderPlanPanel() {
         return;
     }
 
-    host.innerHTML = used.map(p => {
+    const entityRowsHtml = renderEntityPlanRows();
+    const participantRowsHtml = used.map(p => {
         const action = inferAction(p);
         const target = describeTarget(p, action);
         const safeName = escapeAttr(p.name || '');
@@ -4305,6 +4507,9 @@ function renderPlanPanel() {
         </div>`;
     }).join('');
 
+    const participantsHeader = '<div class="plan-group-header">Participants</div>';
+    host.innerHTML = entityRowsHtml + participantsHeader + participantRowsHtml;
+
     host.querySelectorAll('select[data-plan-action]').forEach(sel => {
         sel.addEventListener('change', (e) => {
             const id = e.target.dataset.participantId;
@@ -4314,6 +4519,55 @@ function renderPlanPanel() {
     });
 
     renderPlanConflicts(used);
+}
+
+// Build a small block of plan rows for each declared entity, grouped by a
+// header above the participant rows. Surfaces what the plugin will codegen
+// from the entity prelude — sealed families, records, enums, REUSE bindings.
+// Variants of sealed families nest one indent under their parent so the
+// hierarchy is visible at a glance.
+function renderEntityPlanRows() {
+    if (!state.entities || state.entities.length === 0) return '';
+
+    // Index permits → parent for quick "is this entity a variant?" lookup.
+    const permitOf = new Map();  // permitName -> parentName
+    for (const e of state.entities) {
+        if (e.kind === 'sealed-interface' && Array.isArray(e.permits)) {
+            for (const v of e.permits) {
+                if (v) permitOf.set(v.trim(), e.name);
+            }
+        }
+    }
+
+    const pkg = (state.targetPackage || '').trim();
+    const rowsHtml = state.entities.map(e => {
+        const name = (e.name || '').trim();
+        if (!name) return '';
+        const fqn = (e.existingFqn || '').trim();
+        const reuse = !!fqn;
+        const action = reuse ? 'REUSE' : 'CREATE';
+        const kindLabel = e.kind || 'record';
+        const isPermit = permitOf.has(name);
+        const target = reuse
+            ? fqn
+            : (pkg ? `${pkg}.entity.${name}` : `${name} (no @package)`);
+        const indentClass = isPermit ? ' plan-row-indent' : '';
+        const kindBadge = `<span class="plan-kind-badge" title="entity kind">${escapeHtml(kindLabel)}</span>`;
+        const parentNote = isPermit
+            ? ` <span class="plan-kind-note">permits ${escapeHtml(permitOf.get(name))}</span>`
+            : '';
+        const sealedNote = (e.kind === 'sealed-interface' && Array.isArray(e.permits) && e.permits.length > 0)
+            ? ` <span class="plan-kind-note">${e.permits.length} variants</span>`
+            : '';
+        return `<div class="plan-row plan-row-entity action-${action.toLowerCase()}${indentClass}" data-entity-name="${escapeAttr(name)}">
+            <span class="plan-participant">${escapeHtml(name)}${kindBadge}${parentNote}${sealedNote}</span>
+            <span class="plan-action plan-action-static">${action}</span>
+            <span class="plan-target" title="${escapeAttr(target)}">${escapeHtml(target)}</span>
+        </div>`;
+    }).join('');
+
+    if (!rowsHtml) return '';
+    return '<div class="plan-group-header">Entities</div>' + rowsHtml;
 }
 
 // Default action for a participant, derived from its current state:
@@ -4419,75 +4673,9 @@ function renderPlanConflicts(participants) {
     }
 }
 
-// "Preview changes" — writes the .puml to disk first (same path the user
-// would Export to), then calls /api/generator/plan to ask the generator what it
-// would do without mutating anything. Renders the response in the
-// preview-result panel.
-async function previewPlan() {
-    const previewBtn = document.getElementById('preview-plan');
-    const previewResult = document.getElementById('preview-result');
-    saveEls.error.classList.add('hidden');
-
-    const projectPath = state.projectPath || (els.pathInput.value || '').trim();
-    if (!projectPath) {
-        saveEls.error.textContent = 'No project path — go back to Step 1 and pick a folder (or paste a path).';
-        saveEls.error.classList.remove('hidden');
-        return;
-    }
-
-    const content = outputEl.textContent;
-    if (!content || !content.trim()) {
-        saveEls.error.textContent = 'Nothing to preview — add some steps in Step 2.';
-        saveEls.error.classList.remove('hidden');
-        return;
-    }
-
-    const fileName = saveEls.filename.value.trim() || defaultFileName();
-    if (previewBtn) {
-        previewBtn.disabled = true;
-        previewBtn.textContent = 'Previewing…';
-    }
-    if (previewResult) previewResult.classList.add('hidden');
-
-    try {
-        // Step 1: write the .puml + decision tables. Plan needs the file on disk.
-        const decisionTables = collectDecisionTablesForSave();
-        const saveRes = await fetch('/api/design', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath, fileName, content, decisionTables })
-        });
-        const saveData = await saveRes.json();
-        if (!saveRes.ok) throw new Error(saveData.error || `Write failed (${saveRes.status})`);
-
-        // Step 2: ask the plugin for the plan.
-        const modelSelect = document.getElementById('run-model');
-        const model = modelSelect ? modelSelect.value : null;
-        const planRes = await fetch('/api/generator/plan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath, filePath: saveData.relativePath, model })
-        });
-        const plan = await planRes.json();
-        if (!planRes.ok) throw new Error(plan.error || `Plan failed (${planRes.status})`);
-
-        renderPluginPlan(plan);
-    } catch (err) {
-        saveEls.error.textContent = err.message;
-        saveEls.error.classList.remove('hidden');
-    } finally {
-        if (previewBtn) {
-            previewBtn.disabled = false;
-            previewBtn.textContent = 'Preview changes';
-        }
-    }
-}
-
 // Walks state.sequence for any attached decision tables, serialises each one
 // to its YAML+markdown sidecar form, and returns the array the /api/design
-// endpoint expects. Extracted so previewPlan and the existing save handler
-// share the same builder. (Refactor: the original was inline in saveEls.save's
-// handler — see below where we keep a thin wrapper for compatibility.)
+// endpoint expects.
 function collectDecisionTablesForSave() {
     const out = [];
     for (const step of state.sequence) {
@@ -4502,64 +4690,6 @@ function collectDecisionTablesForSave() {
     }
     return out;
 }
-
-// Render the plugin's plan envelope: { actions, warnings, summary }.
-function renderPluginPlan(plan) {
-    const panel = document.getElementById('preview-result');
-    const list  = document.getElementById('preview-result-list');
-    const meta  = document.getElementById('preview-result-meta');
-    const warn  = document.getElementById('preview-result-warnings');
-    if (!panel || !list) return;
-
-    const actions = Array.isArray(plan.actions) ? plan.actions : [];
-    const warnings = Array.isArray(plan.warnings) ? plan.warnings : [];
-    const summary = plan.summary || {};
-
-    list.innerHTML = actions.length === 0
-        ? '<li class="preview-detail">No actions — nothing to do.</li>'
-        : actions.map(a => {
-            const type = (a.type || '').toUpperCase();
-            const marker = type === 'CREATE' ? '+' : type === 'UPDATE' ? '~' : type === 'REUSE' ? '✓' : '?';
-            const cls   = type === 'CREATE' ? 'preview-action-create'
-                       : type === 'UPDATE' ? 'preview-action-update'
-                       : type === 'REUSE'  ? 'preview-action-reuse'
-                       : '';
-            const adds = Array.isArray(a.addedMethods) && a.addedMethods.length > 0
-                ? `<span class="preview-detail">add: ${escapeHtml(a.addedMethods.join(', '))}</span>`
-                : '';
-            return `<li class="${cls}">
-                <span class="preview-action-marker">${marker}</span> ${type}  ${escapeHtml(a.path || a.participant || '')}
-                ${a.reason ? `<span class="preview-detail">${escapeHtml(a.reason)}</span>` : ''}
-                ${adds}
-            </li>`;
-        }).join('');
-
-    const parts = [];
-    if (summary.create != null) parts.push(`${summary.create} create`);
-    if (summary.update != null) parts.push(`${summary.update} update`);
-    if (summary.reuse  != null) parts.push(`${summary.reuse} reuse`);
-    if (summary.verifyTests != null) parts.push(`${summary.verifyTests} verify_tests`);
-    if (summary.resultTests != null) parts.push(`${summary.resultTests} result_tests`);
-    if (meta) meta.textContent = parts.join(' · ');
-
-    if (warn) {
-        if (warnings.length > 0) {
-            warn.classList.remove('hidden');
-            warn.innerHTML = warnings.map(w => `<div>⚠ ${escapeHtml(String(w))}</div>`).join('');
-        } else {
-            warn.classList.add('hidden');
-            warn.innerHTML = '';
-        }
-    }
-
-    panel.classList.remove('hidden');
-}
-
-// Wire the Preview button (only when present — backward-compat).
-(() => {
-    const previewBtn = document.getElementById('preview-plan');
-    if (previewBtn) previewBtn.addEventListener('click', previewPlan);
-})();
 
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');

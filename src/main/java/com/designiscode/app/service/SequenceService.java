@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -36,6 +37,13 @@ public class SequenceService {
     private static final String P_STORY = "{STORY}";
     private static final String P_PARTICIPANTS = "{PARTICIPANTS}";
     private static final String P_SUT = "{SUT}";
+    private static final String P_REFUSAL_FEEDBACK = "{REFUSAL_FEEDBACK}";
+
+    /** Substituted in place of {@link #P_REFUSAL_FEEDBACK} on the first
+     *  attempt. The prompt reads this as "no prior refusal to consider"
+     *  and proceeds with a fresh composition. */
+    private static final String FIRST_ATTEMPT_SENTINEL =
+            "_First attempt — no prior refusal feedback to consider._";
 
     private static final long TIMEOUT_SECONDS = 120;
 
@@ -60,17 +68,23 @@ public class SequenceService {
 
         String participantsJson = json.writeValueAsString(participants);
         String sut = request.sut() == null ? "" : request.sut().trim();
+        String refusalFeedback = renderRefusalFeedback(request.refusalFeedback());
 
         String prompt = promptTemplate
                 .replace(P_STORY, request.story().trim())
                 .replace(P_PARTICIPANTS, participantsJson)
-                .replace(P_SUT, sut);
+                .replace(P_SUT, sut)
+                .replace(P_REFUSAL_FEEDBACK, refusalFeedback);
 
-        ProcessBuilder pb = new ProcessBuilder(
+        List<String> args = new ArrayList<>(List.of(
                 "claude",
-                "--dangerously-skip-permissions",
-                "-p", prompt
-        )
+                "--dangerously-skip-permissions"
+        ));
+        Models.appendIfValid(args, request.model());
+        args.add("-p");
+        args.add(prompt);
+
+        ProcessBuilder pb = new ProcessBuilder(args)
                 .redirectErrorStream(true)
                 .redirectInput(new File("/dev/null"));
 
@@ -106,6 +120,21 @@ public class SequenceService {
     }
 
     // --- helpers (copied from AnalyzeService) ---
+
+    /** Render the substitution for {@link #P_REFUSAL_FEEDBACK}. Null or
+     *  blank → first-attempt sentinel; otherwise the trimmed feedback
+     *  framed for the model so it understands this is a corrective
+     *  retry, not a fresh request. */
+    private static String renderRefusalFeedback(String feedback) {
+        if (feedback == null || feedback.isBlank()) return FIRST_ATTEMPT_SENTINEL;
+        return "The codegen tool rejected your previous attempt with this refusal:\n\n"
+                + feedback.trim()
+                + "\n\nProduce a corrected sequence that addresses the cited problem. "
+                + "Do not reproduce the same shape — the fix must visibly change "
+                + "something the refusal called out. Stay within the existing "
+                + "participant cast; don't invent new participants. The story, "
+                + "participants, and SUT are unchanged from your previous attempt.";
+    }
 
     private static String loadResource(String path) throws IOException {
         try (InputStream in = SequenceService.class.getResourceAsStream(path)) {
