@@ -17,6 +17,12 @@ const state = {
     // modal. Each entry: { id, name, kind, purpose, existingFqn,
     // fields:[{name,type}], values:[string] }.
     entities: [],
+    // The analyzer's variancePlan[] — one entry per variance axis declared
+    // in the AC (axis/pattern/criterion/rationale; resolver entries also
+    // carry mapping[]). Used by the export step to auto-emit resolver
+    // decision-table sidecars. Refreshed on every analyze; empty when no
+    // variance axes were declared.
+    variancePlan: [],
     participants: [],
     sequence: [],
     targetPackage: '',
@@ -1132,15 +1138,61 @@ function findMethod(participantId, methodId) {
     return p ? p.methods.find(m => m.id === methodId) : null;
 }
 
+// True when an entity is callable from a sequence arrow: interface or
+// sealed-interface with at least one declared behavior. Pure sum types
+// (sealed with empty behaviors), records, enums, and classes are not
+// callable from a sequence.
+function isPolyCallableEntity(e) {
+    if (!e) return false;
+    if (e.kind !== 'interface' && e.kind !== 'sealed-interface') return false;
+    return Array.isArray(e.behaviors) && e.behaviors.some(b => b && b.name);
+}
+
+// Unified callee resolver — checks participants first, then poly-callable
+// entities. Callers remain participant-only (see usages in resolveCreates
+// and emitPlantUml).
+function findCallee(id) {
+    return state.participants.find(p => p.id === id)
+        || state.entities.find(e => e.id === id && isPolyCallableEntity(e))
+        || null;
+}
+
+// For entity callees the behavior has no stable id; we store the behavior
+// NAME in step.methodId. findCalleeMethod resolves both shapes uniformly.
+// Returns null when nothing matches.
+function findCalleeMethod(calleeId, methodId) {
+    const p = state.participants.find(x => x.id === calleeId);
+    if (p) return p.methods.find(m => m.id === methodId) || null;
+    const e = state.entities.find(x => x.id === calleeId);
+    if (e && isPolyCallableEntity(e)) {
+        return (e.behaviors || []).find(b => b && b.name === methodId) || null;
+    }
+    return null;
+}
+
+// Bridge participant-method shape ({inputs, output}) with entity-behavior
+// shape ({args, returns}) so the signature helpers below treat them
+// uniformly. Returns a method-shaped view; the original is unmodified.
+function normalizeMethodLike(m) {
+    if (!m) return null;
+    return {
+        name: m.name,
+        inputs: m.inputs || m.args || [],
+        output: m.output || m.returns || ''
+    };
+}
+
 function methodSignature(m) {
-    const inputs = (m.inputs || []).map(i => `${i.name || ''}${i.type ? ': ' + i.type : ''}`.trim()).filter(Boolean).join(', ');
-    return `${m.name || '?'}(${inputs})`;
+    const n = normalizeMethodLike(m); if (!n) return '?()';
+    const inputs = (n.inputs || []).map(i => `${i.name || ''}${i.type ? ': ' + i.type : ''}`.trim()).filter(Boolean).join(', ');
+    return `${n.name || '?'}(${inputs})`;
 }
 
 function methodPreviewSignature(m) {
-    const types = (m.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
-    const out = (m.output || '').trim() || 'void';
-    return `${m.name || '?'}(${types}) → ${out}`;
+    const n = normalizeMethodLike(m); if (!n) return '?() → void';
+    const types = (n.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
+    const out = (n.output || '').trim() || 'void';
+    return `${n.name || '?'}(${types}) → ${out}`;
 }
 
 // Compact normal form used for comparing AI-proposed signatures against the
@@ -1153,8 +1205,9 @@ function renderSignature(name, inputs, output) {
 }
 
 function returnLabelFor(m) {
-    if (!m || !m.output || m.output.trim() === '' || m.output.trim().toLowerCase() === 'void') return null;
-    return m.output.trim();
+    const n = normalizeMethodLike(m);
+    if (!n || !n.output || n.output.trim() === '' || n.output.trim().toLowerCase() === 'void') return null;
+    return n.output.trim();
 }
 
 // Returns Map<step.id, participant | null>. A call step "creates" a participant
@@ -1167,7 +1220,11 @@ function resolveCreates(seq) {
     const map = new Map();
     for (const s of seq2) {
         if (s.kind !== STEP_KIND.CALL) continue;
-        const method = findMethod(s.calleeId, s.methodId);
+        // Polymorphic dispatch into an entity does not introduce a new
+        // participant lifeline — the entity is already declared in the
+        // entity prelude. Skip create-detection on entity callees.
+        if (state.entities.find(e => e.id === s.calleeId)) { map.set(s.id, null); continue; }
+        const method = findCalleeMethod(s.calleeId, s.methodId);
         const ret = method ? returnLabelFor(method) : null;
         let created = null;
         if (ret) {
@@ -1232,6 +1289,10 @@ async function runAnalyze(context) {
         maybeRefreshTargetPackage();
         const aiEntities = Array.isArray(data && data.entities) ? data.entities : [];
         state.entities = aiEntities.map(adoptEntity).filter(e => e && e.name);
+        // Persist the analyzer's variancePlan as-is — used by the export step
+        // to auto-emit resolver decision-table sidecars. Empty array when the
+        // AC has no variance.
+        state.variancePlan = Array.isArray(data && data.variancePlan) ? data.variancePlan : [];
         mergeDerivedEntities();
         renderStoryNarrative();
         renderParticipants();
@@ -1333,6 +1394,16 @@ function resolveSequence(aiResponse) {
         return state.participants.find(p => p.name === name) || null;
     }
 
+    // Callee lookup parallel to findParticipantByName, but also resolves
+    // to a poly-callable entity (interface / sealed-interface with
+    // behaviors). Callers stay participant-only.
+    function findCalleeByName(name) {
+        if (!name) return null;
+        return state.participants.find(p => p.name === name)
+            || state.entities.find(e => e.name === name && isPolyCallableEntity(e))
+            || null;
+    }
+
     function findOrCreateMethod(callee, methodName, args, returns) {
         if (!methodName) return null;
         let m = callee.methods.find(mm => mm.name === methodName);
@@ -1376,22 +1447,40 @@ function resolveSequence(aiResponse) {
                 warnings.push(`Dropped call from unknown participant "${s.caller}"`);
                 continue;
             }
-            const callee = findParticipantByName(s.callee);
+            const callee = findCalleeByName(s.callee);
             if (!callee) {
-                warnings.push(`Dropped call to unknown participant "${s.callee}"`);
+                warnings.push(`Dropped call to unknown participant or entity "${s.callee}"`);
                 continue;
             }
-            const method = findOrCreateMethod(callee, s.method, s.args, s.returns);
-            if (!method) {
-                warnings.push(`Dropped call to ${callee.name}: no method name given`);
-                continue;
+            // Branch on whether the callee is a participant (methods are
+            // mutable; we can invent a new one if needed) or an entity
+            // (behaviors are part of the entity contract — never invent).
+            let method;
+            if (callee.methods) {
+                method = findOrCreateMethod(callee, s.method, s.args, s.returns);
+                if (!method) {
+                    warnings.push(`Dropped call to ${callee.name}: no method name given`);
+                    continue;
+                }
+            } else {
+                if (!s.method) {
+                    warnings.push(`Dropped call to ${callee.name}: no method name given`);
+                    continue;
+                }
+                method = (callee.behaviors || []).find(b => b && b.name === s.method);
+                if (!method) {
+                    warnings.push(`Dropped call to ${callee.name}: no behavior "${s.method}" on this entity`);
+                    continue;
+                }
             }
             seq.push({
                 id: newId(),
                 kind: STEP_KIND.CALL,
                 callerId: caller.id,
                 calleeId: callee.id,
-                methodId: method.id
+                // Participant methods have a stable id; entity behaviors
+                // are identified by name (Option A — see findCalleeMethod).
+                methodId: method.id || method.name
             });
         }
     }
@@ -1438,6 +1527,20 @@ async function runSequence(refusalFeedback = null) {
                     args: m.inputs || [],
                     returns: m.output || ''
                 }))
+            })),
+            // Poly-callable entities (interface / sealed-interface with at
+            // least one declared behavior) are valid arrow targets too,
+            // so the sequencer can model polymorphic dispatch as a single
+            // arrow instead of an alt-chain over variants.
+            entities: state.entities.filter(isPolyCallableEntity).map(e => ({
+                name: e.name,
+                kind: e.kind,
+                behaviors: (e.behaviors || []).filter(b => b && b.name).map(b => ({
+                    name: b.name,
+                    args: b.args || [],
+                    returns: b.returns || ''
+                })),
+                permits: e.permits || []
             })),
             model: (document.getElementById('analyze-model') || {}).value || null,
             refusalFeedback: refusalFeedback || null
@@ -2547,10 +2650,11 @@ function ensureAddStepDraft() {
     if (!addStepDraft) {
         addStepDraft = { callerId: '', calleeId: '', methodId: '' };
     }
-    // Re-validate against current participants — drop refs to deleted entities.
+    // Re-validate against current cast — drop refs to deleted entities.
+    // Caller must be a participant; callee may also be a poly-callable entity.
     if (addStepDraft.callerId && !findParticipant(addStepDraft.callerId)) addStepDraft.callerId = '';
-    if (addStepDraft.calleeId && !findParticipant(addStepDraft.calleeId)) addStepDraft.calleeId = '';
-    if (addStepDraft.methodId && !findMethod(addStepDraft.calleeId, addStepDraft.methodId)) addStepDraft.methodId = '';
+    if (addStepDraft.calleeId && !findCallee(addStepDraft.calleeId)) addStepDraft.calleeId = '';
+    if (addStepDraft.methodId && !findCalleeMethod(addStepDraft.calleeId, addStepDraft.methodId)) addStepDraft.methodId = '';
 
     // Smart caller default: when no caller is set, prefill from the last CALL
     // step's caller (the common "same orchestrator throughout" case). Falls
@@ -2694,27 +2798,39 @@ function openCallerPopover(stepId, anchorEl) {
 function openCalleePopover(stepId, anchorEl) {
     const step = state.sequence.find(s => s.id === stepId);
     if (!step) return;
-    const options = state.participants
+    const partOpts = state.participants
         .filter(p => p.id !== step.callerId)
         .map(p => ({
             value: p.id,
             label: p.name || '(unnamed)',
             sig: (p.methods || []).length === 0 ? 'no methods' : ''
         }));
+    const entOpts = state.entities
+        .filter(isPolyCallableEntity)
+        .map(e => ({
+            value: e.id,
+            label: e.name || '(unnamed)',
+            sig: e.kind   // 'interface' or 'sealed-interface'
+        }));
+    const options = [...partOpts, ...entOpts];
     openPillPopover(anchorEl, options, step.calleeId, (value) => {
         step.calleeId = value;
         // Drop methodId if the new callee doesn't expose the current method.
-        if (!findMethod(value, step.methodId)) step.methodId = '';
+        if (!findCalleeMethod(value, step.methodId)) step.methodId = '';
         renderSequence();
-    }, 'Add another participant first');
+    }, 'No callees available — add a participant or a polymorphic entity');
 }
 
 function openMethodPopover(stepId, anchorEl) {
     const step = state.sequence.find(s => s.id === stepId);
     if (!step) return;
-    const callee = findParticipant(step.calleeId);
-    const options = (callee ? callee.methods : []).map(m => ({
-        value: m.id,
+    const callee = findCallee(step.calleeId);
+    // Participant methods have ids; entity behaviors don't — fall back to
+    // the behavior name as the option value so findCalleeMethod can
+    // resolve it later.
+    const sourceList = callee ? (callee.methods || callee.behaviors || []) : [];
+    const options = sourceList.filter(m => m && m.name).map(m => ({
+        value: m.id || m.name,
         label: m.name || '?',
         sig: methodPreviewSignature(m)
     }));
@@ -2974,14 +3090,14 @@ function renderSteps() {
 
         const call = step;
         const caller = findParticipant(call.callerId);
-        const callee = findParticipant(call.calleeId);
-        const method = findMethod(call.calleeId, call.methodId);
+        const callee = findCallee(call.calleeId);
+        const method = findCalleeMethod(call.calleeId, call.methodId);
         if (!caller || !callee || !method) return;
 
         callIdx++;
         const callerName = caller.name || '(unnamed)';
         const calleeName = callee.name || '(unnamed)';
-        const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
+        const inputArgs = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
         const methodCall = `${method.name || '?'}(${inputArgs})`;
         const ret = returnLabelFor(method);
         const created = creates.get(call.id);
@@ -3122,12 +3238,16 @@ function renderAddStep() {
         board.appendChild(panel);
     }
 
-    if (state.participants.length < 2) {
+    // A step needs at least one participant (caller) AND at least one
+    // possible callee — another participant OR a poly-callable entity.
+    const polyEntityCount = state.entities.filter(isPolyCallableEntity).length;
+    const possibleCallees = (state.participants.length - 1) + polyEntityCount;
+    if (state.participants.length === 0 || possibleCallees < 1) {
         const msg = document.createElement('div');
         msg.className = 'add-step-empty';
         msg.textContent = state.participants.length === 0
-            ? 'Add at least two participants to define a step.'
-            : 'Add one more participant — a step needs a caller and a callee.';
+            ? 'Add at least one participant (the caller) to define a step.'
+            : 'Add one more participant — or a polymorphic entity — so the caller has someone to call.';
         panel.appendChild(msg);
         return;
     }
@@ -3147,18 +3267,28 @@ function renderAddStep() {
         .concat(state.participants.map(p =>
             `<option value="${p.id}" ${p.id === addStepDraft.callerId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
         .join('');
+    const calleeParticipantOpts = state.participants
+        .filter(p => p.id !== addStepDraft.callerId)
+        .map(p => `<option value="${p.id}" ${p.id === addStepDraft.calleeId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`);
+    const calleeEntityOpts = state.entities
+        .filter(isPolyCallableEntity)
+        .map(e => `<option value="${e.id}" ${e.id === addStepDraft.calleeId ? 'selected' : ''}>${escapeHtml(e.name || '(unnamed)')} · ${e.kind}</option>`);
     const calleeOptions = ['<option value="">callee</option>']
-        .concat(state.participants
-            .filter(p => p.id !== addStepDraft.callerId)
-            .map(p => `<option value="${p.id}" ${p.id === addStepDraft.calleeId ? 'selected' : ''}>${escapeHtml(p.name || '(unnamed)')}</option>`))
+        .concat(calleeParticipantOpts, calleeEntityOpts)
         .join('');
-    const callee = findParticipant(addStepDraft.calleeId);
+    const callee = findCallee(addStepDraft.calleeId);
+    const calleeMethodSource = callee ? (callee.methods || callee.behaviors || []) : [];
     const methodOptions = ['<option value="">method</option>']
-        .concat((callee ? callee.methods : [])
-            .map(m => `<option value="${m.id}" ${m.id === addStepDraft.methodId ? 'selected' : ''}>${escapeHtml(m.name || '?')}</option>`))
+        .concat(calleeMethodSource
+            .filter(m => m && m.name)
+            .map(m => {
+                const v = m.id || m.name;
+                return `<option value="${v}" ${v === addStepDraft.methodId ? 'selected' : ''}>${escapeHtml(m.name || '?')}</option>`;
+            }))
         .join('');
-    const method = findMethod(addStepDraft.calleeId, addStepDraft.methodId);
-    const argsPreview = method ? (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ') : '';
+    const method = findCalleeMethod(addStepDraft.calleeId, addStepDraft.methodId);
+    const methodInputs = method ? (normalizeMethodLike(method).inputs || []) : [];
+    const argsPreview = method ? methodInputs.map(i => i.name || i.type || '').filter(Boolean).join(', ') : '';
     const retPreview = method ? (returnLabelFor(method) || 'void') : '';
     const ready = !!(addStepDraft.callerId && addStepDraft.calleeId && addStepDraft.methodId);
     const hint = !addStepDraft.callerId
@@ -3492,7 +3622,11 @@ function emitPlantUml() {
             } else if (kind === 'interface' || kind === 'sealed-interface') {
                 const behaviors = (e.behaviors || []).filter(b => b && b.name);
                 const stereoBits = [`<<${kind}>>`];
-                if (kind === 'sealed-interface') {
+                // `<<@permits:>>` is valid on BOTH sealed-interface (Java
+                // sealed family) AND plain interface (resolver strategy
+                // family — plugin emits `class V implements Parent` per
+                // permit, no `sealed` keyword). See plugin's java_spring.md.
+                if (kind === 'sealed-interface' || kind === 'interface') {
                     const permits = (e.permits || []).filter(Boolean);
                     if (permits.length > 0) stereoBits.push(`<<@permits:${permits.join(',')}>>`);
                 }
@@ -3630,8 +3764,12 @@ function emitPlantUml() {
         }
 
         const caller = findParticipant(s.callerId);
-        const callee = findParticipant(s.calleeId);
-        const method = findMethod(s.calleeId, s.methodId);
+        // Callee may be a participant OR a poly-callable entity (interface
+        // / sealed-interface with behaviors). The entity prelude declared
+        // it via `class Foo <<interface>>` so the arrow `caller -> Foo`
+        // is a valid PlantUML sequence line.
+        const callee = findCallee(s.calleeId);
+        const method = findCalleeMethod(s.calleeId, s.methodId);
         if (!caller || !callee || !method) return;
         const callerName = caller.name || '_';
         const calleeName = callee.name || '_';
@@ -3698,14 +3836,14 @@ function renderSequenceDiagram(steps, container) {
     for (const s of steps) {
         if (s.kind !== STEP_KIND.CALL) continue;
         const caller = findParticipant(s.callerId);
-        const callee = findParticipant(s.calleeId);
-        const method = findMethod(s.calleeId, s.methodId);
+        const callee = findCallee(s.calleeId);
+        const method = findCalleeMethod(s.calleeId, s.methodId);
         if (!caller || !callee || !method) continue;
         const fromName = caller.name || '(unnamed)';
         const toName = callee.name || '(unnamed)';
         if (!lifelines.includes(fromName)) lifelines.push(fromName);
         if (!lifelines.includes(toName)) lifelines.push(toName);
-        const argText = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
+        const argText = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
         const created = creates.get(s.id);
         if (created && !lifelines.includes(created.name)) lifelines.push(created.name);
         resolved.push({
@@ -3802,8 +3940,8 @@ function renderSequenceDiagram(steps, container) {
         const isValidCall = (s) => {
             if (s.kind !== STEP_KIND.CALL) return false;
             const caller = findParticipant(s.callerId);
-            const callee = findParticipant(s.calleeId);
-            const method = findMethod(s.calleeId, s.methodId);
+            const callee = findCallee(s.calleeId);
+            const method = findCalleeMethod(s.calleeId, s.methodId);
             return !!(caller && callee && method);
         };
         for (const s of steps) {
@@ -4437,7 +4575,7 @@ function defaultFileName() {
     const cls = kebab(caller.name || 'design');
     const firstCall = state.sequence[0];
     if (firstCall) {
-        const method = findMethod(firstCall.calleeId, firstCall.methodId);
+        const method = findCalleeMethod(firstCall.calleeId, firstCall.methodId);
         if (method && method.name) return `${cls}-${kebab(method.name)}.puml`;
     }
     return `${cls}.puml`;
@@ -4691,6 +4829,67 @@ function collectDecisionTablesForSave() {
     return out;
 }
 
+// For each resolver entry in state.variancePlan, synthesise the resolver's
+// decision-table sidecar (key → strategy class) so the plugin can generate
+// a working Map-based resolver implementation. The analyzer's variancePlan
+// surfaces mapping[]; this function correlates it with the strategy
+// interface entity in state.entities and the resolver participant in
+// state.participants, then emits one .decision.md file per resolver.
+//
+// Returns an array of { fileName, content } shaped identically to
+// collectDecisionTablesForSave(). Skips entries that can't be correlated
+// (mismatch between mapping strategies and any interface entity's permits,
+// or no participant returning that interface) — the user can author the
+// table by hand in that fallback case.
+function collectResolverDecisionTables() {
+    const out = [];
+    const resolverPlans = (state.variancePlan || [])
+        .filter(v => v && v.pattern === 'resolver' && Array.isArray(v.mapping) && v.mapping.length > 0);
+    for (const v of resolverPlans) {
+        const strategySet = new Set(v.mapping.map(m => m && m.strategy).filter(Boolean));
+        if (strategySet.size === 0) continue;
+        // Find the StrategyInterface entity: an interface (or sealed-interface)
+        // whose permits[] matches the mapping's strategy values exactly.
+        const iface = state.entities.find(e =>
+            isPolyCallableEntity(e)
+            && Array.isArray(e.permits) && e.permits.length === strategySet.size
+            && e.permits.every(p => strategySet.has(p))
+        );
+        if (!iface) continue;
+        // Find the resolver participant: any participant whose method
+        // returns the interface entity by name.
+        const resolver = state.participants.find(p =>
+            (p.methods || []).some(m => (m.output || '').trim() === iface.name)
+        );
+        if (!resolver) continue;
+        const resolveMethod = (resolver.methods || []).find(m => (m.output || '').trim() === iface.name);
+        if (!resolveMethod) continue;
+        const input = (resolveMethod.inputs || [])[0];
+        if (!input || !input.name) continue;
+        // Build the YAML+markdown sidecar directly — the plugin's resolver
+        // mode (see java_spring.md "Resolver impl from decision table")
+        // recognises this shape and generates a Map-based resolver.
+        const lines = [];
+        lines.push('---');
+        lines.push(`target: ${resolver.name}.${resolveMethod.name}`);
+        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
+        lines.push('input:');
+        lines.push(`  ${input.name}: ${input.type || '?'}`);
+        lines.push(`output: ${iface.name}`);
+        lines.push('---');
+        lines.push('');
+        const headers = [input.name, 'expected'];
+        const rows = v.mapping.map(m => [String(m.key || ''), String(m.strategy || '')]);
+        lines.push(emitMarkdownTable(headers, rows));
+        lines.push('');
+        out.push({
+            fileName: decisionTableFileName(resolver),
+            content: lines.join('\n')
+        });
+    }
+    return out;
+}
+
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');
     saveEls.result.classList.add('hidden');
@@ -4734,6 +4933,16 @@ saveEls.save.addEventListener('click', async () => {
             fileName: decisionTableFileName(participant),
             content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
         });
+    }
+    // Auto-emit one resolver decision-table sidecar per resolver entry in
+    // the analyzer's variancePlan. The plugin reads these and generates
+    // a Map-based resolver impl; without them resolvers stay as
+    // UnsupportedOperationException throwers. Deduplicate by fileName so
+    // a user-authored table for the same resolver wins over the auto one.
+    const existingNames = new Set(decisionTables.map(d => d.fileName));
+    for (const dt of collectResolverDecisionTables()) {
+        if (existingNames.has(dt.fileName)) continue;
+        decisionTables.push(dt);
     }
 
     try {

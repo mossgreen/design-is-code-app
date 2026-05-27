@@ -20,6 +20,14 @@ import java.util.Map;
  * {@code --model X} to the {@code claude} subprocess. Otherwise the CLI's
  * configured default model is used.
  *
+ * <p>{@code entities} is the analyzer's entities[] filtered to polymorphic
+ * callables (kind in {"interface","sealed-interface"} with non-empty
+ * behaviors[]). The sequencer prompt receives these as additional valid
+ * arrow targets so polymorphic dispatch can be represented as a single
+ * arrow rather than an alt-chain over variants. Loose-typed for the same
+ * reason as participants. Null/empty when the design has no polymorphic
+ * dispatch.
+ *
  * <p>{@code refusalFeedback} is set only on retry. When the plugin's
  * validator refuses the first attempt, the wizard re-posts the sequence
  * request with the refusal markdown in this field; the prompt threads it
@@ -30,6 +38,7 @@ import java.util.Map;
 public record SequenceRequest(
         String story,
         List<Map<String, Object>> participants,
+        List<Map<String, Object>> entities,
         String sut,
         String model,
         String refusalFeedback

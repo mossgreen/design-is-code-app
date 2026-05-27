@@ -22,6 +22,18 @@ will auto-add it.
 {PARTICIPANTS}
 ```
 
+## Polymorphic entities (additional callees)
+
+Some entity types in the design are polymorphic callables — `interface`
+or `sealed-interface` entities with non-empty `behaviors[]`. Calling one
+of these models polymorphic dispatch: the runtime variant (chosen by the
+language's `sealed`/`implements` machinery, or returned by an upstream
+resolver) supplies the implementation. The list below may be empty.
+
+```
+{ENTITIES}
+```
+
 ## System under test (orchestrator)
 
 ```
@@ -50,9 +62,18 @@ better than nested.
 - **Invent new methods sparingly.** Only when no existing method on the named
   callee fits the responsibility. Use `camelCase` names and realistic
   `args`/`returns` shapes.
-- **Caller and callee must be participant names.** Don't reference types
-  that aren't in the participants list. Don't use `[*]` or
-  `system_caller` — those are managed by the wizard.
+- **Caller and callee must come from the cast.** Caller is always a
+  participant name. Callee may be a participant name OR the name of a
+  polymorphic entity listed in `{ENTITIES}` above. Don't reference
+  types absent from both lists. Don't use `[*]` or `system_caller` —
+  those are managed by the wizard.
+- **Dispatch to an entity only when the story names variance.** Use a
+  participant for stateless services and orchestration; dispatch to a
+  polymorphic entity when a single behavior has variant-specific
+  implementations supplied by the variants. When a participant returns
+  a polymorphic entity (e.g. a resolver returning a `Strategy`
+  interface), the very next call typically dispatches to that entity —
+  ONE arrow, not an `alt`/`switch` over variants.
 - **3-8 calls is typical.** Hard cap: 12 calls (counting only direct calls,
   fragments don't count). If your sequence is longer, your decomposition
   is wrong.

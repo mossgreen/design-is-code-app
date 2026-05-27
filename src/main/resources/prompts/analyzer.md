@@ -153,14 +153,16 @@ satisfies the discipline.
    matching shape in `participants[]`/`entities[]`. `rule-table` → a
    `Repository` + `Applier` shape (or method on the orchestrator)
    exists; NO `sealed-interface` entity for that axis. `resolver` →
-   an `XxxResolver` participant + N strategy participants exist; NO
-   `sealed-interface` entity for that axis. `sealed-polymorphism` →
-   a `kind: "sealed-interface"` entity with non-empty `behaviors[]`
-   and a `permits[]` list of variant records exists. `pattern-matching`
-   → a `kind: "sealed-interface"` entity with EMPTY `behaviors[]` and
-   a `permits[]` list of pure-data records exists. Rewrite anything
-   that contradicts the plan — do not weaken the plan to match a
-   sloppy design.
+   an `XxxResolver` participant exists, AND a `kind: "interface"`
+   entity (the StrategyInterface) with non-empty `behaviors[]` and a
+   `permits[]` list of N `class` entities exists, AND the resolver's
+   `mapping[]` is present and exhaustive over those permits.
+   `sealed-polymorphism` → a `kind: "sealed-interface"` entity with
+   non-empty `behaviors[]` and a `permits[]` list of variant records
+   exists. `pattern-matching` → a `kind: "sealed-interface"` entity
+   with EMPTY `behaviors[]` and a `permits[]` list of pure-data
+   records exists. Rewrite anything that contradicts the plan — do
+   not weaken the plan to match a sloppy design.
 
 The full rule bodies — including worked examples — appear at the end
 of this prompt under "Rule details", composed in from
@@ -202,13 +204,44 @@ runtime by a key.
 Choose when: each case is a full operation (not just data). The variants
 are interchangeable at the same call site, selected by an external key.
 
-Participant shape:
-- A `XxxResolver` participant exposing `resolve(key) → Strategy`.
-- N strategy participants implementing a common operation; each strategy
-  is its own leaf in the participant tree.
+Entity & participant shape:
+- A `XxxResolver` participant exposing `resolve(key) → StrategyInterface`,
+  `isLeaf: true`. The resolver participant has exactly one method.
+- A `StrategyInterface` entity (kind: `interface`) declaring the strategy
+  operation's contract in `behaviors[]` (typically one behavior), with a
+  `permits[]` list naming the N strategy class entities.
+- N strategy entities of `kind: "class"` (one per variant), each listed
+  in the interface's `permits[]`. Each strategy class is an entity in
+  `entities[]`, NOT a participant — they are leaf implementations of the
+  contract, treated like sealed-family variant records but as regular
+  classes so they can carry Spring stereotypes and infrastructure
+  dependencies the user supplies.
+- The orchestrator's sequence dispatches polymorphically to the
+  StrategyInterface entity in ONE arrow; do not enumerate variants as
+  separate arrows from the orchestrator.
 
-No `sealed-interface` entity is needed for this pattern either — the
-strategies are participants, not entities.
+Shape sketch (abstract placeholders, no domain content):
+
+```
+participants:
+  - { name: "Orchestrator",   isLeaf: false }   # SUT — the orchestrator
+  - { name: "StrategyResolver", isLeaf: true,
+      behaviors: [ { name: "resolve", args: [{name:"key", type:"KeyType"}],
+                     returns: "Strategy" } ] }
+
+entities:
+  - { name: "Strategy", kind: "interface",
+      behaviors: [ { name: "perform", args: [{name:"input", type:"Input"}],
+                      returns: "Output" } ],
+      permits: ["StrategyA", "StrategyB"] }
+  - { name: "StrategyA", kind: "class", fields: [] }
+  - { name: "StrategyB", kind: "class", fields: [] }
+
+variancePlan entry:
+  { axis: "key → Strategy", pattern: "resolver", criterion: 2,
+    rationale: "...", mapping: [{key:"K_A",strategy:"StrategyA"},
+                                {key:"K_B",strategy:"StrategyB"}] }
+```
 
 ### 3. Sealed polymorphism — variance as data-with-behaviour
 
@@ -381,7 +414,8 @@ Each entry:
   "axis":      "<short discriminator → output(s)>",
   "pattern":   "rule-table" | "resolver" | "sealed-polymorphism" | "pattern-matching",
   "criterion": 1 | 2 | 3 | 4,
-  "rationale": "one sentence; genuinely justify why this pattern fits, not just restate the criterion text"
+  "rationale": "one sentence; genuinely justify why this pattern fits, not just restate the criterion text",
+  "mapping":   [ { "key": "<keyValue>", "strategy": "<StrategyClassName>" }, ... ]   // REQUIRED for pattern "resolver"; omit otherwise
 }
 ```
 
@@ -399,14 +433,25 @@ Each entry:
   produce below MUST be consistent with the patterns you declare here:
   - `rule-table` → a `Repository` + `Applier` shape (or method on the
     orchestrator); NO `sealed-interface` entity for this axis.
-  - `resolver` → a `XxxResolver` participant + N strategy participants;
-    NO `sealed-interface` entity for this axis.
+  - `resolver` → a `XxxResolver` participant exposing
+    `resolve(key) → StrategyInterface` PLUS a `kind: "interface"`
+    entity (the StrategyInterface) with non-empty `behaviors[]` and a
+    `permits[]` list of N `class` entities. The strategies are entities,
+    NOT participants. See the Resolver pattern's "Entity & participant
+    shape" section above for details.
   - `sealed-polymorphism` → a `kind: "sealed-interface"` entity in
     `entities[]` with non-empty `behaviors[]` and a `permits[]` list
     of variant records, also in `entities[]`.
   - `pattern-matching` → a `kind: "sealed-interface"` entity with
     EMPTY `behaviors[]` (pure sum type) and a `permits[]` list of
     pure-data records.
+- **Mapping (resolver only).** When `pattern: "resolver"`, the
+  `mapping[]` field is REQUIRED. Every value in the StrategyInterface
+  entity's `permits[]` MUST appear exactly once in the `mapping[]` as
+  a `strategy` value (exhaustive over the permits); every `key` value
+  MUST be a valid input value for the resolver's input parameter
+  (typically an enum constant name). The frontend uses this mapping to
+  auto-emit the resolver's decision-table sidecar.
 - **No rationalisation.** `rationale` is a one-sentence justification
   the user can audit. If you cannot honestly justify the pick, the
   pick is wrong — walk the priority list again.
@@ -581,16 +626,26 @@ Each entry:
   truth and the plugin will not codegen it.
 - **Field applicability by kind:**
   - `record` / `class` → `fields[]` populated; behaviors / values /
-    permits empty.
+    permits empty. (A `class` may appear as a permit of an `interface`
+    parent — see below.)
   - `enum` → `values[]` populated (each an UPPERCASE_NAME string);
     everything else empty.
   - `interface` → `behaviors[]` populated (at least one); fields /
-    values / permits empty.
+    values empty. `permits[]` is OPTIONAL: when present, lists N
+    `class` entities that implement this interface (used by the
+    resolver variance pattern). Without `permits[]` the interface is
+    just a contract; with `permits[]` the plugin generates implements
+    clauses + `@Override` skeletons for each permit class.
   - `sealed-interface` → `permits[]` populated (at least one),
     `behaviors[]` may be populated or empty; fields / values empty.
-- **Permits resolve to records.** Each name in `permits[]` MUST appear
-  as another `record` (rarely `class`) entry in the same `entities[]`
-  array. Variant records may have empty `fields[]` (pure tag-records).
+- **Permits resolve to record or class.** Each name in `permits[]` MUST
+  appear as another entry in the same `entities[]` array. For a
+  `sealed-interface` parent, permits are typically `record` (pure
+  value variants); for an `interface` parent, permits are typically
+  `class` (services with state and infrastructure dependencies).
+  Variant records may have empty `fields[]` (pure tag-records); permit
+  classes may have empty `fields[]` initially — the user adds
+  dependency fields later when wiring Spring beans.
 - **Field & arg types should themselves resolve.** A field's `type`
   or an argument's `type` is either a primitive, a JDK type, an existing
   FQN-bound entity, or another entity in this same `entities` array.

@@ -36,6 +36,7 @@ public class SequenceService {
     private static final String PROMPT_RESOURCE = "/prompts/sequencer.md";
     private static final String P_STORY = "{STORY}";
     private static final String P_PARTICIPANTS = "{PARTICIPANTS}";
+    private static final String P_ENTITIES = "{ENTITIES}";
     private static final String P_SUT = "{SUT}";
     private static final String P_REFUSAL_FEEDBACK = "{REFUSAL_FEEDBACK}";
 
@@ -67,12 +68,14 @@ public class SequenceService {
         }
 
         String participantsJson = json.writeValueAsString(participants);
+        String entitiesJson = json.writeValueAsString(filterPolyCallableEntities(request.entities()));
         String sut = request.sut() == null ? "" : request.sut().trim();
         String refusalFeedback = renderRefusalFeedback(request.refusalFeedback());
 
         String prompt = promptTemplate
                 .replace(P_STORY, request.story().trim())
                 .replace(P_PARTICIPANTS, participantsJson)
+                .replace(P_ENTITIES, entitiesJson)
                 .replace(P_SUT, sut)
                 .replace(P_REFUSAL_FEEDBACK, refusalFeedback);
 
@@ -120,6 +123,26 @@ public class SequenceService {
     }
 
     // --- helpers (copied from AnalyzeService) ---
+
+    /** Keep only entities the sequencer can dispatch into: {@code kind} is
+     *  {@code "interface"} or {@code "sealed-interface"} AND
+     *  {@code behaviors} is a non-empty list. Pure sum types (sealed with
+     *  empty behaviors), records, enums, and classes have no callable
+     *  surface from a sequence arrow, so they're dropped to keep the
+     *  prompt slim. Null/empty input returns an empty list. */
+    private static List<Map<String, Object>> filterPolyCallableEntities(List<Map<String, Object>> entities) {
+        if (entities == null || entities.isEmpty()) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> e : entities) {
+            if (e == null) continue;
+            Object kind = e.get("kind");
+            if (!"interface".equals(kind) && !"sealed-interface".equals(kind)) continue;
+            Object behaviors = e.get("behaviors");
+            if (!(behaviors instanceof List<?> list) || list.isEmpty()) continue;
+            out.add(e);
+        }
+        return out;
+    }
 
     /** Render the substitution for {@link #P_REFUSAL_FEEDBACK}. Null or
      *  blank → first-attempt sentinel; otherwise the trimmed feedback
