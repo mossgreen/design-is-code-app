@@ -196,6 +196,14 @@ Participant shape:
 No `sealed-interface` entity is needed for this pattern — the
 discriminator is a plain enum or reused value type.
 
+The rule record itself MUST appear as a `kind: "record"` entity in
+`entities[]` (its fields hold the per-discriminator values — windows,
+percentages, thresholds, etc.). The `variancePlan` entry for this
+axis MUST include an exhaustive `mapping[]` of `{ key, expected }`
+rows (one row per discriminator value found in the AC); `expected`
+carries the rule record's field values for that discriminator. See
+"Mapping (resolver and rule-table)" below for the row schema.
+
 ### 2. Resolver — variance as pluggable processors
 
 The cases are N implementations of a common interface, selected at
@@ -415,7 +423,9 @@ Each entry:
   "pattern":   "rule-table" | "resolver" | "sealed-polymorphism" | "pattern-matching",
   "criterion": 1 | 2 | 3 | 4,
   "rationale": "one sentence; genuinely justify why this pattern fits, not just restate the criterion text",
-  "mapping":   [ { "key": "<keyValue>", "strategy": "<StrategyClassName>" }, ... ]   // REQUIRED for pattern "resolver"; omit otherwise
+  "mapping":   [ ... ]   // REQUIRED for "resolver" and "rule-table"; omit for "sealed-polymorphism" and "pattern-matching"
+                         //   resolver row:    { "key": "<keyValue>", "strategy": "<StrategyClassName>" }
+                         //   rule-table row:  { "key": "<keyValue>", "expected": { "<recordField>": <value>, ... } }
 }
 ```
 
@@ -432,7 +442,11 @@ Each entry:
 - **Commitment contract.** The `participants[]` and `entities[]` you
   produce below MUST be consistent with the patterns you declare here:
   - `rule-table` → a `Repository` + `Applier` shape (or method on the
-    orchestrator); NO `sealed-interface` entity for this axis.
+    orchestrator) PLUS a `kind: "record"` entity for the rule itself
+    (its fields hold the per-discriminator values). The Repository's
+    `find(...)` method returns that record. NO `sealed-interface`
+    entity for this axis. The variance entry MUST carry `mapping[]`
+    (see "Mapping (resolver and rule-table)" below).
   - `resolver` → a `XxxResolver` participant exposing
     `resolve(key) → StrategyInterface` PLUS a `kind: "interface"`
     entity (the StrategyInterface) with non-empty `behaviors[]` and a
@@ -445,13 +459,26 @@ Each entry:
   - `pattern-matching` → a `kind: "sealed-interface"` entity with
     EMPTY `behaviors[]` (pure sum type) and a `permits[]` list of
     pure-data records.
-- **Mapping (resolver only).** When `pattern: "resolver"`, the
-  `mapping[]` field is REQUIRED. Every value in the StrategyInterface
-  entity's `permits[]` MUST appear exactly once in the `mapping[]` as
-  a `strategy` value (exhaustive over the permits); every `key` value
-  MUST be a valid input value for the resolver's input parameter
-  (typically an enum constant name). The frontend uses this mapping to
-  auto-emit the resolver's decision-table sidecar.
+- **Mapping (resolver and rule-table).** When `pattern: "resolver"` or
+  `pattern: "rule-table"`, the `mapping[]` field is REQUIRED and must
+  be exhaustive over the discriminator values present in the AC. The
+  frontend uses these mappings to auto-emit the corresponding
+  decision-table sidecar.
+  - **Resolver rows** — `{ key, strategy }`. Every value in the
+    StrategyInterface entity's `permits[]` MUST appear exactly once as
+    a `strategy` value (exhaustive over the permits); every `key`
+    value MUST be a valid input value for the resolver's input
+    parameter (typically an enum constant name).
+  - **Rule-table rows** — `{ key, expected: {...} }`. Each row carries
+    the rule record's field values for one discriminator. The
+    `expected` object's keys MUST match the rule record entity's
+    `fields[].name` set exactly (same names, same set — no extras, no
+    omissions). The `key` value MUST be a valid input value for the
+    Repository's `find(...)` method's discriminator parameter. Values
+    in `expected` are scalars (numbers, strings, enum constant names
+    as strings) — not formulas. Conditional logic (e.g. "within
+    window") is NOT a discriminator value and does NOT appear in
+    `mapping[]`; it belongs in the downstream Applier's body.
 - **No rationalisation.** `rationale` is a one-sentence justification
   the user can audit. If you cannot honestly justify the pick, the
   pick is wrong — walk the priority list again.

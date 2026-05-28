@@ -4890,6 +4890,79 @@ function collectResolverDecisionTables() {
     return out;
 }
 
+// For each rule-table entry in state.variancePlan, synthesise the
+// repository's decision-table sidecar (key → rule-record field values)
+// so the plugin's pure-function filled mode generates a working Map-based
+// lookup. The analyzer's variancePlan surfaces mapping[] with rows shaped
+// { key, expected: {field1: v1, field2: v2, ...} }; this function
+// correlates the expected-key set with a record entity in state.entities
+// and a participant method returning that record, then emits one
+// .decision.md per rule-table axis.
+//
+// Skips entries that can't be correlated (no matching record entity, no
+// participant method returning it, or expected-key set doesn't match any
+// record's fields) — the user can author the sidecar by hand via the UI's
+// +DT chip in that fallback case.
+function collectRuleTableDecisionTables() {
+    const out = [];
+    const plans = (state.variancePlan || [])
+        .filter(v => v && v.pattern === 'rule-table' && Array.isArray(v.mapping) && v.mapping.length > 0);
+
+    for (const v of plans) {
+        const first = v.mapping[0];
+        if (!first || !first.expected || typeof first.expected !== 'object') continue;
+        const fieldNames = Object.keys(first.expected);
+        if (fieldNames.length === 0) continue;
+        const fieldSet = new Set(fieldNames);
+
+        const rule = state.entities.find(e =>
+            e && e.kind === 'record'
+            && Array.isArray(e.fields) && e.fields.length === fieldSet.size
+            && e.fields.every(f => f && fieldSet.has(f.name))
+        );
+        if (!rule) continue;
+
+        let repo = null, method = null;
+        for (const p of state.participants) {
+            const m = (p.methods || []).find(mm =>
+                (mm.output || '').trim() === rule.name
+                && Array.isArray(mm.inputs) && mm.inputs.length === 1
+            );
+            if (m) { repo = p; method = m; break; }
+        }
+        if (!repo || !method) continue;
+
+        const input = method.inputs[0];
+        if (!input || !input.name) continue;
+
+        const lines = [];
+        lines.push('---');
+        lines.push(`target: ${repo.name}.${method.name}`);
+        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
+        lines.push('input:');
+        lines.push(`  ${input.name}: ${input.type || '?'}`);
+        lines.push(`output: ${rule.name}`);
+        lines.push('---');
+        lines.push('');
+        const headers = [input.name, ...fieldNames.map(f => `expected.${f}`)];
+        const rows = v.mapping.map(m => [
+            String(m.key || ''),
+            ...fieldNames.map(f => {
+                const val = (m.expected || {})[f];
+                return val === undefined || val === null ? '' : String(val);
+            })
+        ]);
+        lines.push(emitMarkdownTable(headers, rows));
+        lines.push('');
+
+        out.push({
+            fileName: decisionTableFileName(repo),
+            content: lines.join('\n')
+        });
+    }
+    return out;
+}
+
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');
     saveEls.result.classList.add('hidden');
@@ -4934,15 +5007,22 @@ saveEls.save.addEventListener('click', async () => {
             content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
         });
     }
-    // Auto-emit one resolver decision-table sidecar per resolver entry in
+    // Auto-emit a decision-table sidecar per resolver / rule-table entry in
     // the analyzer's variancePlan. The plugin reads these and generates
-    // a Map-based resolver impl; without them resolvers stay as
-    // UnsupportedOperationException throwers. Deduplicate by fileName so
-    // a user-authored table for the same resolver wins over the auto one.
+    // working Map-based / lookup implementations; without them participants
+    // stay as UnsupportedOperationException skeletons. Deduplicate by
+    // fileName so a user-authored table for the same participant wins over
+    // the auto one.
     const existingNames = new Set(decisionTables.map(d => d.fileName));
     for (const dt of collectResolverDecisionTables()) {
         if (existingNames.has(dt.fileName)) continue;
         decisionTables.push(dt);
+        existingNames.add(dt.fileName);
+    }
+    for (const dt of collectRuleTableDecisionTables()) {
+        if (existingNames.has(dt.fileName)) continue;
+        decisionTables.push(dt);
+        existingNames.add(dt.fileName);
     }
 
     try {
