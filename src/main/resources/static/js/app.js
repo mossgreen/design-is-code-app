@@ -812,12 +812,16 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
     };
 }
 
-function makeMethod(name = '', inputs = [], output = '') {
+function makeMethod(name = '', inputs = [], output = '', cases = null) {
     // `isProposed` distinguishes AI-suggested NEW methods on a reused type
     // (which become `+method` extensions in the .puml prelude) from methods
     // that already exist on the catalog type. Default false; adoptParticipant
     // flips it to true for AI-proposed extensions on a reused type.
-    return { id: newId(), name, inputs, output, isProposed: false };
+    //
+    // `cases` carries per-AC-row example data the analyzer emits for
+    // pure-function-leaf behaviors. Shape: [{ acIndex, description, inputs:{name->expr}, expected:expr }].
+    // Null when absent — the save handler auto-emits a sidecar only when non-empty.
+    return { id: newId(), name, inputs, output, isProposed: false, cases };
 }
 
 // Entity factory — records / enums / classes the participants pass around.
@@ -1011,6 +1015,27 @@ function mergeDerivedEntities() {
 // on the user's type; AI-proposed methods that don't exist in the catalog
 // are kept as `isProposed: true` and become `+method` entries on the
 // .puml `<<@class:fqn, +method>>` stereotype.
+// Reshape an analyzer-supplied `cases` payload onto a behavior. Skips
+// malformed entries; returns null when nothing usable survives so the
+// downstream `(m.cases || []).length === 0` guard short-circuits cleanly.
+function adoptCases(raw) {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    const out = [];
+    for (const c of raw) {
+        if (!c || typeof c !== 'object') continue;
+        const inputs = (c.inputs && typeof c.inputs === 'object') ? { ...c.inputs } : {};
+        const expected = (c.expected !== undefined && c.expected !== null) ? String(c.expected) : '';
+        if (!expected && Object.keys(inputs).length === 0) continue;
+        out.push({
+            acIndex: typeof c.acIndex === 'number' ? c.acIndex : null,
+            description: (c.description || '').toString(),
+            inputs,
+            expected
+        });
+    }
+    return out.length > 0 ? out : null;
+}
+
 function adoptParticipant(node) {
     if (!node || typeof node !== 'object') return null;
     const name = (node.name || '').trim();
@@ -1048,7 +1073,7 @@ function adoptParticipant(node) {
                 .filter(a => a && (a.name || a.type))
                 .map(a => ({ name: a.name || '', type: a.type || '' }));
             if (!catalogMethodNames.has(bname)) {
-                const added = makeMethod(bname, inputs, b.returns || '');
+                const added = makeMethod(bname, inputs, b.returns || '', adoptCases(b.cases));
                 added.isProposed = true;
                 methods.push(added);
             } else {
@@ -1075,7 +1100,7 @@ function adoptParticipant(node) {
             const inputs = (b.args || [])
                 .filter(a => a && (a.name || a.type))
                 .map(a => ({ name: a.name || '', type: a.type || '' }));
-            const m = makeMethod(b.name || '', inputs, b.returns || '');
+            const m = makeMethod(b.name || '', inputs, b.returns || '', adoptCases(b.cases));
             m.isProposed = false;
             return m;
         });
@@ -4963,6 +4988,56 @@ function collectRuleTableDecisionTables() {
     return out;
 }
 
+// For each pure-function-leaf participant whose method carries a non-empty
+// `cases[]` (per-AC-row examples from the analyzer), synthesise a sidecar
+// the plugin's pure-function FILLED mode reads to derive the implementation
+// AND emit one test per row. This closes the loop for pattern-1 appliers
+// (and any other AC-driven pure function leaf): every AC row gets a real
+// generated impl + a passing test; adding a new AC row regenerates a new
+// case + new test without changing the design.
+function collectPureFunctionLeafDecisionTables() {
+    const out = [];
+    for (const p of state.participants) {
+        if (!p || p.kind !== 'leaf') continue;
+        for (const m of (p.methods || [])) {
+            const cases = m.cases || [];
+            if (cases.length === 0) continue;
+            const inputs = (m.inputs || []);
+            if (inputs.length === 0) continue;
+
+            const lines = [];
+            lines.push('---');
+            lines.push(`target: ${p.name}.${m.name}`);
+            if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
+            lines.push('input:');
+            inputs.forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
+            lines.push(`output: ${m.output || 'void'}`);
+            lines.push('---');
+            lines.push('');
+
+            const headers = [...inputs.map(i => i.name), 'expected'];
+            const rows = cases.map(c => {
+                const ins = c.inputs || {};
+                return [
+                    ...inputs.map(i => {
+                        const v = ins[i.name];
+                        return v === undefined || v === null ? '' : String(v);
+                    }),
+                    String(c.expected || '')
+                ];
+            });
+            lines.push(emitMarkdownTable(headers, rows));
+            lines.push('');
+
+            out.push({
+                fileName: decisionTableFileName(p),
+                content: lines.join('\n')
+            });
+        }
+    }
+    return out;
+}
+
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');
     saveEls.result.classList.add('hidden');
@@ -5020,6 +5095,11 @@ saveEls.save.addEventListener('click', async () => {
         existingNames.add(dt.fileName);
     }
     for (const dt of collectRuleTableDecisionTables()) {
+        if (existingNames.has(dt.fileName)) continue;
+        decisionTables.push(dt);
+        existingNames.add(dt.fileName);
+    }
+    for (const dt of collectPureFunctionLeafDecisionTables()) {
         if (existingNames.has(dt.fileName)) continue;
         decisionTables.push(dt);
         existingNames.add(dt.fileName);

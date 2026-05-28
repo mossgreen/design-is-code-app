@@ -446,7 +446,11 @@ Each entry:
     (its fields hold the per-discriminator values). The Repository's
     `find(...)` method returns that record. NO `sealed-interface`
     entity for this axis. The variance entry MUST carry `mapping[]`
-    (see "Mapping (resolver and rule-table)" below).
+    (see "Mapping (resolver and rule-table)" below). The Applier
+    participant MUST be `isLeaf: true` and its `apply(...)` behavior
+    MUST carry a `cases[]` array (one row per AC row) so the wizard
+    auto-emits the applier's decision-table sidecar — see
+    `behaviors[].cases` below.
   - `resolver` → a `XxxResolver` participant exposing
     `resolve(key) → StrategyInterface` PLUS a `kind: "interface"`
     entity (the StrategyInterface) with non-empty `behaviors[]` and a
@@ -502,6 +506,14 @@ Each participant:
       "returns": "Type",
       "touches": [   // OPTIONAL; what entity state this method's body would touch — fuel for the feature-envy rule
         { "entity": "EntityName", "fields": ["fieldA"], "mode": "write" }
+      ],
+      "cases": [     // REQUIRED on pure-function leaf behaviors whose expected output varies across AC rows; OMIT otherwise
+        {
+          "acIndex":     0,
+          "description": "short human-readable label for this AC row",
+          "inputs":      { "x": "<Java expression as string>" },   // keys MUST match args[].name exactly
+          "expected":    "<Java expression as string for the return value>"
+        }
       ]
     }
   ],
@@ -556,6 +568,33 @@ Each participant:
   is purely supportive (e.g. a generic carrier that flows through
   many rows). The wizard uses this to compute per-participant
   complexity (axes covered) and surface decomposition hints.
+- `behaviors[].cases` — REQUIRED when ALL of (a) `isLeaf: true`, (b)
+  the behavior is a pure function (output depends only on its inputs,
+  no side effects), and (c) the expected output differs across the AC
+  rows this participant carries. OMIT otherwise. Each entry is one
+  AC-rooted example the wizard auto-emits as a decision-table row for
+  the plugin's pure-function FILLED mode (which synthesizes the
+  implementation + one test per row from these). Schema:
+  - `acIndex` — 0-based index into the AC; one case row per `acIndex`
+    in `acIndices`. Length of `cases[]` MUST equal `acIndices.length`
+    (exhaustive).
+  - `description` — short human label for the row; surfaced in the
+    sidecar's row commentary.
+  - `inputs` — object whose keys MUST match this behavior's
+    `args[].name` set exactly (same names, same cardinality). Values
+    are **Java expression strings** parsed straight into decision-table
+    cells. Use canonical concrete values: round numbers (e.g.
+    `new BigDecimal("100")`), relative dates
+    (`LocalDate.now().minusDays(10)`), constructor calls
+    (`new DiscountRule(20, 20)`), `Optional.of(...)`, etc.
+  - `expected` — a Java expression string for the return value. For
+    BigDecimal, use `new BigDecimal("80")`. For Optional, use
+    `Optional.of(...)` / `Optional.empty()`. For records, use the
+    canonical constructor form.
+  Values across rows MUST be chosen so the formula is unambiguous —
+  the plugin synthesizes the impl by reading the rows; rows that are
+  internally inconsistent (e.g. two rows with the same inputs but
+  different expected) make synthesis impossible.
 
 ## `sut` — the use-case entry point
 
