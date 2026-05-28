@@ -116,6 +116,22 @@
                 <button type="button" class="analyze-banner-action hidden" id="analyze-banner-action"></button>
             </div>
 
+            <div class="design-issues hidden" id="analyze-issues" role="alert" aria-live="polite">
+                <div class="design-issues-head">
+                    <span class="design-issues-title">Analysis surfaced coverage gaps</span>
+                    <span class="design-issues-hint">The design will still save, but leaves without rows generate as interfaces only. Edit the analysis below or re-run Analyze.</span>
+                </div>
+                <ul class="design-issues-list" id="analyze-issues-list"></ul>
+            </div>
+
+            <div class="design-issues hidden" id="sequence-issues" role="alert" aria-live="polite">
+                <div class="design-issues-head">
+                    <span class="design-issues-title">Sequence has dataflow gaps</span>
+                    <span class="design-issues-hint">Some call arguments aren't sourced from the entry method or a prior return. Add a lookup step, or change the entry signature, then re-run Analyze.</span>
+                </div>
+                <ul class="design-issues-list" id="sequence-issues-list"></ul>
+            </div>
+
             <div class="story-narrative-section hidden" id="story-narrative-section">
                 <div class="section-head">
                     <h3>The story (AI summary)</h3>
@@ -442,6 +458,8 @@
                 <span id="copy-feedback" class="copy-feedback puml-copy-feedback"></span>
                 <pre id="output"></pre>
             </div>
+
+            <div id="sidecar-preview" class="sidecar-preview hidden"></div>
 
             <div class="export-row">
                 <button type="button" id="save-to-project">Export to project →</button>

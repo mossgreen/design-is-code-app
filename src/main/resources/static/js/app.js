@@ -396,6 +396,10 @@ const step2Els = {
     analyzeBanner: document.getElementById('analyze-banner'),
     analyzeBannerText: document.getElementById('analyze-banner-text'),
     analyzeBannerAction: document.getElementById('analyze-banner-action'),
+    analyzeIssues: document.getElementById('analyze-issues'),
+    analyzeIssuesList: document.getElementById('analyze-issues-list'),
+    sequenceIssues: document.getElementById('sequence-issues'),
+    sequenceIssuesList: document.getElementById('sequence-issues-list'),
     storyNarrativeSection: document.getElementById('story-narrative-section'),
     storyNarrative: document.getElementById('story-narrative')
 };
@@ -1287,6 +1291,8 @@ async function runAnalyze(context) {
     hidePluginRefusal();
     state.analyzing = true;
     state.analyzeError = null;
+    hideAnalyzeIssues();
+    hideSequenceIssues();
     showAnalyzeBanner('Analysing your story…', { spinning: true });
     try {
         // Drop empty AC rows so the prompt only includes meaningful criteria.
@@ -1323,6 +1329,21 @@ async function runAnalyze(context) {
         renderParticipants();
         renderEntities();
         renderSequence();
+
+        // Validator gaps from the Java side: empty mapping[] on rule-table/resolver,
+        // or cases[].length mismatch on pure-function leaves. Surface inline and
+        // skip the auto-chain — the user must edit the analysis first so the
+        // sequencer (and ultimately the plugin) has complete inputs to work from.
+        const analyzeIssues = Array.isArray(data && data.errors) ? data.errors : [];
+        if (analyzeIssues.length > 0) {
+            showDesignIssues(step2Els.analyzeIssues, step2Els.analyzeIssuesList, analyzeIssues);
+            showAnalyzeBanner(
+                'Analysis surfaced ' + analyzeIssues.length + ' coverage gap' + (analyzeIssues.length === 1 ? '' : 's')
+                + '. Review below, edit the participants, then re-run Analyze.',
+                { spinning: false, error: true, dismissable: true }
+            );
+            return;
+        }
 
         // Chain straight into sequence composition + plugin validation.
         // Three-phase LLM flow: analyse → compose → validate. One feedback
@@ -1391,6 +1412,29 @@ function showAnalyzeBanner(text, opts = {}) {
 
 function hideAnalyzeBanner() {
     if (step2Els.analyzeBanner) step2Els.analyzeBanner.classList.add('hidden');
+}
+
+// Surface validator gaps that the Java side flagged on the analyzer / sequencer
+// response. The partial response is still adopted into state so the user can
+// hand-edit the participants/sequence; these issues just block the auto-chain
+// into the next phase. Empty/missing arrays hide the panel.
+function showDesignIssues(panel, list, issues) {
+    if (!panel || !list) return;
+    list.innerHTML = '';
+    (issues || []).forEach(msg => {
+        const li = document.createElement('li');
+        li.textContent = msg;
+        list.appendChild(li);
+    });
+    panel.classList.toggle('hidden', (issues || []).length === 0);
+}
+
+function hideAnalyzeIssues() {
+    showDesignIssues(step2Els.analyzeIssues, step2Els.analyzeIssuesList, []);
+}
+
+function hideSequenceIssues() {
+    showDesignIssues(step2Els.sequenceIssues, step2Els.sequenceIssuesList, []);
 }
 
 // --- AI sequence composition (auto-fires after analyse) ---
@@ -1594,6 +1638,22 @@ async function runSequence(refusalFeedback = null) {
         renderParticipants();
         renderEntities();
         renderSequence();
+
+        // Dataflow gaps from the Java-side validator: arguments to calls that
+        // are not sourceable from the SUT entry or any earlier return. Adopt the
+        // sequence so the user can hand-edit, but block the auto-advance into
+        // the plugin validator — running it on a broken dataflow wastes a
+        // claude call and surfaces the wrong refusal.
+        const sequenceIssues = Array.isArray(data && data.errors) ? data.errors : [];
+        if (sequenceIssues.length > 0) {
+            showDesignIssues(step2Els.sequenceIssues, step2Els.sequenceIssuesList, sequenceIssues);
+            showAnalyzeBanner(
+                'Sequence has ' + sequenceIssues.length + ' dataflow gap' + (sequenceIssues.length === 1 ? '' : 's')
+                + '. Add a lookup step (or change the entry signature) so every argument has a source, then re-run Analyze.',
+                { spinning: false, error: true, dismissable: true }
+            );
+            return false;
+        }
 
         if (warnings.length > 0) {
             // Non-fatal — sequence is populated, just imperfect. Surface the
@@ -4618,10 +4678,70 @@ function enterStep4() {
     }
     saveEls.result.classList.add('hidden');
     saveEls.error.classList.add('hidden');
+    renderSidecarPreview();
     // Plugin status drives whether the Run button is enabled. Always refresh
     // on enter — the user might have installed the plugin in a separate
     // terminal between visits.
     refreshPluginStatus();
+}
+
+// Sidecar preview: shows what auto-emitted decision tables will land alongside
+// the .puml on Save. When variancePlan declares variance but no sidecar will
+// land (empty mapping[], no matching participant, etc.) this warns explicitly
+// — without that signal the user only finds out by inspecting the file tree.
+function renderSidecarPreview() {
+    const host = document.getElementById('sidecar-preview');
+    if (!host) return;
+
+    const collected = [
+        ...collectResolverDecisionTables(),
+        ...collectRuleTableDecisionTables(),
+        ...collectPureFunctionLeafDecisionTables()
+    ];
+    const dedup = new Map();
+    collected.forEach(dt => { if (!dedup.has(dt.fileName)) dedup.set(dt.fileName, dt); });
+    const sidecars = Array.from(dedup.values());
+
+    const variantsDeclared = (state.variancePlan || []).filter(v =>
+        v && (v.pattern === 'rule-table' || v.pattern === 'resolver'));
+
+    host.classList.remove('hidden', 'is-warning');
+    host.innerHTML = '';
+
+    if (sidecars.length === 0) {
+        if (variantsDeclared.length === 0) {
+            host.classList.add('hidden');
+            return;
+        }
+        host.classList.add('is-warning');
+        const strong = document.createElement('strong');
+        strong.textContent = 'No decision-table sidecars will be saved. ';
+        const txt = document.createTextNode(
+            'Analysis declared ' + variantsDeclared.length + ' variance ' +
+            (variantsDeclared.length === 1 ? 'axis' : 'axes') +
+            ' (' + variantsDeclared.map(v => v.pattern).join(', ') + ') but the collectors found no rows to emit. ' +
+            'Leaves will generate as interfaces only. Re-run Analyze, or attach a decision table on Step 3.'
+        );
+        host.append(strong, txt);
+        return;
+    }
+
+    const fname = saveEls.filename.value.trim() || defaultFileName();
+    const lead = document.createElement('span');
+    lead.textContent = 'Will save: ';
+    const fileCode = document.createElement('code');
+    fileCode.textContent = fname;
+    const plus = document.createTextNode(
+        ' + ' + sidecars.length + ' decision table' + (sidecars.length === 1 ? '' : 's') + ' ('
+    );
+    host.append(lead, fileCode, plus);
+    sidecars.forEach((dt, i) => {
+        if (i > 0) host.append(document.createTextNode(', '));
+        const c = document.createElement('code');
+        c.textContent = dt.fileName;
+        host.append(c);
+    });
+    host.append(document.createTextNode(').'));
 }
 
 // --- Step 4 plan panel + plugin preview ---

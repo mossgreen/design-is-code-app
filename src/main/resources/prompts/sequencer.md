@@ -83,6 +83,32 @@ better than nested.
   branch.
 - **No system-caller rows.** If the SUT field is set, the boundary rows
   exist already; your sequence is purely the body.
+- **Dataflow scope (R-dataflow).** Every argument in every call MUST be
+  **sourceable** from one of:
+  1. an entry parameter of the SUT (`request` when entry is
+     `calculate(request: VisitFeeRequest)`),
+  2. a field of an entry parameter (`request.petId`,
+     `request.category()`),
+  3. the return value of an earlier call in the same scope, bound by
+     the lowercased simple name of the return type (`Pet pet`,
+     `DiscountRule discountRule`).
+
+  If the story implies a value the entry doesn't carry (e.g. AC says
+  "for a cat" but the SUT was given `petId: int`), insert an explicit
+  lookup row **before** the call that needs the derived value:
+
+  ```
+  SUT -> PetRepository : findById(petId)
+  SUT <-- PetRepository : Pet
+  ```
+
+  Prefer REUSE participants from the catalog (e.g. an existing
+  `PetRepository`) over inventing a new lookup participant. Before
+  emitting, mentally walk each row and verify every argument can be
+  pointed to either an entry parameter, an entry-parameter field, or
+  a prior return — if not, you must add a lookup row above it.
+  Failing this leaves the generated orchestrator with `TODO design
+  gap` comments and broken production code.
 
 # Output
 

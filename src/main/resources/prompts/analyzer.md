@@ -486,6 +486,31 @@ Each entry:
 - **No rationalisation.** `rationale` is a one-sentence justification
   the user can audit. If you cannot honestly justify the pick, the
   pick is wrong — walk the priority list again.
+- **Self-check before emitting.** For every `variancePlan[i]` you are
+  about to write:
+  1. **List the discriminator values from the AC.** Read the AC and
+     enumerate every distinct value that the variance is keyed on. If
+     the AC mentions "cat", "dog", and "rabbit", that is three values.
+     If it mentions "express", "standard", and "ground", that is three
+     values. Be exhaustive — every species, every carrier, every tier
+     mentioned anywhere in the AC counts.
+  2. **If `pattern` is `rule-table` or `resolver`**: `mapping[]` MUST
+     contain exactly one row per value from step 1, no more, no less.
+     Empty `mapping[]` is forbidden when the pattern is one of these
+     two — that is a contract violation, not an acceptable degradation.
+  3. **If you cannot enumerate the discriminator values** (e.g. the AC
+     says "different species get different discounts" with no concrete
+     values), do NOT pick `rule-table` or `resolver`. Pick
+     `sealed-polymorphism` or `pattern-matching` and omit `mapping[]`.
+     A vague `rule-table` with empty `mapping[]` is the worst possible
+     output — the downstream pipeline will silently generate interfaces
+     with no implementations.
+  4. **For every pure-function-leaf participant** (`isLeaf: true`) with
+     `acIndices.length > 0`: every behavior in `behaviors[]` whose
+     expected output varies across those AC rows MUST carry a `cases[]`
+     array of the same length as `acIndices`. One AC row per case row.
+     Missing or short `cases[]` will cause the wizard to skip the
+     applier's decision-table sidecar.
 
 ## `participants` — flat list, each entry one participant
 

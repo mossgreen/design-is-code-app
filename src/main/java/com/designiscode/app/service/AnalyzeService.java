@@ -133,12 +133,89 @@ public class AnalyzeService {
         }
 
         String body = stripFences(stdout);
+        Map<String, Object> response;
         try {
             //noinspection unchecked
-            return json.readValue(body, Map.class);
+            response = json.readValue(body, Map.class);
         } catch (JacksonException e) {
             throw new IOException("analyzer did not return valid JSON. First 500 chars: " + truncate(body, 500), e);
         }
+
+        List<String> errors = validateVariancePlan(response);
+        if (!errors.isEmpty()) {
+            response.put("errors", errors);
+        }
+        return response;
+    }
+
+    /**
+     * Post-LLM coverage check. The analyzer prompt's commitment-contract requires
+     * a non-empty {@code mapping[]} on rule-table / resolver variance entries, and
+     * one {@code cases[]} row per AC index on pure-function-leaf behaviors that
+     * carry {@code cases}. The LLM may emit a violating shape under variance; we
+     * surface those gaps to the frontend as an {@code errors[]} array on the
+     * response so Step 2 can render them inline instead of silently saving a
+     * sidecar-less design.
+     *
+     * <p>The validator is non-mutating except for the {@code errors} key — the
+     * partial response is still adopted by the frontend so the user can hand-edit
+     * the analysis without re-prompting the LLM.
+     */
+    static List<String> validateVariancePlan(Map<String, Object> response) {
+        List<String> errors = new ArrayList<>();
+        if (response == null) return errors;
+
+        Object vpObj = response.get("variancePlan");
+        if (vpObj instanceof List<?> vp) {
+            for (int i = 0; i < vp.size(); i++) {
+                if (!(vp.get(i) instanceof Map<?, ?> entry)) continue;
+                Object patternObj = entry.get("pattern");
+                if (!(patternObj instanceof String pattern)) continue;
+                if (!"rule-table".equals(pattern) && !"resolver".equals(pattern)) continue;
+
+                Object mapping = entry.get("mapping");
+                boolean empty = !(mapping instanceof List<?> ml) || ml.isEmpty();
+                if (empty) {
+                    String axis = entry.get("axis") instanceof String s ? s : "(no axis)";
+                    errors.add("variancePlan[" + i + "].pattern==\"" + pattern
+                            + "\" but mapping[] is empty or missing. Axis: \"" + axis
+                            + "\". The analyzer must enumerate every distinct discriminator value mentioned in the AC, one row each. "
+                            + "If you cannot enumerate the values, switch the pattern to sealed-polymorphism or pattern-matching.");
+                }
+            }
+        }
+
+        Object pObj = response.get("participants");
+        if (pObj instanceof List<?> ps) {
+            for (Object p : ps) {
+                if (!(p instanceof Map<?, ?> pm)) continue;
+                if (!Boolean.TRUE.equals(pm.get("isLeaf"))) continue;
+                String pname = pm.get("name") instanceof String s ? s : "(unnamed)";
+                Object acIdxObj = pm.get("acIndices");
+                if (!(acIdxObj instanceof List<?> acIdx) || acIdx.isEmpty()) continue;
+                int acCount = acIdx.size();
+
+                Object bhvObj = pm.get("behaviors");
+                if (!(bhvObj instanceof List<?> behaviors)) continue;
+                for (int j = 0; j < behaviors.size(); j++) {
+                    if (!(behaviors.get(j) instanceof Map<?, ?> b)) continue;
+                    Object casesObj = b.get("cases");
+                    if (casesObj == null) continue;
+                    if (!(casesObj instanceof List<?> cases)) {
+                        errors.add("participant " + pname + ".behaviors[" + j + "].cases is not an array");
+                        continue;
+                    }
+                    if (cases.size() != acCount) {
+                        String bn = b.get("name") instanceof String n ? n : "(unnamed)";
+                        errors.add("participant " + pname + ".behaviors[" + j + "] (" + bn
+                                + ") has cases.length=" + cases.size() + " but participant.acIndices.length=" + acCount
+                                + ". One case row per AC row is required on pure-function leaves.");
+                    }
+                }
+            }
+        }
+
+        return errors;
     }
 
     // --- prompt rendering ---

@@ -922,6 +922,78 @@ button.small {
     to { transform: rotate(360deg); }
 }
 
+/* --- Validator gap panels (Step 2: analyzer / sequencer issues) --- */
+
+.design-issues {
+    margin-bottom: 1rem;
+    padding: 0.75rem 0.9rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 3px solid #dc2626;
+    border-radius: 6px;
+    color: #7f1d1d;
+    font-size: 0.86rem;
+}
+
+.design-issues-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-bottom: 0.5rem;
+}
+
+.design-issues-title {
+    font-weight: 600;
+    font-size: 0.92rem;
+}
+
+.design-issues-hint {
+    color: #991b1b;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.design-issues-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    list-style: disc;
+}
+
+.design-issues-list li {
+    margin: 0.2rem 0;
+    line-height: 1.45;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82rem;
+}
+
+/* --- Sidecar preview (Step 4: what will land alongside the .puml) --- */
+
+.sidecar-preview {
+    margin: 0.75rem 0;
+    padding: 0.6rem 0.85rem;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-left: 3px solid #0284c7;
+    border-radius: 6px;
+    color: #075985;
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.sidecar-preview.is-warning {
+    background: #fffbeb;
+    border-color: #fde68a;
+    border-left-color: #d97706;
+    color: #92400e;
+}
+
+.sidecar-preview code {
+    background: rgba(255, 255, 255, 0.5);
+    padding: 0 0.3rem;
+    border-radius: 3px;
+    font-size: 0.82rem;
+}
+
 /* --- Story narrative (Step 2: AI-suggested prose) --- */
 
 .story-narrative-section {
