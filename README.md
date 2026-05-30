@@ -1,8 +1,6 @@
 # DisC Studio
 
-The companion editor for the [DisC](https://github.com/mossgreen/design-is-code-plugin) methodology. Compose a sequence-diagram-driven design — participants, methods, decision tables, calls, loops, creates — and emit the `.puml` (plus any `.decision.md` sidecars) that DisC consumes to generate tests and implementation.
-
-DisC Studio is intentionally thin: DisC owns codegen; the Studio owns design authoring.
+DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it user story and acceptance criteria; it gives back an editable sequence-diagram design. Hand the design off to DisC and you get working Java/Spring code with TDD style tests.
 
 ## Demo
 
@@ -16,11 +14,9 @@ DisC's output — tests and implementation produced from the `.puml`:
 
 ## What you need
 
-DisC Studio is a **front-end for the DisC codegen plugin**. It writes designs into an existing Java project; DisC (separately installed) reads those designs and generates source. To use the Studio end-to-end you need:
+### 1. Java 17 or newer · required
 
-### 1. Java 21 or newer · required
-
-DisC Studio runs on Spring Boot 4, which requires JDK 21+. Older JDKs fail at startup with `UnsupportedClassVersionError`.
+DisC Studio runs on Spring Boot 4. Java 17 LTS is the minimum; 21 LTS works too. Older JDKs fail at startup with `UnsupportedClassVersionError`.
 
 Check what you have:
 ```sh
@@ -28,68 +24,138 @@ java -version
 ```
 
 Install if needed:
-- [SDKMAN](https://sdkman.io/) — `sdk install java 21-tem`
-- [Adoptium / Temurin](https://adoptium.net/temurin/releases/?version=21) — direct downloads for any platform
+- [SDKMAN](https://sdkman.io/) (macOS / Linux / WSL) — `sdk install java 17-tem`
+- [Adoptium / Temurin](https://adoptium.net/temurin/releases/?version=17) — direct downloads for macOS, Windows, and Linux (`.msi` installer on Windows)
 
-### 2. A Java/Spring project to save designs into · required
+After install, make sure `java -version` resolves on your PATH (the Temurin installer does this on Windows; on macOS/Linux SDKMAN handles it).
+
+### 2. Claude Code CLI · required
+
+The Studio shells out to the `claude` CLI on Step 2 (Design) — one Analyze click chains three LLM calls: decompose acceptance criteria into participants, compose the call sequence, and validate the design against the codegen plugin. Step 4 shells out again when you click **Run it for me** to do the actual code generation. Without Claude Code on your PATH, Step 2 fails immediately with `claude CLI not found on PATH`.
+
+Install from [claude.com/product/claude-code](https://www.claude.com/product/claude-code). After install, sign in once with `claude` and run `claude --version` to confirm it's on PATH.
+
+This is separate from your Anthropic API key — Claude Code uses your interactive session, not a raw key.
+
+### 3. A Java/Spring project to save designs into · required
 
 DisC Studio writes the `.puml` and any `.decision.md` sidecars into your project's `design/` folder, alongside the source code being designed. It also reads the project's package layout to suggest target packages on Step 4.
 
-**Evaluating without an existing project?** The same Release ships [`disc-studio-starter.zip`](https://github.com/mossgreen/design-is-code-app/releases/latest) — a minimal Spring Boot scaffold (Spring Initializr export, ~55KB) with one `com.example.demo` package and an empty `design/` folder. Unzip anywhere, point the Studio at the unzipped folder, and you're set.
-
-### 3. Claude Code + the `design-is-code` plugin · optional
-
-Required only for Step 4's "Run it for me" button, which shells out to:
+**Don't have one to try against?** Clone [Spring Petclinic](https://github.com/spring-projects/spring-petclinic) — the canonical Spring sample app, ~Java 17, builds out of the box. Point the Studio at the clone and design new features into it:
 ```sh
-claude --dangerously-skip-permissions -p /design-is-code:disc <file>
+git clone https://github.com/spring-projects/spring-petclinic.git
 ```
-…and streams DisC's output back into the app. Without it, the rest of the editor works exactly the same — you save the `.puml` and run DisC yourself (terminal, another IDE, anywhere the [`design-is-code` plugin](https://github.com/mossgreen/design-is-code-plugin) is installed).
 
-## Quick start
+### 4. A modern browser · required
 
-1. From the [latest Release](https://github.com/mossgreen/design-is-code-app/releases/latest), download:
-   - `disc-studio-<version>.jar` — the app itself (required).
-   - `disc-studio-starter.zip` — only if you don't have an existing Java/Spring project to design against. Unzip anywhere.
+Chrome, Firefox, Safari, or Edge. The UI is a single-page web app on `localhost:8080`. No browser extensions or plugins required.
 
-2. Run the app from any directory:
+## Quick start — run from a Release
+
+The redistributable is a single fat jar. Same command on every platform.
+
+1. Download `disc-studio-<version>.jar` from the [latest Release](https://github.com/mossgreen/design-is-code-app/releases/latest).
+
+2. Run the app from any directory.
+
+   **macOS / Linux** (Terminal):
    ```sh
-   java -jar disc-studio-0.4.2.jar
+   java -jar disc-studio-0.5.0.jar
    ```
 
-3. Open <http://localhost:8080>. Click the **Connect project** chip in the header and paste the absolute path to your Java project (or to the unzipped starter folder).
+   **Windows** (PowerShell or Command Prompt):
+   ```powershell
+   java -jar disc-studio-0.5.0.jar
+   ```
+   If `java` isn't recognised, your JDK isn't on PATH — re-run the Temurin installer with "Set JAVA_HOME / Add to PATH" checked, or open a new terminal so PATH changes take effect.
 
-4. Click **Load simple demo** to seed Steps 1-3 with a worked invoice-generation flow, then walk through to Step 4 and save. The `.puml` lands in your project's `design/` folder.
+3. Open <http://localhost:8080> in any browser. Click the **Connect project** chip in the header and paste the absolute path to your Java project — e.g. `/Users/you/projects/your-app` on macOS/Linux, `C:\Users\you\projects\your-app` on Windows.
 
-`Ctrl-C` in the terminal stops the app.
+4. Walk through the four wizard steps — write the user story + acceptance criteria, review the analyzed participants, refine the sequence, and save. The `.puml` (and any `.decision.md` sidecars) land in your project's `design/` folder.
+
+Stop the app with `Ctrl-C` in the terminal.
+
+### Port already in use
+
+By default the app binds `:8080`. To run on a different port:
+```sh
+java -jar disc-studio-0.5.0.jar --server.port=8090
+```
 
 ## How it works
 
 Four steps, top to bottom:
 
-1. **User Story** — write the natural-language requirement.
-2. **Designer** — define participants (interfaces with typed methods), then compose the call sequence one interaction at a time. Live SVG preview updates as you go.
-3. **Review** — read-only snapshot: story, participant list, frozen diagram. The hand-off point.
-4. **Generate** — pick the target Java package, name the file, save into your project's `design/` folder, and run `/design-is-code:disc <file>` from Claude Code (or click "Run it for me" if you have the plugin installed).
+1. **Connect** — pick the target Java project folder; the Studio scans it so existing types can be reused in the design.
+2. **Design** — write the user story + acceptance criteria, then click **Analyze**. Claude Code decomposes them into participants, entities, and a call sequence. Edit any of it inline; the live SVG preview updates as you go.
+3. **Sign-off** — read-only snapshot of the story, participants, and frozen diagram. The hand-off point.
+4. **Generate** — pick the target Java package, name the file, save into your project's `design/` folder, and click **Run it for me** to run the DisC codegen plugin — or copy the slash command and run it yourself from Claude Code.
 
-## Development
+## Run from source
 
-Build and run from source:
+Clone the repo:
+```sh
+git clone https://github.com/mossgreen/design-is-code-app.git
+cd design-is-code-app
+```
+
+### From the terminal (any platform)
+
+Gradle wrapper is bundled — no separate Gradle install needed.
+
+**macOS / Linux:**
 ```sh
 ./gradlew bootRun
 ```
 
-Then open <http://localhost:8080>. To produce the redistributable jar:
-```sh
-./gradlew bootJar
-# build/libs/disc-studio-<version>.jar
+**Windows** (PowerShell or Command Prompt):
+```powershell
+.\gradlew.bat bootRun
 ```
 
-**Stack:** Spring Boot 4 / Java 21 / vanilla HTML+CSS+JS / hand-rolled SVG. No frontend build step.
+Then open <http://localhost:8080>.
 
-**E2E tests** live in [`e2e/`](e2e/) (Playwright against a running app). Start the app in one terminal, then in another: `cd e2e && npm install && npx playwright install chromium && npx playwright test`.
+### From an IDE
+
+**IntelliJ IDEA** (Community or Ultimate)
+1. `File → Open…` and select the cloned `design-is-code-app` folder. IDEA detects the Gradle project and imports it.
+2. Wait for the Gradle sync to finish (status bar at the bottom).
+3. Open `src/main/java/com/designiscode/app/DesignIsCodeApplication.java` and click the green ▶ next to `public class DesignIsCodeApplication`. IDEA creates a Spring Boot run configuration and starts the app.
+4. Watch the Run console for `Started DesignIsCodeApplication`, then open <http://localhost:8080>.
+
+**Visual Studio Code**
+1. Install the [Extension Pack for Java](https://marketplace.visualstudio.com/items?itemName=vscjava.vscode-java-pack) and the [Spring Boot Extension Pack](https://marketplace.visualstudio.com/items?itemName=vmware.vscode-boot-dev-pack).
+2. `File → Open Folder…` → pick `design-is-code-app`. VS Code imports the Gradle project.
+3. Open `DesignIsCodeApplication.java`, hit `Run` above the `main` method (or use the "Spring Boot Dashboard" panel).
+
+### Build the redistributable jar
+
+```sh
+./gradlew bootJar        # macOS / Linux
+.\gradlew.bat bootJar    # Windows
+# Output: build/libs/disc-studio-<version>.jar
+```
+
+### Stack & layout
+
+Spring Boot 4 / Java 17 / vanilla HTML+CSS+JS / hand-rolled SVG. No frontend build step — `src/main/resources/static/` is served as-is.
+
+### Tests
+
+```sh
+./gradlew test           # Java unit tests
+```
+
+**E2E** (Playwright against a running app) lives in [`e2e/`](e2e/). Start the app in one terminal, then:
+```sh
+cd e2e
+npm install
+npx playwright install chromium
+npx playwright test
+```
 
 **Releasing:** see [RELEASE.md](RELEASE.md).
 
 ## Status
 
-Early/POC. Single-user, localhost-only. No persistence — refreshing the browser loses your work.
+MVP. Single-user, localhost-only. No persistence — refreshing the browser loses your work.

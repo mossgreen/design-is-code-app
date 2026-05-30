@@ -5,6 +5,53 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.5.0] - 2026-05-30
+
+The Design step gets a design-intelligence upgrade: the analyzer commits to a
+variance-handling pattern up front, auto-emits the matching decision-table
+sidecars, validates each design against the DisC plugin before you save, and
+surfaces AC-coverage gaps inline — so under-specified designs are caught at
+authoring time, not at codegen. Also lowers the minimum JDK to 17.
+
+### Added
+- **Variance-handling pattern selection.** The analyzer picks one of four patterns
+  (rule-table / resolver / sealed-polymorphism / pattern-matching) per variance
+  axis and records it in a top-level `variancePlan`, with an exhaustive `mapping[]`
+  for rule-table and resolver axes.
+- **Auto-emitted decision-table sidecars.** Pure-function leaves and rule-table
+  appliers get their `.decision.md` sidecars generated from per-AC-row examples —
+  one row per acceptance criterion — feeding the plugin's filled-mode codegen.
+- **Plugin validate-and-retry.** Step 2 runs the design through the DisC plugin's
+  `--validate-only` mode and shows refusals inline, so contract problems are fixed
+  before saving.
+- **AC coverage on Step 2.** AC ↔ participant coverage plus a per-participant
+  variance-axis-count chip, so under-specified or overloaded participants are
+  visible while you design.
+- **Model picker** for the Claude CLI calls.
+- **Polymorphic-entity callees** — `interface`/`sealed-interface` entities with
+  behaviors can be called directly in the sequence, plus a resolver `mapping[]` schema.
+- **OS-native folder browser** on Step 1 for connecting a project.
+
+### Changed
+- **Wizard reflow** into Connect / Design / Sign-off / Generate, with AC rows,
+  per-card purpose, auto-compose, and "Connect project" moved into Step 1.
+- **Codebase-grounded analyzer** — fed the connected project's packages, glossary,
+  and most-relevant existing types so it reuses them (`existingFqn`) instead of
+  re-proposing.
+- **Abstraction discipline** baked into the analyzer prompt (invariance,
+  purpose-specificity, leaf freestandingness, feature-envy, composition-over-
+  inheritance) plus `interface`/`sealed-interface` entity kinds.
+- **Callee-anchored `@package` recommendation** on Step 4; plugin integration
+  refactored behind a `CodeGenerator` abstraction.
+- **Minimum JDK lowered to 17** (was 21). DisC Studio now builds and runs on Java 17 LTS.
+
+### Removed
+- **Multi-level design recursion** parked for MVP (single-level compose;
+  `defer-design` trees documented but not auto-walked).
+- **The two "Load demo" buttons** and their seeded data.
+
+[v0.5.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.5.0
+
 ## [v0.4.2] - 2026-05-12
 
 Hotfix on top of v0.4.1's downloadable jar: the demo no longer pretends a

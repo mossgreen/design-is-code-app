@@ -5,11 +5,11 @@ plugins {
 }
 
 group = 'com.designiscode'
-version = '0.4.2'
+version = '0.5.0'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(17)
     }
 }
 
