@@ -371,43 +371,6 @@ header {
     cursor: not-allowed;
 }
 
-.recent-paths {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin: 0 0 0.6rem;
-}
-
-.recent-paths .recent-label {
-    font-size: var(--fs-xs);
-    color: var(--text-3);
-    align-self: center;
-    margin-right: 0.15rem;
-}
-
-.recent-chip {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    padding: 0.2rem 0.55rem;
-    border-radius: 999px;
-    font-size: var(--fs-xs);
-    font-family: var(--font-mono);
-    cursor: pointer;
-    max-width: 280px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    direction: rtl;
-    text-align: left;
-}
-
-.recent-chip:hover {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: var(--accent-border);
-}
-
 .scan-summary {
     margin-top: 0.75rem;
     font-size: 0.85rem;
@@ -4116,6 +4079,21 @@ button.small {
 #ac-coverage { margin-left: 0.4rem; }
 #ac-coverage:empty { display: none; }
 #ac-coverage.is-warn { color: #b91c1c; }
+
+/* Save-time variance/dataflow gap warning. Non-blocking (the save still
+ * proceeds) — distinct amber so it reads as "saved but incomplete", not a
+ * hard error. Mirrors the .is-warn amber vocabulary. */
+.save-warn {
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.75rem;
+    background: #fffbeb;
+    color: #92400e;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    white-space: pre-line;
+}
+.save-warn.hidden { display: none; }
 
 /* AC ↔ Participant cross-highlight.
  * One body data-attribute is set on hover; CSS dims non-matching items

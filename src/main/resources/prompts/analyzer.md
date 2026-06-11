@@ -1,6 +1,4 @@
-You are decomposing a software requirement into a tree of named abstractions
-for a Java/Spring system. The output is consumed by an automated tool — JSON
-shape must be exact.
+You are decomposing a software requirement into a tree of named abstractions. The output is consumed by an automated tool — JSON shape must be exact.
 
 # Input
 
@@ -151,8 +149,11 @@ satisfies the discipline.
 
 6. **Variance plan consistency.** Every `variancePlan` entry has
    matching shape in `participants[]`/`entities[]`. `rule-table` → a
-   `Repository` + `Applier` shape (or method on the orchestrator)
-   exists; NO `sealed-interface` entity for that axis. `resolver` →
+   pure-function lookup leaf (`<Thing>RuleTable.ruleFor → rule record`,
+   `isLeaf: true`, NOT a `*Repository` and NOT `@Repository`-framed) +
+   an `Applier` (or method on the orchestrator) exists, and the rule
+   record is a `kind: "record"` entity; NO `sealed-interface` entity for
+   that axis. `resolver` →
    an `XxxResolver` participant exists, AND a `kind: "interface"`
    entity (the StrategyInterface) with non-empty `behaviors[]` and a
    `permits[]` list of N `class` entities exists, AND the resolver's
@@ -186,10 +187,20 @@ Choose when: cases differ only in data values (thresholds, percentages,
 windows, eligibility predicates). The case set can grow without new
 code.
 
-Participant shape:
-- A `Repository` participant (`kind: "reuse"` if it already exists in
-  the codebase; else `kind: "leaf"`) exposing a `find(...)` method that
-  returns the applicable rule.
+Participant shape — pick by where the rule data lives:
+- **Inline / new rule data (the common case — values are defined by the
+  AC, not by an existing project type):** a `<Thing>RuleTable` (or
+  `<Thing>RuleBook`) participant, `kind: "leaf"` / `isLeaf: true`,
+  exposing a deterministic lookup method `ruleFor(<key>) → <RuleRecord>`
+  (use `ruleFor`, NOT the repository-flavored `find`). This is a **pure
+  key→rule function** — an in-memory map built from the AC rows, NOT a
+  database lookup. **Never name it `*Repository` and never give it
+  `@Repository` framing**: the plugin classifies a repository as a
+  side-effect leaf and *mocks* it, so the rule data would never execute.
+- **Reuse carve-out (only when an existing project type already owns this
+  data):** reuse that type via `existingFqn` + `kind: "reuse"` — there the
+  human owns the data and the plugin correctly mocks it. Do NOT route
+  AC-defined rule data through a reused or `@Repository`-stereotyped type.
 - An `Applier` leaf (or a method on the orchestrator) that consumes the
   rule and produces the outcome.
 
@@ -203,6 +214,28 @@ axis MUST include an exhaustive `mapping[]` of `{ key, expected }`
 rows (one row per discriminator value found in the AC); `expected`
 carries the rule record's field values for that discriminator. See
 "Mapping (resolver and rule-table)" below for the row schema.
+
+Shape sketch (abstract placeholders, no domain content):
+
+```
+participants:
+  - { name: "RuleTable", isLeaf: true,                ' pure key→rule lookup — NOT a Repository
+      behaviors: [ { name: "ruleFor", args: [{name:"key", type:"KeyType"}],
+                     returns: "Rule" } ] }
+  - { name: "Applier", isLeaf: true,
+      behaviors: [ { name: "apply",
+                     args: [{name:"rule", type:"Rule"}, {name:"input", type:"Input"}],
+                     returns: "Output", cases: [ /* one per AC row */ ] } ] }
+
+entities:
+  - { name: "Rule", kind: "record",
+      fields: [ {name:"fieldA", type:"int"}, {name:"fieldB", type:"int"} ] }
+
+variancePlan entry:
+  { axis: "key → Rule", pattern: "rule-table", criterion: 1,
+    rationale: "...", mapping: [{key:"K_A", expected:{fieldA:20, fieldB:20}},
+                                {key:"K_B", expected:{fieldA:40, fieldB:10}}] }
+```
 
 ### 2. Resolver — variance as pluggable processors
 
@@ -441,11 +474,12 @@ Each entry:
   test holds.
 - **Commitment contract.** The `participants[]` and `entities[]` you
   produce below MUST be consistent with the patterns you declare here:
-  - `rule-table` → a `Repository` + `Applier` shape (or method on the
-    orchestrator) PLUS a `kind: "record"` entity for the rule itself
-    (its fields hold the per-discriminator values). The Repository's
-    `find(...)` method returns that record. NO `sealed-interface`
-    entity for this axis. The variance entry MUST carry `mapping[]`
+  - `rule-table` → a `<Thing>RuleTable` lookup leaf (a pure key→rule
+    function, `isLeaf: true`, NOT a `*Repository`) whose
+    `ruleFor(key)` method returns the rule record, PLUS a `kind: "record"`
+    entity for the rule itself (its fields hold the per-discriminator
+    values), PLUS an `Applier` (or method on the orchestrator). NO
+    `sealed-interface` entity for this axis. The variance entry MUST carry `mapping[]`
     (see "Mapping (resolver and rule-table)" below). The Applier
     participant MUST be `isLeaf: true` and its `apply(...)` behavior
     MUST carry a `cases[]` array (one row per AC row) so the wizard
@@ -478,7 +512,7 @@ Each entry:
     `expected` object's keys MUST match the rule record entity's
     `fields[].name` set exactly (same names, same set — no extras, no
     omissions). The `key` value MUST be a valid input value for the
-    Repository's `find(...)` method's discriminator parameter. Values
+    RuleTable's `ruleFor(...)` method's discriminator parameter. Values
     in `expected` are scalars (numbers, strings, enum constant names
     as strings) — not formulas. Conditional logic (e.g. "within
     window") is NOT a discriminator value and does NOT appear in
@@ -486,6 +520,29 @@ Each entry:
 - **No rationalisation.** `rationale` is a one-sentence justification
   the user can audit. If you cannot honestly justify the pick, the
   pick is wrong — walk the priority list again.
+- **Self-check before emitting.** Verify each entry against the design
+  you are about to write — a gap here ships as a silent no-op stub or an
+  unwired bean:
+  1. For every pure-function-leaf participant (`isLeaf: true`) with
+     `acIndices.length > 0`: every behavior **on the SUT's call path**
+     whose expected output varies across those AC rows MUST carry a
+     `cases[]` with one row per index in `acIndices` (plus bracketing
+     rows, `acIndex: null`, for each declared boundary). A leaf
+     whose output is genuinely constant across all its AC rows omits
+     `cases[]`. Missing or short `cases[]` ships the leaf as a no-op stub
+     — this is the recency/calculator failure mode, so be exhaustive.
+     And when the AC names a numeric threshold the behavior implements,
+     `boundaries` MUST be present with its bracketing pair in `cases[]`
+     — an undeclared threshold ships unverified between rows.
+  2. For `rule-table` and `resolver` axes, `mapping[]` MUST be non-empty
+     and exhaustive over the discriminator values present in the AC (one
+     row per value — no more, no less). An empty `mapping[]` on these
+     patterns is a contract violation: the downstream sidecar is skipped
+     and the rule data never executes.
+  3. If you cannot enumerate the discriminator values (the AC says
+     "different cases get different results" with no concrete values), do
+     NOT pick `rule-table` or `resolver` — pick `sealed-polymorphism` or
+     `pattern-matching` and omit `mapping[]`.
 
 ## `participants` — flat list, each entry one participant
 
@@ -509,12 +566,13 @@ Each participant:
       ],
       "cases": [     // REQUIRED on pure-function leaf behaviors whose expected output varies across AC rows; OMIT otherwise
         {
-          "acIndex":     0,
+          "acIndex":     0,   // null for boundary-bracketing rows that don't correspond to an AC row
           "description": "short human-readable label for this AC row",
           "inputs":      { "x": "<Java expression as string>" },   // keys MUST match args[].name exactly
           "expected":    "<Java expression as string for the return value>"
         }
-      ]
+      ],
+      "boundaries": { "x": [ 5 ] }   // REQUIRED when the AC names a numeric threshold this behavior implements; OMIT otherwise — see behaviors[].boundaries below
     }
   ],
   "isLeaf":       false,
@@ -576,8 +634,9 @@ Each participant:
   the plugin's pure-function FILLED mode (which synthesizes the
   implementation + one test per row from these). Schema:
   - `acIndex` — 0-based index into the AC; one case row per `acIndex`
-    in `acIndices`. Length of `cases[]` MUST equal `acIndices.length`
-    (exhaustive).
+    in `acIndices` (exhaustive over the AC rows). Boundary-bracketing
+    rows (see `behaviors[].boundaries`) are ADDITIONAL entries with
+    `acIndex: null` — so `cases[].length >= acIndices.length`.
   - `description` — short human label for the row; surfaced in the
     sidecar's row commentary.
   - `inputs` — object whose keys MUST match this behavior's
@@ -595,6 +654,25 @@ Each participant:
   the plugin synthesizes the impl by reading the rows; rows that are
   internally inconsistent (e.g. two rows with the same inputs but
   different expected) make synthesis impossible.
+- `behaviors[].boundaries` — REQUIRED when the AC or story names a
+  numeric threshold this pure-function leaf behavior implements (a
+  point where the expected output changes: "5 or more items", "orders
+  over $100", "within 30 days"); OMIT otherwise. Map of arg name →
+  ascending list of boundary values, in the arg's literal format
+  (numbers, not expression strings). Rows alone cannot pin a
+  threshold's location — rows at 4 and 10 with different tiers admit
+  any cut between them — so for each declared boundary `B`, `cases[]`
+  MUST also contain a **bracketing pair**: one row at the adjacent
+  value below `B` (integer args: `B−1`; decimal args: one unit below
+  at `B`'s scale, e.g. boundary `5.00` → row at `4.99`) and one row at
+  exactly `B`, holding every other input equal so the output change is
+  attributable to crossing `B` alone, with differing expected outputs.
+  Bracketing rows that don't correspond to an AC row carry
+  `acIndex: null`. The wizard writes `boundaries` into the sidecar
+  frontmatter; the plugin refuses a declared boundary without its
+  bracketing pair and pins the implementation's comparisons to the
+  declared values. A threshold left undeclared is unverified between
+  rows — when the AC states one, declaring it here is mandatory.
 
 ## `sut` — the use-case entry point
 

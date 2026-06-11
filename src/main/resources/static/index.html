@@ -36,7 +36,7 @@
     <main>
         <section class="panel" id="panel-1">
             <h2>Step 1 · Connect</h2>
-            <p class="step-purpose">So the design uses types and packages from your codebase, not invented names.</p>
+            <p class="step-purpose">We read the packages and types so the design can do clever things.</p>
 
             <div class="step1-subblock" id="connect-project-block">
                 <div class="step1-subblock-head">
@@ -44,7 +44,6 @@
                     <span class="hint inline">Pick a Java/Spring project — it's scanned on connect to ground the design in your existing code.</span>
                 </div>
                 <div id="project-panel" class="project-panel">
-                    <div id="recent-paths" class="recent-paths hidden" aria-label="Recent project paths"></div>
                     <form id="scan-form" autocomplete="off">
                         <div class="path-input-wrap">
                             <input type="text" id="path-input" placeholder="/Users/you/projects/my-spring-app (or click the folder icon)" spellcheck="false" title="Type a path and press Enter to scan, or use the folder picker">
@@ -509,6 +508,7 @@
             </div>
 
             <div id="save-error" class="error hidden"></div>
+            <div id="save-warn" class="save-warn hidden"></div>
 
             <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="3">← Back</button>

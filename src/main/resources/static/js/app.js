@@ -116,7 +116,6 @@ const els = {
     pathInput: document.getElementById('path-input'),
     disconnectBtn: document.getElementById('disconnect-btn'),
     browseBtn: document.getElementById('browse-btn'),
-    recentPaths: document.getElementById('recent-paths'),
     status: document.getElementById('scan-status'),
     statusText: document.getElementById('status-text'),
     error: document.getElementById('scan-error'),
@@ -182,7 +181,6 @@ async function runScan(path) {
         applyTargetPackageHeuristics(prevPath, data);
         renderScanResult(data);
         populateTypesDatalist();
-        addRecentPath(data.path);
         updateConnectGate();
     } catch (err) {
         els.error.textContent = err.message;
@@ -224,9 +222,6 @@ function shortProjectName(path) {
 // on Windows). The Browse button POSTs to /api/fs/pick-folder; the call
 // blocks while the OS dialog is open, returns { path } on selection or
 // { canceled: true } on cancel.
-
-const RECENT_PATHS_KEY = 'disc.recentProjectPaths';
-const RECENT_PATHS_MAX = 5;
 
 let folderPickerInFlight = false;
 
@@ -272,58 +267,9 @@ function escapeAttr(s) {
     return escapeHtml(s);
 }
 
-// --- Recent project paths (localStorage, max 5) ---
-
-function loadRecentPaths() {
-    try {
-        const raw = localStorage.getItem(RECENT_PATHS_KEY);
-        if (!raw) return [];
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : [];
-    } catch {
-        return [];
-    }
-}
-
-function saveRecentPaths(paths) {
-    try {
-        localStorage.setItem(RECENT_PATHS_KEY, JSON.stringify(paths));
-    } catch {
-        // localStorage unavailable — silently ignore
-    }
-}
-
-function addRecentPath(path) {
-    if (!path) return;
-    const current = loadRecentPaths().filter(p => p !== path);
-    current.unshift(path);
-    const trimmed = current.slice(0, RECENT_PATHS_MAX);
-    saveRecentPaths(trimmed);
-    renderRecentPaths();
-}
-
-function renderRecentPaths() {
-    const paths = loadRecentPaths();
-    if (paths.length === 0) {
-        els.recentPaths.classList.add('hidden');
-        els.recentPaths.innerHTML = '';
-        return;
-    }
-    const chips = paths.map(p =>
-        `<button type="button" class="recent-chip" data-recent="${escapeAttr(p)}" title="${escapeAttr(p)}">${escapeHtml(p)}</button>`
-    ).join('');
-    els.recentPaths.innerHTML = `<span class="recent-label">Recent:</span>${chips}`;
-    els.recentPaths.classList.remove('hidden');
-    els.recentPaths.querySelectorAll('[data-recent]').forEach(btn => {
-        btn.addEventListener('click', async () => {
-            els.pathInput.value = btn.dataset.recent;
-            els.pathInput.dispatchEvent(new Event('input'));
-            await runScan(btn.dataset.recent);
-        });
-    });
-}
-
-renderRecentPaths();
+// Recent-project chips were removed — each connect scans the project fresh.
+// Purge any cached paths a returning user still has from a prior version.
+try { localStorage.removeItem('disc.recentProjectPaths'); } catch {}
 
 // --- Navigation ---
 
@@ -812,7 +758,7 @@ function makeParticipant(name = '', implByDefault = true, purpose = '') {
     };
 }
 
-function makeMethod(name = '', inputs = [], output = '', cases = null) {
+function makeMethod(name = '', inputs = [], output = '', cases = null, boundaries = null) {
     // `isProposed` distinguishes AI-suggested NEW methods on a reused type
     // (which become `+method` extensions in the .puml prelude) from methods
     // that already exist on the catalog type. Default false; adoptParticipant
@@ -821,7 +767,11 @@ function makeMethod(name = '', inputs = [], output = '', cases = null) {
     // `cases` carries per-AC-row example data the analyzer emits for
     // pure-function-leaf behaviors. Shape: [{ acIndex, description, inputs:{name->expr}, expected:expr }].
     // Null when absent — the save handler auto-emits a sidecar only when non-empty.
-    return { id: newId(), name, inputs, output, isProposed: false, cases };
+    //
+    // `boundaries` carries declared thresholds per numeric arg ({argName -> [values]}).
+    // The sidecar emitters write it into frontmatter; the plugin enforces that each
+    // declared boundary is bracketed by a pair of rows and pins the impl's comparisons.
+    return { id: newId(), name, inputs, output, isProposed: false, cases, boundaries };
 }
 
 // Entity factory — records / enums / classes the participants pass around.
@@ -1036,6 +986,22 @@ function adoptCases(raw) {
     return out.length > 0 ? out : null;
 }
 
+// Reshape an analyzer-supplied `boundaries` payload ({argName -> [numbers]})
+// onto a behavior. Drops non-numeric values and empty lists; returns null
+// when nothing usable survives so the emitters' truthiness guards short-circuit.
+function adoptBoundaries(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out = {};
+    for (const [arg, vals] of Object.entries(raw)) {
+        if (!Array.isArray(vals)) continue;
+        const nums = vals
+            .filter(v => v !== null && v !== '' && !isNaN(Number(v)))
+            .map(v => String(v));
+        if (nums.length > 0) out[arg] = nums;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+}
+
 function adoptParticipant(node) {
     if (!node || typeof node !== 'object') return null;
     const name = (node.name || '').trim();
@@ -1073,7 +1039,7 @@ function adoptParticipant(node) {
                 .filter(a => a && (a.name || a.type))
                 .map(a => ({ name: a.name || '', type: a.type || '' }));
             if (!catalogMethodNames.has(bname)) {
-                const added = makeMethod(bname, inputs, b.returns || '', adoptCases(b.cases));
+                const added = makeMethod(bname, inputs, b.returns || '', adoptCases(b.cases), adoptBoundaries(b.boundaries));
                 added.isProposed = true;
                 methods.push(added);
             } else {
@@ -1100,7 +1066,7 @@ function adoptParticipant(node) {
             const inputs = (b.args || [])
                 .filter(a => a && (a.name || a.type))
                 .map(a => ({ name: a.name || '', type: a.type || '' }));
-            const m = makeMethod(b.name || '', inputs, b.returns || '', adoptCases(b.cases));
+            const m = makeMethod(b.name || '', inputs, b.returns || '', adoptCases(b.cases), adoptBoundaries(b.boundaries));
             m.isProposed = false;
             return m;
         });
@@ -4284,6 +4250,7 @@ const saveEls = {
     resultCommand: document.getElementById('save-result-command'),
     copyCommand: document.getElementById('copy-command'),
     error: document.getElementById('save-error'),
+    warn: document.getElementById('save-warn'),
     commandFeedback: document.getElementById('command-feedback'),
     runBtn: document.getElementById('run-disc'),
     runConsole: document.getElementById('run-console'),
@@ -4949,6 +4916,10 @@ function collectRuleTableDecisionTables() {
 
         let repo = null, method = null;
         for (const p of state.participants) {
+            // Skip reused/existing repos — the human owns that data and the
+            // plugin mocks it; a sidecar targeting an existing FQN would be
+            // ignored or conflict. Only the pure-function lookup leaf is filled.
+            if (p.kind === 'reuse' || p.existingFqn) continue;
             const m = (p.methods || []).find(mm =>
                 (mm.output || '').trim() === rule.name
                 && Array.isArray(mm.inputs) && mm.inputs.length === 1
@@ -5012,6 +4983,7 @@ function collectPureFunctionLeafDecisionTables() {
             lines.push('input:');
             inputs.forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
             lines.push(`output: ${m.output || 'void'}`);
+            boundariesFrontmatterLines(m).forEach(l => lines.push(l));
             lines.push('---');
             lines.push('');
 
@@ -5038,8 +5010,82 @@ function collectPureFunctionLeafDecisionTables() {
     return out;
 }
 
+// Detect designs that WILL ship a silent no-op stub or an unwired bean,
+// using the SAME predicates the emitters above use to decide skip-vs-emit
+// — so the warning can never disagree with what actually gets written. The
+// Step-2 plugin validator only sees the .puml (never these sidecars, which
+// are generated here at save), so this is the only place these gaps surface.
+// Non-blocking: a partial design still saves; the user re-runs Analyze to
+// fill it. Returns a list of human-readable gap messages.
+function collectVarianceGaps() {
+    const gaps = [];
+    const ruleTableSourceIds = new Set();
+
+    // Rule-table axes — mirror collectRuleTableDecisionTables' skip branches.
+    for (const v of (state.variancePlan || [])) {
+        if (!v || v.pattern !== 'rule-table') continue;
+        const axis = v.axis || '(unnamed axis)';
+        const mapping = Array.isArray(v.mapping) ? v.mapping : [];
+        if (mapping.length === 0) {
+            gaps.push(`Rule-table axis "${axis}" has an empty mapping[] — its rule data is missing. Re-run Analyze.`);
+            continue;
+        }
+        const first = mapping[0];
+        if (!first || !first.expected || typeof first.expected !== 'object') continue;
+        const fieldNames = Object.keys(first.expected);
+        if (fieldNames.length === 0) continue;
+        const fieldSet = new Set(fieldNames);
+
+        const rule = state.entities.find(e =>
+            e && e.kind === 'record'
+            && Array.isArray(e.fields) && e.fields.length === fieldSet.size
+            && e.fields.every(f => f && fieldSet.has(f.name))
+        );
+        if (!rule) {
+            gaps.push(`Rule-table axis "${axis}" has no matching ${fieldSet.size}-field record entity — its rule data will NOT be generated. Re-run Analyze.`);
+            continue;
+        }
+        // The lookup source must be a NON-reused leaf (a reused/existing repo
+        // is the human's — the plugin mocks it, so no sidecar is emitted).
+        const source = state.participants.find(p =>
+            p && p.kind !== 'reuse' && !p.existingFqn
+            && (p.methods || []).some(mm =>
+                (mm.output || '').trim() === rule.name
+                && Array.isArray(mm.inputs) && mm.inputs.length === 1)
+        );
+        if (!source) {
+            gaps.push(`Rule-table axis "${axis}": no lookup leaf returns ${rule.name} from a single key — name the data source a ${rule.name}Table.ruleFor(key) pure-function leaf (not a *Repository). Re-run Analyze.`);
+        } else {
+            ruleTableSourceIds.add(source.id);
+        }
+    }
+
+    // Pure-function leaves on the SUT call path that would stub out for lack
+    // of cases[]. Exclude rule-table sources (filled via mapping[], not cases[]).
+    for (const p of state.participants) {
+        if (!p || p.kind !== 'leaf') continue;
+        if (ruleTableSourceIds.has(p.id)) continue;
+        const called = (state.sequence || []).some(s =>
+            s && s.kind === STEP_KIND.CALL && s.calleeId === p.id);
+        if (!called) continue;
+        // "Output varies" proxy: the AC subset this leaf carries varies on
+        // given/when (axes >= 1). A genuinely constant leaf has axes === 0 and
+        // must NOT warn — that is the false-positive guard.
+        const axesInfo = axesCoveredByParticipant(p);
+        if (!axesInfo || axesInfo.axes < 1) continue;
+        for (const m of (p.methods || [])) {
+            if ((m.cases || []).length === 0 && (m.inputs || []).length > 0) {
+                gaps.push(`Leaf ${p.name}.${m.name} varies across its AC rows but has no cases[] — it will ship as a no-op stub. Re-run Analyze.`);
+            }
+        }
+    }
+
+    return gaps;
+}
+
 saveEls.save.addEventListener('click', async () => {
     saveEls.error.classList.add('hidden');
+    saveEls.warn.classList.add('hidden');
     saveEls.result.classList.add('hidden');
 
     if (!state.projectPath) {
@@ -5103,6 +5149,16 @@ saveEls.save.addEventListener('click', async () => {
         if (existingNames.has(dt.fileName)) continue;
         decisionTables.push(dt);
         existingNames.add(dt.fileName);
+    }
+
+    // Surface any design that will generate stubs (non-blocking — the save
+    // still proceeds so the user can iterate). These are invisible to the
+    // Step-2 plugin validator, which never sees the sidecars.
+    const gaps = collectVarianceGaps();
+    if (gaps.length > 0) {
+        saveEls.warn.textContent =
+            'Heads up — these will generate stubs; re-run Analyze:\n• ' + gaps.join('\n• ');
+        saveEls.warn.classList.remove('hidden');
     }
 
     try {
@@ -5486,6 +5542,21 @@ function decisionTableFileName(participant) {
     return `${name}.decision.md`;
 }
 
+// Emit the `boundaries:` frontmatter block for a method's declared thresholds,
+// keyed in the method's input order. No-op (returns []) when none are declared.
+function boundariesFrontmatterLines(method) {
+    const bounds = method && method.boundaries;
+    if (!bounds) return [];
+    const lines = [];
+    (method.inputs || []).forEach(i => {
+        const vals = bounds[i.name];
+        if (Array.isArray(vals) && vals.length > 0) {
+            lines.push(`  ${i.name}: [${vals.join(', ')}]`);
+        }
+    });
+    return lines.length > 0 ? ['boundaries:', ...lines] : [];
+}
+
 // Markdown-table column-width formatter: pads each column to its longest cell
 // (header included) so the saved sidecar reads cleanly when opened in an editor.
 function emitMarkdownTable(headers, rows) {
@@ -5513,6 +5584,7 @@ function emitDecisionTable(participant, method, dt, targetPackage) {
     lines.push('input:');
     inputs.forEach(i => lines.push(`  ${i.name}: ${i.type}`));
     lines.push(`output: ${output}`);
+    boundariesFrontmatterLines(method).forEach(l => lines.push(l));
     lines.push('config:');
     if (isNumericOutput(method)) {
         if (config.rounding) lines.push(`  rounding: ${config.rounding}`);

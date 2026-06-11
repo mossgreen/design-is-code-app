@@ -1,0 +1,27 @@
+# Analyzer-eval local config — TEMPLATE.
+#
+# Copy this file to `eval.properties` (same directory) and set your local path.
+# `eval.properties` is git-ignored, so your machine-specific path is never committed.
+#
+# Resolution order for every key (first non-blank wins):
+#   1. -D system property  (e.g. -Ddisc.eval.projectPath=...)
+#   2. environment variable (only DISC_EVAL_PROJECT_PATH, for the path)
+#   3. this file
+#
+# When disc.eval.projectPath is unset/blank or not a directory, AnalyzerEvalTest
+# SKIPS (it never fails) — so a normal `./gradlew test` stays green.
+
+# REQUIRED — absolute path to a Java project to scan for codebase grounding.
+# Use a project that does NOT already contain a discount-rule type (a clean
+# spring-petclinic checkout is ideal).
+disc.eval.projectPath=/absolute/path/to/spring-petclinic
+
+# OPTIONAL — model to run the analyzer with. Must be one of Models.ALLOWED:
+#   claude-sonnet-4-6 | claude-opus-4-7 | claude-haiku-4-5
+# Omit (or leave blank) to use the claude CLI default.
+#disc.eval.model=claude-opus-4-7
+
+# OPTIONAL — how many times each fixture runs (stability). Default 1.
+# The Gate stability standard is 5 consecutive green runs per fixture:
+#   ./gradlew test --tests '*AnalyzerEvalTest' -Ddisc.eval.runs=5
+#disc.eval.runs=5
