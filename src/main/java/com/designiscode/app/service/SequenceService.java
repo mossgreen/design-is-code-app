@@ -1,6 +1,7 @@
 package com.designiscode.app.service;
 
 import com.designiscode.app.dto.SequenceRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors {@link AnalyzeService} — same {@link ProcessBuilder} pattern,
  * same Jackson-3 path ({@code tools.jackson.*}), same fence-tolerance,
- * same 120 s timeout. The only structural difference is the three-way
+ * same configurable timeout (default 300 s). The only structural difference is the three-way
  * placeholder substitution ({STORY}/{PARTICIPANTS}/{SUT}) instead of one.
  *
  * <p>The prompt lives in {@code /prompts/sequencer.md} on the classpath
@@ -46,12 +47,22 @@ public class SequenceService {
     private static final String FIRST_ATTEMPT_SENTINEL =
             "_First attempt — no prior refusal feedback to consider._";
 
-    private static final long TIMEOUT_SECONDS = 120;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SequenceService.class);
+
+    /** Subprocess timeout (s) and CLI reasoning effort — see AnalyzeService.
+     *  Configurable via {@code disc.claude.timeout} / {@code disc.claude.effort}. */
+    private final long timeoutSeconds;
+    private final String effort;
 
     private final String promptTemplate;
     private final ObjectMapper json = JsonMapper.builder().build();
 
-    public SequenceService() throws IOException {
+    public SequenceService(
+            @Value("${disc.claude.timeout:300}") long timeoutSeconds,
+            @Value("${disc.claude.effort:low}") String effort
+    ) throws IOException {
+        this.timeoutSeconds = timeoutSeconds;
+        this.effort = effort;
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
     }
 
@@ -79,10 +90,16 @@ public class SequenceService {
                 .replace(P_SUT, sut)
                 .replace(P_REFUSAL_FEEDBACK, refusalFeedback);
 
+        // Single-completion transform — see AnalyzeService for the rationale.
         List<String> args = new ArrayList<>(List.of(
                 "claude",
-                "--dangerously-skip-permissions"
+                "--strict-mcp-config",
+                "--tools", ""
         ));
+        if (effort != null && !effort.isBlank()) {
+            args.add("--effort");
+            args.add(effort.trim());
+        }
         Models.appendIfValid(args, request.model());
         args.add("-p");
         args.add(prompt);
@@ -90,6 +107,9 @@ public class SequenceService {
         ProcessBuilder pb = new ProcessBuilder(args)
                 .redirectErrorStream(true)
                 .redirectInput(new File("/dev/null"));
+
+        long startNanos = System.nanoTime();
+        log.info("sequence start: model={}, promptChars={}", request.model(), prompt.length());
 
         Process process;
         try {
@@ -102,13 +122,34 @@ public class SequenceService {
             throw e;
         }
 
-        String stdout = readAll(process.getInputStream());
-        boolean exited = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Drain stdout on a daemon thread so the timeout below actually bounds
+        // the call: a hung `claude` keeps the pipe open, and reading on THIS
+        // thread would block in readAll() forever (past the timeout, which then
+        // never fires). The background read also prevents a full ~64 KB pipe
+        // buffer from dead-locking a chatty-but-healthy run.
+        StringBuilder collected = new StringBuilder();
+        Thread reader = new Thread(() -> {
+            try {
+                collected.append(readAll(process.getInputStream()));
+            } catch (IOException ignored) {
+                // stream closed by destroyForcibly, or normal EOF on exit
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!exited) {
             process.destroyForcibly();
-            throw new IOException("claude sequence composition timed out after " + TIMEOUT_SECONDS + "s");
+            log.warn("sequence composition TIMED OUT after {} ms (model={})",
+                    (System.nanoTime() - startNanos) / 1_000_000, request.model());
+            throw new IOException("claude sequence composition timed out after " + timeoutSeconds + "s");
         }
+        reader.join(5_000); // process exited -> reader hits EOF promptly; join publishes the buffer
+        String stdout = collected.toString();
         int exit = process.exitValue();
+        log.info("sequence done: model={}, exit={}, {} ms, outChars={}",
+                request.model(), exit, (System.nanoTime() - startNanos) / 1_000_000, stdout.length());
         if (exit != 0) {
             throw new IOException("claude exited " + exit + ": " + truncate(stdout, 500));
         }

@@ -4821,6 +4821,15 @@ function collectDecisionTablesForSave() {
     return out;
 }
 
+// "Optional<DiscountRule>" -> "DiscountRule"; anything else trimmed as-is. The
+// rule-table / resolver carrier matchers correlate a lookup leaf by its return
+// type, but a leaf that returns Optional<X> (the correct shape for a Map lookup
+// whose miss means "no entry") must still match the bare record/interface X.
+function unwrapOptional(t) {
+    const m = /^Optional<(.+)>$/.exec((t || '').trim());
+    return m ? m[1].trim() : (t || '').trim();
+}
+
 // For each resolver entry in state.variancePlan, synthesise the resolver's
 // decision-table sidecar (key → strategy class) so the plugin can generate
 // a working Map-based resolver implementation. The analyzer's variancePlan
@@ -4851,10 +4860,10 @@ function collectResolverDecisionTables() {
         // Find the resolver participant: any participant whose method
         // returns the interface entity by name.
         const resolver = state.participants.find(p =>
-            (p.methods || []).some(m => (m.output || '').trim() === iface.name)
+            (p.methods || []).some(m => unwrapOptional(m.output) === iface.name)
         );
         if (!resolver) continue;
-        const resolveMethod = (resolver.methods || []).find(m => (m.output || '').trim() === iface.name);
+        const resolveMethod = (resolver.methods || []).find(m => unwrapOptional(m.output) === iface.name);
         if (!resolveMethod) continue;
         const input = (resolveMethod.inputs || [])[0];
         if (!input || !input.name) continue;
@@ -4921,7 +4930,7 @@ function collectRuleTableDecisionTables() {
             // ignored or conflict. Only the pure-function lookup leaf is filled.
             if (p.kind === 'reuse' || p.existingFqn) continue;
             const m = (p.methods || []).find(mm =>
-                (mm.output || '').trim() === rule.name
+                unwrapOptional(mm.output) === rule.name
                 && Array.isArray(mm.inputs) && mm.inputs.length === 1
             );
             if (m) { repo = p; method = m; break; }
@@ -5050,7 +5059,7 @@ function collectVarianceGaps() {
         const source = state.participants.find(p =>
             p && p.kind !== 'reuse' && !p.existingFqn
             && (p.methods || []).some(mm =>
-                (mm.output || '').trim() === rule.name
+                unwrapOptional(mm.output) === rule.name
                 && Array.isArray(mm.inputs) && mm.inputs.length === 1)
         );
         if (!source) {

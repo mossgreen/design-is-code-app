@@ -15,6 +15,7 @@ bin/
 
 ### Local tooling ###
 .claude/
+.qwen/
 
 ### e2e (Playwright) ###
 e2e/node_modules/

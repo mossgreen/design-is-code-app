@@ -1,7 +1,7 @@
 ---
 id: invariance
 name: invariance discipline
-summary: Reused code keeps its real behaviour — the design doesn't redefine it
+summary: Design prose describes shape, not content — it stays true as the implementation grows
 applies-to: every `purpose` field and every sentence of `story`
 ---
 
@@ -11,16 +11,9 @@ of `story` before returning:
 > *Would this sentence need to change if the implementation grew — a
 > new case added, a new threshold introduced, a new variant appearing?*
 
-If **yes**, the sentence is about content; rewrite it to describe
-shape.
-If **no**, keep it.
-
 A design's prose reads true across all valid implementations of the
-same shape. The implementation supplies the content (specific values,
-thresholds, branches, variant identifiers); the design supplies the
-shape (contracts, responsibilities, collaborations). A `purpose` that
-quotes thresholds, names branches, or enumerates variants has confused
-the two.
+same shape — a `purpose` that quotes thresholds, names branches, or
+enumerates variants has confused content for shape.
 
 Examples:
 
@@ -32,6 +25,4 @@ Examples:
 - ❌ "Books a meeting at the earliest 30-minute slot that fits."
   → ✅ "Books a meeting time that works for all attendees."
 
-Acceptance criteria are samples of content the design's shape must
-admit. They are evidence, not blueprints. The story narrates the
-shape; the AC rows demonstrate it.
+The story narrates the shape; the AC rows demonstrate it.

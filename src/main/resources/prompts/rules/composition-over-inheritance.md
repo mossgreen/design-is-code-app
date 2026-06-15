@@ -36,15 +36,10 @@ returning and rewrite anything that violates this.
    ✅ `record ExpressOrder(Order common, Duration cutoff)` — the
        specialisation composes the base.
 
-3. **Variance priority codifies this.** The "Variance-handling
-   patterns" section enumerates four patterns in priority order:
-   rule table > resolver > sealed polymorphism > in-method pattern
-   matching. The first two are pure composition (data + delegation).
-   Sealed polymorphism is the ONE inheritance-flavoured pattern and
-   it sits third — chosen only when the behaviour genuinely belongs
-   on a domain noun's identity. Do not reach past rule table or
-   resolver to a sealed family unless the lower-numbered pattern's
-   criterion genuinely fails.
+3. **Variance priority codifies this.** Walk the "Selection priority"
+   honestly — the first two patterns are pure composition; do not
+   reach for a sealed family while a lower-numbered pattern's
+   criterion still holds.
 
 4. **Watch the `story` for inheritance smells.** Phrases like
    "extends", "is a kind of", "specialised version of", "subclass

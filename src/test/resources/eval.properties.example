@@ -17,9 +17,9 @@
 disc.eval.projectPath=/absolute/path/to/spring-petclinic
 
 # OPTIONAL — model to run the analyzer with. Must be one of Models.ALLOWED:
-#   claude-sonnet-4-6 | claude-opus-4-7 | claude-haiku-4-5
+#   claude-sonnet-4-6 | claude-opus-4-8 | claude-opus-4-7 | claude-haiku-4-5
 # Omit (or leave blank) to use the claude CLI default.
-#disc.eval.model=claude-opus-4-7
+#disc.eval.model=claude-opus-4-8
 
 # OPTIONAL — how many times each fixture runs (stability). Default 1.
 # The Gate stability standard is 5 consecutive green runs per fixture:

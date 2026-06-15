@@ -7,16 +7,21 @@ import java.util.Map;
 
 /**
  * One analyzer-eval scenario: the input (story + acceptance criteria) and the
- * assertions that decide whether the analyzer's design-model is correct for it.
+ * scenario-specific gold checks for the analyzer's design-model.
  *
- * <p>A fixture is a self-contained pair — the input we feed and the gold we
- * expect. Generic structural checks live in {@link DesignModelAssertions};
- * a fixture's {@link #assertDesignModel} adds the scenario-specific gold (e.g.
- * the CAT/DOG mapping values) on top.
+ * <p>Generic contract validity (shape, referential integrity, plugin-refusal
+ * rules) is NOT a fixture concern — {@link DesignContractValidator} runs on
+ * every model first. {@link #goldChecks} adds only this scenario's semantic
+ * gold (e.g. the CAT/DOG values), and asserts by <b>values, not names</b>:
+ * the model is free to name fields/types however it likes as long as the
+ * data is internally consistent and lands somewhere that executes.
+ *
+ * <p>Checks return failure strings instead of throwing so the harness can
+ * aggregate them into a per-run pass/fail matrix (pass-rate gating).
  */
 interface EvalFixture {
 
-    /** Short label used in failure messages, e.g. {@code "pet-visit-fee"}. */
+    /** Short label used in test names and artifact paths, e.g. {@code "pet-visit-fee"}. */
     String name();
 
     /** Free-text requirement fed to the analyzer as {@code {CONTEXT}}. */
@@ -30,11 +35,8 @@ interface EvalFixture {
     List<AcRow> acRows();
 
     /**
-     * Assert the raw design-model {@code Map} is correct for THIS fixture.
-     *
-     * @param model parsed JSON returned by {@code AnalyzeService.analyze()}
-     * @param run   1-based run index, surfaced in failure messages so a red
-     *              eval names which of the N stability runs failed
+     * Scenario-specific gold checks over the raw design-model {@code Map}.
+     * Empty list = pass. Each entry is one human-readable failure.
      */
-    void assertDesignModel(Map<String, Object> model, int run);
+    List<String> goldChecks(Map<String, Object> model);
 }

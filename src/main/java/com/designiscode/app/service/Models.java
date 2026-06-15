@@ -17,6 +17,7 @@ public final class Models {
      *  unvalidated string to the subprocess. */
     public static final Set<String> ALLOWED = Set.of(
             "claude-sonnet-4-6",
+            "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-haiku-4-5"
     );

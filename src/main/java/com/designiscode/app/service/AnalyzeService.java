@@ -60,9 +60,19 @@ public class AnalyzeService {
      *  gracefully when it would exceed this. */
     private static final int CODEBASE_TYPES_MAX_BYTES = 2048;
 
-    /** Hard timeout for the subprocess. Claude calls usually return in
-     *  ~10–30 s; anything past 2 min is almost certainly a hang. */
-    private static final long TIMEOUT_SECONDS = 120;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AnalyzeService.class);
+
+    /** Hard timeout for the subprocess, in seconds. Configurable via
+     *  {@code disc.claude.timeout} (default 300). A bound still exists so a
+     *  dead/stalled call fails instead of spinning forever. */
+    private final long timeoutSeconds;
+
+    /** Reasoning effort passed to the CLI via {@code --effort}; blank omits the
+     *  flag. Configurable via {@code disc.claude.effort} (default "low" — less
+     *  thinking, faster; Opus 4.8 in particular reasons heavily at medium/high
+     *  and stalls the call, so low keeps latency bounded. Raise only if design
+     *  quality suffers). */
+    private final String effort;
 
     private final String promptTemplate;
     private final String rulesSection;
@@ -70,8 +80,12 @@ public class AnalyzeService {
     private final ObjectMapper json = JsonMapper.builder().build();
 
     public AnalyzeService(
-            @Value("${disc.catalog.renderer:elided}") String rendererName
+            @Value("${disc.catalog.renderer:elided}") String rendererName,
+            @Value("${disc.claude.timeout:300}") long timeoutSeconds,
+            @Value("${disc.claude.effort:low}") String effort
     ) throws IOException {
+        this.timeoutSeconds = timeoutSeconds;
+        this.effort = effort;
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
         this.rulesSection = loadRulesSection();
         this.renderer = switch (rendererName == null ? "elided" : rendererName.toLowerCase()) {
@@ -98,10 +112,21 @@ public class AnalyzeService {
                 .replace(PH_ACCEPTANCE_CRITERIA, acMd)
                 .replace(PH_RULES, rulesSection);
 
+        // Pure prompt->JSON transform: run a SINGLE completion, not an agentic
+        // session. --tools "" disables every tool (no multi-turn wandering);
+        // --strict-mcp-config with no --mcp-config spawns zero MCP servers (the
+        // repo's project config otherwise brings up the playwright browser on
+        // every call). With no tools there is nothing to permit, so the old
+        // --dangerously-skip-permissions is gone.
         List<String> args = new ArrayList<>(List.of(
                 "claude",
-                "--dangerously-skip-permissions"
+                "--strict-mcp-config",
+                "--tools", ""
         ));
+        if (effort != null && !effort.isBlank()) {
+            args.add("--effort");
+            args.add(effort.trim());
+        }
         Models.appendIfValid(args, model);
         args.add("-p");
         args.add(prompt);
@@ -109,6 +134,21 @@ public class AnalyzeService {
         ProcessBuilder pb = new ProcessBuilder(args)
                 .redirectErrorStream(true)
                 .redirectInput(new File("/dev/null"));
+
+        long startNanos = System.nanoTime();
+        // Dump the fully-assembled prompt so we can eyeball its size + content
+        // when diagnosing latency. Overwrites each run; ~4 chars/token heuristic.
+        int approxTokens = prompt.length() / 4;
+        try {
+            java.nio.file.Path dump = java.nio.file.Path.of(
+                    System.getProperty("java.io.tmpdir"), "disc-analyze-prompt.txt");
+            java.nio.file.Files.writeString(dump, prompt);
+            log.info("analyze start: model={}, effort={}, promptChars={} (~{} tokens), dumped to {}",
+                    model, effort, prompt.length(), approxTokens, dump);
+        } catch (IOException dumpErr) {
+            log.info("analyze start: model={}, effort={}, promptChars={} (~{} tokens) [dump failed: {}]",
+                    model, effort, prompt.length(), approxTokens, dumpErr.getMessage());
+        }
 
         Process process;
         try {
@@ -121,13 +161,34 @@ public class AnalyzeService {
             throw e;
         }
 
-        String stdout = readAll(process.getInputStream());
-        boolean exited = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // Drain stdout on a daemon thread so the timeout below actually bounds
+        // the call: a hung `claude` keeps the pipe open, and reading on THIS
+        // thread would block in readAll() forever (past the timeout, which then
+        // never fires). The background read also prevents a full ~64 KB pipe
+        // buffer from dead-locking a chatty-but-healthy run.
+        StringBuilder collected = new StringBuilder();
+        Thread reader = new Thread(() -> {
+            try {
+                collected.append(readAll(process.getInputStream()));
+            } catch (IOException ignored) {
+                // stream closed by destroyForcibly, or normal EOF on exit
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!exited) {
             process.destroyForcibly();
-            throw new IOException("claude analysis timed out after " + TIMEOUT_SECONDS + "s");
+            log.warn("analyze TIMED OUT after {} ms (model={})",
+                    (System.nanoTime() - startNanos) / 1_000_000, model);
+            throw new IOException("claude analysis timed out after " + timeoutSeconds + "s");
         }
+        reader.join(5_000); // process exited -> reader hits EOF promptly; join publishes the buffer
+        String stdout = collected.toString();
         int exit = process.exitValue();
+        log.info("analyze done: model={}, exit={}, {} ms, outChars={}",
+                model, exit, (System.nanoTime() - startNanos) / 1_000_000, stdout.length());
         if (exit != 0) {
             throw new IOException("claude exited " + exit + ": " + truncate(stdout, 500));
         }

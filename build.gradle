@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.designiscode'
-version = '0.5.0'
+version = '0.6.0'
 
 java {
     toolchain {
@@ -24,7 +24,35 @@ dependencies {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    // Excludes @Tag("eval"): the analyzer eval shells out to the `claude` CLI
+    // and costs real model calls — it must never fire from a plain `test` run
+    // just because eval.properties happens to be configured. Run it via the
+    // dedicated `eval` task below.
+    useJUnitPlatform {
+        excludeTags 'eval'
+    }
+}
+
+// Analyzer eval: `./gradlew eval [-Ddisc.eval.runs=3] [-Ddisc.eval.passRate=0.66]`.
+// Opt-in (skips unless disc.eval.projectPath resolves); always reruns; streams
+// per-run [eval] summaries; artifacts land in build/eval/<fixture>/.
+tasks.register('eval', Test) {
+    description = 'Runs the analyzer eval against the claude CLI (costs model calls).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'eval'
+    }
+    // Forward disc.eval.* -D flags from the gradle invocation into the test JVM.
+    System.properties.each { k, v ->
+        if (k.toString().startsWith('disc.eval.')) systemProperty(k.toString(), v.toString())
+    }
+    outputs.upToDateWhen { false }
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        showStandardStreams = true
+    }
 }
 
 bootJar {

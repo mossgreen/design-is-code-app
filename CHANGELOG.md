@@ -5,6 +5,56 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.6.0] - 2026-06-16
+
+The analyzer prompt is rebuilt around two explicit invariants — "shape, not
+content" and "one declared pattern per variance axis" — giving its design
+judgment a principled, self-auditing foundation. The Claude subprocess no
+longer uses `--dangerously-skip-permissions`; both the analyzer and sequencer
+now run as pure prompt→JSON transforms via `--strict-mcp-config --tools ""`.
+The model picker offers Opus 4.8 (replaces 4.7). `Optional<X>` return types
+in resolver/rule-table matching are now unwrapped correctly, fixing a silent
+variance-gap false alarm.
+
+### Added
+- **`disc.claude.timeout` and `disc.claude.effort` config properties.** Override
+  the subprocess timeout (default 300 s, was 120 s) and Claude's reasoning
+  effort (default `low`; raise to `medium`/`high` for deeper designs) in
+  `application.yml` or via `-D` flags.
+- **`./gradlew eval` task.** Runs the analyzer eval suite against the real Claude
+  CLI in isolation from unit tests. Streams per-run summaries; artifacts land in
+  `build/eval/`. Tune with `-Ddisc.eval.runs=N` and `-Ddisc.eval.passRate=0.N`.
+- **`DesignContractValidator`** — a structured contract-level assertion harness
+  for eval, replacing `DesignModelAssertions`. Validates participants, entities,
+  variancePlan, and cases[] against contract rules rather than raw field equality.
+
+### Changed
+- **Analyzer prompt rebuilt around two invariants.** "Shape, not content" and
+  "one declared pattern per variance axis" are now declared up front with worked
+  examples, so every rule in the prompt derives from one of these invariants
+  rather than appearing ad-hoc.
+- **Safer Claude invocation.** Both `AnalyzeService` and `SequenceService` now
+  run `--strict-mcp-config --tools ""` instead of `--dangerously-skip-permissions`.
+  Single-completion prompt→JSON transforms never needed agent tools or MCP servers;
+  disabling both removes the permission footprint and prevents stalled tool calls.
+- **Timeout raised to 300 s and made configurable.** The 120 s limit was too
+  tight for Opus on complex designs; 300 s is the new default.
+- **Background stdout reader.** Stdout is now drained on a daemon thread before
+  `waitFor()`, preventing a potential deadlock on outputs larger than the ~64 KB
+  pipe buffer.
+- **Opus 4.8 replaces Opus 4.7** in both model pickers (Analyze step and Generate step).
+- **Rule prompt refinements.** `invariance`, `composition-over-inheritance`, and
+  `R2-purpose-specificity` updated with tighter worked examples.
+
+### Fixed
+- **`Optional<X>` return types in resolver/rule-table matching.** A resolver
+  whose method returns `Optional<StrategyInterface>` (correct Java for a
+  map-lookup miss) was silently dropped from variance-gap checks and resolver
+  sidecar generation. The new `unwrapOptional()` strips the wrapper before
+  matching.
+
+[v0.6.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.6.0
+
 ## [v0.5.0] - 2026-05-30
 
 The Design step gets a design-intelligence upgrade: the analyzer commits to a

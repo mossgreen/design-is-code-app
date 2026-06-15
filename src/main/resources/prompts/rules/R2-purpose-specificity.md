@@ -5,8 +5,8 @@ summary: Every participant has a clear, specific purpose — not vague or overla
 applies-to: every participant
 ---
 
-Before returning, judge each participant's `purpose` field against the three
-criteria in "A `purpose` is a user need, not a function description":
+Before returning, judge each participant's `purpose` field against
+three criteria:
 
 1. **Need-focused.** The purpose names a need (of the user, or of the
    calling participant), not the operation that satisfies it.
