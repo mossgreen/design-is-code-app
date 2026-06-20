@@ -1,8 +1,10 @@
 ---
 id: R2
-name: purpose specificity
-summary: Every participant has a clear, specific purpose — not vague or overlapping
-applies-to: every participant
+title: purpose specificity
+why: every participant has a clear, specific purpose — not vague or overlapping
+applies-when: always
+severity: must
+assertion: every `purpose` is need-focused, specific, and evaluable; none joins two needs with "and", names a mechanism, or paraphrases another purpose
 ---
 
 Before returning, judge each participant's `purpose` field against

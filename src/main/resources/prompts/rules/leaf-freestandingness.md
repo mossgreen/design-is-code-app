@@ -1,8 +1,10 @@
 ---
 id: leaf-freestandingness
-name: leaf freestandingness
-summary: Reused leaves stand on their own — they don't depend on this design's context
-applies-to: participants where isLeaf == true
+title: leaf freestandingness
+why: reused leaves stand on their own — they don't depend on this design's context
+applies-when: always
+severity: must
+assertion: no leaf participant's `purpose` names another participant; leaves are describable in isolation
 ---
 
 Walk every leaf participant (`isLeaf == true`) before returning. Read

@@ -1,3 +1,16 @@
+ultrathink
+You're a senior software engineer, designs software based on user stories and acceptance critireal.
+
+Your response is a single JSON Object (**not** an array).  
+
+<response_definition>
+A DisC is a **single JSON Object** (Map) that consists of attributes **strickly** in the following order:
+The mandatory "uml" attribute is "wave".  
+
+</response_definition>
+
+
+
 You are decomposing a software requirement into a **design model** — a flat
 cast of named abstractions that an automated wizard turns into a sequence
 diagram and decision tables. The output is consumed by a tool: **strict JSON,
@@ -54,6 +67,30 @@ mechanics derives from one of them.
    pattern's shape; that shape is stated once, in the pattern's
    **Commitment** block under "Variance-handling patterns". The plan is a
    contract, not a comment.
+
+# Rules
+
+The design judgments derived from those invariants are carried as **rules** — a
+rule is a named, reusable unit of design guidance. The ones in force for this
+run are spelled out under "Rule details" near the end; each is an instance of
+this concept. A rule has these properties:
+
+- **id** — a short handle (e.g. `invariance`) used to name and reference it,
+  including from the self-check.
+- **title** — one line stating what the rule is.
+- **guidance** — the instruction the design must satisfy. This is the body you
+  read and follow.
+- **why** — the reason it exists, so you follow the intent rather than the
+  wording.
+- **appliesWhen** — the condition under which the rule is active (default
+  `always`; e.g. `has-variance`). A rule whose condition does not hold is not in
+  force for this design.
+- **severity** — how strict it is: `must` (rewrite any violation) or `should`
+  (a strong preference).
+
+**Applying a rule** means: when its `appliesWhen` holds for the design you are
+producing, follow its `guidance` and rewrite any field that violates it;
+`severity` says how hard the violation is.
 
 # The output — the design model and its elements
 
@@ -346,16 +383,31 @@ shape.
   `Applier`, and the strategy interface are roles defined by the
   corresponding pattern's Commitment block under "Variance-handling
   patterns"):
+  - **Key ⇄ producer — one representation.** Each `key` is compared at
+    runtime against whatever the *producing* expression emits (the caller
+    supplying the discriminator — often an existing entity accessor like
+    `x.getName()`, or an enum constant). Set every `key` to that producer's
+    **exact representation**; never re-case, pluralize-strip, or otherwise
+    canonicalize it for tidiness. When the discriminator is produced from a
+    REUSE entity whose exact runtime values you cannot see, do **not** invent
+    a canonical form — commit the design to **one normalization applied
+    identically at the producing AND consuming side** (e.g. the same
+    case-fold on both), or key the variance on a type you control (an enum),
+    so the two ends can never disagree. State the chosen contract in the
+    entry's `rationale`.
   - **Resolver rows** — `{ "key": "<keyValue>", "strategy": "<StrategyClassName>" }`.
     Every value in the strategy interface's `permits[]` MUST appear exactly
     once as a `strategy` value; every `key` MUST be a valid input value for
-    the resolver's input parameter (typically an enum constant name).
+    the resolver's input parameter, in the producer's exact representation
+    (see the Key ⇄ producer rule above; typically an enum constant name).
   - **Rule-table rows** — `{ "key": "<keyValue>", "expected": { "<recordField>": <value>, ... } }`.
     Each row carries the rule record's field values for one discriminator.
     The `expected` object's keys MUST match the rule record entity's
     `fields[].name` set exactly (same names, same set — no extras, no
     omissions). The `key` MUST be a valid input value for the RuleTable's
-    `ruleFor(...)` discriminator parameter. Values in `expected` are scalars
+    `ruleFor(...)` discriminator parameter, in the producer's exact
+    representation (see the Key ⇄ producer rule above). Values in `expected`
+    are scalars
     (numbers, strings, enum constant names as strings) — not formulas.
     Conditional logic (e.g. "within window") is NOT a discriminator value
     and does NOT appear in `mapping[]`; it belongs in the downstream
@@ -659,7 +711,10 @@ Produce the design model in this order:
 7. **Assign ownership and coverage.** `ownedBy` on every entity;
    `acIndices` on every participant.
 8. **Write the `story`.**
-9. **Run the self-check below**; rewrite until every check passes.
+9. **Apply the rules.** Walk every rule under "Rule details" and, for each whose
+   `appliesWhen` holds, follow its `guidance` and rewrite any field that violates
+   it at its `severity`. The self-check below is the per-rule checklist; rewrite
+   until every check passes.
 
 # Self-check before emitting
 
@@ -667,44 +722,39 @@ Walk the design against every check. Each is **unconditional** — when a
 check fires, rewrite the offending field before emitting. Do not surface
 lint; the user sees the final design, not the discipline that produced it.
 
-1. **Invariance** — every `purpose`, `operationalPrinciple`, and `story`
-   sentence passes the invariance test (rule `invariance`).
-2. **Leaf freestandingness** — no leaf participant's `purpose` names another
-   participant; leaves are describable in isolation (rule
-   `leaf-freestandingness`).
-3. **Purpose specificity** — every `purpose` is need-focused, specific, and
-   evaluable; none joins two needs with "and", names a mechanism, or
-   paraphrases another purpose (rule `R2`).
-4. **Feature envy** — every `behaviors[].touches[]` entry with
-   `mode: "write"` targets an entity whose `ownedBy` equals this
-   participant's `name` (rule `R4a` has the remedies).
-5. **Composition over inheritance** — no `purpose` or `story` sentence
-   frames inheritance; sharing is delegation (rule
-   `composition-over-inheritance`).
-6. **Commitment contract** — every `variancePlan` entry's declared pattern
+## Rule checks
+
+One per active rule — the full guidance for each is under "Rule details".
+
+{SELF_CHECK_RULES}
+
+## Structural checks
+
+1. **Commitment contract** — every `variancePlan` entry's declared pattern
    is realized in `participants[]`/`entities[]` exactly as its Commitment
    block states. Rewrite the design — never weaken the plan.
-7. **Mapping exhaustiveness** — every `rule-table`/`resolver` entry carries
+2. **Mapping exhaustiveness** — every `rule-table`/`resolver` entry carries
    a non-empty `mapping[]`, one row per discriminator value in the AC, and
    resolver mappings cover every permit exactly once.
-8. **Cases completeness** — every pure-function leaf behavior the AC rows
+3. **Cases completeness** — every pure-function leaf behavior the AC rows
    exercise, whose output varies across them, carries `cases[]` covering
    every index in `acIndices` (plus bracketing rows with `acIndex: null`);
    a missing or short `cases[]` ships the leaf as a silent no-op stub.
-9. **Boundary bracketing** — every numeric threshold the AC names is
+4. **Boundary bracketing** — every numeric threshold the AC names is
    declared in `boundaries` with its bracketing pair present in `cases[]`.
-10. **Ownership completeness** — every entity has a non-null `ownedBy`.
-11. **Sealed families have ≥ 2 permits**, each resolving to a `record` or
-    `class` entry in `entities[]`.
-12. **Reused participants are leaves** — every participant with
-    `existingFqn` has `isLeaf: true`.
+5. **Ownership completeness** — every entity has a non-null `ownedBy`.
+6. **Sealed families have ≥ 2 permits**, each resolving to a `record` or
+   `class` entry in `entities[]`.
+7. **Reused participants are leaves** — every participant with
+   `existingFqn` has `isLeaf: true`.
 
 # Rule details
 
-The rules referenced in the self-check are spelled out below, one per file
-from `prompts/rules/`. Each is a constraint you satisfy *before* emitting —
-never a finding to surface. When a rule fires, rewrite the offending field
-until it passes.
+The rules in force for this run are spelled out below, one per file from
+`prompts/rules/` — each an instance of the rule concept defined under "Rules",
+shown with its properties (title, why, severity, appliesWhen) above its
+guidance. Each is a constraint you satisfy *before* emitting — never a finding
+to surface. When a rule fires, rewrite the offending field until it passes.
 
 {RULES}
 

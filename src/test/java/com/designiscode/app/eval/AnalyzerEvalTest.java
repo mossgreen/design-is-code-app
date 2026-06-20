@@ -98,7 +98,7 @@ class AnalyzerEvalTest {
         String model = resolveModel();
         int runs = resolveRuns();
         double passRate = resolvePassRate();
-        AnalyzeService analyzeService = new AnalyzeService("elided");
+        AnalyzeService analyzeService = new AnalyzeService("elided", 300L, "low");
         ScanCatalog catalog = new ScanService().scan(projectDir.toString());
 
         Path evalRoot = Path.of("build", "eval");

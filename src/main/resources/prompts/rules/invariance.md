@@ -1,8 +1,10 @@
 ---
 id: invariance
-name: invariance discipline
-summary: Design prose describes shape, not content — it stays true as the implementation grows
-applies-to: every `purpose` field and every sentence of `story`
+title: invariance discipline
+why: design prose describes shape, not content — it stays true as the implementation grows
+applies-when: always
+severity: must
+assertion: every `purpose`, `operationalPrinciple`, and `story` sentence passes the invariance test
 ---
 
 Apply the invariance test to every `purpose` field and every sentence

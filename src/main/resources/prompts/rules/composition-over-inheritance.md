@@ -1,8 +1,10 @@
 ---
 id: composition-over-inheritance
-name: composition over inheritance
-summary: Prefer composing collaborators over declaring inheritance hierarchies
-applies-to: every participant, every entity, every sentence of `story`
+title: composition over inheritance
+why: prefer composing collaborators over declaring inheritance hierarchies
+applies-when: always
+severity: must
+assertion: no `purpose` or `story` sentence frames inheritance; sharing is delegation
 ---
 
 When two abstractions share behaviour or data, model the sharing through

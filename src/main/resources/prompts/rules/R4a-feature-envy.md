@@ -1,8 +1,10 @@
 ---
 id: R4a
-name: business-rule feature envy
-summary: Each participant owns its own data — methods don't reach into another's fields
-applies-to: every participant whose methods declare `touches[]`
+title: business-rule feature envy
+why: each participant owns its own data — methods don't reach into another's fields
+applies-when: always
+severity: must
+assertion: every `behaviors[].touches[]` entry with `mode: "write"` targets an entity whose `ownedBy` equals this participant's `name`
 ---
 
 Before returning, walk every method on every participant. For each

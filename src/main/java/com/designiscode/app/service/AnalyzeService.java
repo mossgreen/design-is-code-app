@@ -50,6 +50,7 @@ public class AnalyzeService {
     private static final String PH_CODEBASE_TYPES = "{CODEBASE_TYPES}";
     private static final String PH_ACCEPTANCE_CRITERIA = "{ACCEPTANCE_CRITERIA}";
     private static final String PH_RULES = "{RULES}";
+    private static final String PH_SELF_CHECK_RULES = "{SELF_CHECK_RULES}";
 
     /** How many lexically-matched types to inject as grounding. Tuned to
      *  fit ~2 KB of prompt budget on a typical Spring sample. */
@@ -76,6 +77,7 @@ public class AnalyzeService {
 
     private final String promptTemplate;
     private final String rulesSection;
+    private final String selfCheckRulesSection;
     private final CatalogRenderer renderer;
     private final ObjectMapper json = JsonMapper.builder().build();
 
@@ -87,7 +89,9 @@ public class AnalyzeService {
         this.timeoutSeconds = timeoutSeconds;
         this.effort = effort;
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
-        this.rulesSection = loadRulesSection();
+        List<Rule> rules = loadRules();
+        this.rulesSection = renderGuidance(rules);
+        this.selfCheckRulesSection = renderSelfChecks(rules);
         this.renderer = switch (rendererName == null ? "elided" : rendererName.toLowerCase()) {
             case "markdown" -> new MarkdownRenderer();
             default -> new ElidedTreeRenderer();
@@ -110,7 +114,8 @@ public class AnalyzeService {
                 .replace(PH_CODEBASE_SUMMARY, summaryMd)
                 .replace(PH_CODEBASE_TYPES, typesMd)
                 .replace(PH_ACCEPTANCE_CRITERIA, acMd)
-                .replace(PH_RULES, rulesSection);
+                .replace(PH_RULES, rulesSection)
+                .replace(PH_SELF_CHECK_RULES, selfCheckRulesSection);
 
         // Pure prompt->JSON transform: run a SINGLE completion, not an agentic
         // session. --tools "" disables every tool (no multi-turn wandering);
@@ -277,56 +282,73 @@ public class AnalyzeService {
     }
 
     /**
-     * Concatenate every rule under {@code /prompts/rules/} into a single
-     * block. Each rule's frontmatter is stripped — only the body reaches
-     * the model, headed with the rule id from the frontmatter so the
-     * model can reference it from the "Self-check before returning"
-     * section of {@code analyzer.md}.
-     *
-     * <p>Falls back to a sentinel string when the rules dir is missing so
-     * the {@code {RULES}} placeholder is never left literal in the prompt.
+     * A registered design rule, parsed from one {@code /prompts/rules/*.md}
+     * file. The same object feeds two prompt placeholders — its full guidance
+     * into {@code {RULES}} (see {@link #renderRule}) and its one-line
+     * {@code assertion} into {@code {SELF_CHECK_RULES}} (see
+     * {@link #renderSelfChecks}) — so a rule is authored once and enforced in
+     * both places from a single source.
      */
-    private String loadRulesSection() {
+    private record Rule(String id, String title, String why, String appliesWhen,
+                        String severity, String assertion, String guidance) {}
+
+    /** Build a {@link Rule} from one rule file's text; {@code null} when the
+     *  guidance body is blank. Missing properties degrade to the file's id,
+     *  then {@code fallbackId}. */
+    private static Rule toRule(String md, String fallbackId) {
+        String guidance = stripFrontmatter(md).trim();
+        if (guidance.isBlank()) return null;
+        java.util.Map<String, String> fm = parseFrontmatter(md);
+        String id = orElse(fm.get("id"), fallbackId);
+        return new Rule(id, orElse(fm.get("title"), id), fm.get("why"),
+                fm.get("applies-when"), fm.get("severity"), fm.get("assertion"), guidance);
+    }
+
+    /**
+     * Load every rule under {@code /prompts/rules/} once, in sorted-filename
+     * order, so {@code {RULES}} and {@code {SELF_CHECK_RULES}} render in
+     * lockstep. Falls back to a known filename list under jar packaging (where
+     * the classpath isn't a walkable directory); returns empty when the dir is
+     * missing so callers emit a sentinel rather than a literal placeholder.
+     */
+    private List<Rule> loadRules() {
         try {
             java.net.URL dirUrl = AnalyzeService.class.getResource(RULES_DIR_RESOURCE);
-            if (dirUrl == null) return "_No LLM-judged rules registered._";
+            if (dirUrl == null) return List.of();
             java.nio.file.Path dirPath;
             try {
                 dirPath = java.nio.file.Paths.get(dirUrl.toURI());
             } catch (Exception jarOrOdd) {
-                // When running from a packaged jar the resources aren't a
-                // walkable Path. We fall back to a hard-coded list of known
-                // rule files at the top level. Add new rule files here OR
-                // run from gradle bootRun (which exposes classpath as files).
+                // Packaged jar: resources aren't a walkable Path. Fall back to
+                // the known filename list (keep it in sync when adding rules),
+                // or run from gradle bootRun which exposes the classpath as files.
                 return loadRulesFromKnownList();
             }
-            if (!java.nio.file.Files.isDirectory(dirPath)) return "_No LLM-judged rules registered._";
-
-            StringBuilder out = new StringBuilder();
+            if (!java.nio.file.Files.isDirectory(dirPath)) return List.of();
+            List<Rule> rules = new ArrayList<>();
             try (var stream = java.nio.file.Files.list(dirPath)) {
-                java.util.List<java.nio.file.Path> files = stream
+                List<java.nio.file.Path> files = stream
                         .filter(p -> p.toString().endsWith(".md"))
                         .filter(java.nio.file.Files::isRegularFile)
                         .sorted()
                         .toList();
                 for (java.nio.file.Path p : files) {
                     String body = new String(java.nio.file.Files.readAllBytes(p), StandardCharsets.UTF_8);
-                    String stripped = stripFrontmatter(body);
-                    String id = extractFrontmatterId(body);
-                    if (stripped.isBlank()) continue;
-                    out.append("## Rule ").append(id == null ? p.getFileName().toString() : id).append("\n\n");
-                    out.append(stripped.trim()).append("\n\n");
+                    Rule r = toRule(body, p.getFileName().toString());
+                    if (r != null) rules.add(r);
                 }
             }
-            return out.length() == 0 ? "_No LLM-judged rules registered._" : out.toString().trim();
+            return rules;
         } catch (IOException e) {
-            return "_Failed to load rules: " + e.getMessage() + "_";
+            log.warn("failed to load rules: {}", e.getMessage());
+            return List.of();
         }
     }
 
-    /** Jar-mode fallback: the known rule filenames. Mirrors the
-     *  Files.list() result when running from the IDE / gradle bootRun. */
-    private String loadRulesFromKnownList() {
+    /** Jar-mode fallback: the known rule filenames. Sorted to match
+     *  {@link #loadRules}' {@code Files.list().sorted()} order so both packaging
+     *  modes render rules identically. */
+    private List<Rule> loadRulesFromKnownList() {
         String[] knownFiles = {
                 "composition-over-inheritance.md",
                 "invariance.md",
@@ -334,20 +356,41 @@ public class AnalyzeService {
                 "R2-purpose-specificity.md",
                 "R4a-feature-envy.md"
         };
-        StringBuilder out = new StringBuilder();
+        java.util.Arrays.sort(knownFiles);
+        List<Rule> rules = new ArrayList<>();
         for (String fname : knownFiles) {
             try (InputStream in = AnalyzeService.class.getResourceAsStream(RULES_DIR_RESOURCE + "/" + fname)) {
                 if (in == null) continue;
                 String body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                String stripped = stripFrontmatter(body);
-                String id = extractFrontmatterId(body);
-                if (stripped.isBlank()) continue;
-                out.append("## Rule ").append(id == null ? fname : id).append("\n\n");
-                out.append(stripped.trim()).append("\n\n");
+                Rule r = toRule(body, fname);
+                if (r != null) rules.add(r);
             } catch (IOException ignored) {
             }
         }
-        return out.length() == 0 ? "_No LLM-judged rules registered._" : out.toString().trim();
+        return rules;
+    }
+
+    /** Render the full guidance block for {@code {RULES}}. Sentinel when empty
+     *  so the placeholder is never left literal. */
+    private static String renderGuidance(List<Rule> rules) {
+        if (rules.isEmpty()) return "_No LLM-judged rules registered._";
+        StringBuilder out = new StringBuilder();
+        for (Rule r : rules) out.append(renderRule(r)).append("\n\n");
+        return out.toString().trim();
+    }
+
+    /** Render the per-rule self-check lines for {@code {SELF_CHECK_RULES}} —
+     *  one bullet per rule carrying an {@code assertion}, cross-referenced by
+     *  id back to its full guidance in {@code {RULES}}. */
+    private static String renderSelfChecks(List<Rule> rules) {
+        StringBuilder out = new StringBuilder();
+        for (Rule r : rules) {
+            if (r.assertion() == null || r.assertion().isBlank()) continue;
+            out.append("- **").append(r.title()).append("** — ")
+               .append(r.assertion().trim())
+               .append(" (rule `").append(r.id()).append("`).\n");
+        }
+        return out.length() == 0 ? "_No rule checks registered._" : out.toString().trim();
     }
 
     private static String stripFrontmatter(String md) {
@@ -359,16 +402,46 @@ public class AnalyzeService {
         return next < 0 ? "" : t.substring(next + 1);
     }
 
-    private static String extractFrontmatterId(String md) {
-        if (md == null || !md.startsWith("---")) return null;
+    /**
+     * Parse a leading {@code ---} front-matter block of flat {@code key: value}
+     * lines into a map (insertion-ordered). Returns an empty map when the text
+     * has no front-matter. The rule files are flat — no nested YAML — so a
+     * line-by-line split is sufficient.
+     */
+    private static java.util.Map<String, String> parseFrontmatter(String md) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (md == null || !md.startsWith("---")) return out;
         int fmEnd = md.indexOf("\n---", 3);
-        if (fmEnd < 0) return null;
-        String fm = md.substring(0, fmEnd);
-        for (String line : fm.split("\n")) {
+        if (fmEnd < 0) return out;
+        for (String line : md.substring(0, fmEnd).split("\n")) {
             String l = line.trim();
-            if (l.startsWith("id:")) return l.substring(3).trim();
+            int colon = l.indexOf(':');
+            if (colon <= 0) continue;
+            String key = l.substring(0, colon).trim();
+            String val = l.substring(colon + 1).trim();
+            if (!key.isEmpty()) out.put(key, val);
         }
-        return null;
+        return out;
+    }
+
+    /**
+     * Render one rule's guidance block for {@code {RULES}}: a header carrying
+     * its properties (title, id, severity, appliesWhen) and a {@code Why} line,
+     * above its guidance body.
+     */
+    private static String renderRule(Rule r) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## ").append(r.title()).append("  ·  id `").append(r.id()).append('`');
+        if (r.severity() != null && !r.severity().isBlank()) sb.append(" · severity: ").append(r.severity().trim());
+        if (r.appliesWhen() != null && !r.appliesWhen().isBlank()) sb.append(" · applies when: ").append(r.appliesWhen().trim());
+        sb.append('\n');
+        if (r.why() != null && !r.why().isBlank()) sb.append("_Why: ").append(r.why().trim()).append("_\n");
+        sb.append('\n').append(r.guidance());
+        return sb.toString();
+    }
+
+    private static String orElse(String v, String fallback) {
+        return (v == null || v.isBlank()) ? fallback : v.trim();
     }
 
     private static String readAll(InputStream in) throws IOException {
