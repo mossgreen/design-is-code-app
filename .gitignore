@@ -26,5 +26,9 @@ e2e/playwright-report/
 ### OS ###
 .DS_Store
 
+### Local notes ###
+about.md
+TODO.md
+
 ### Analyzer eval (machine-local config; template is eval.properties.example) ###
 src/test/resources/eval.properties

@@ -5,6 +5,25 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.6.1] - 2026-06-25
+
+Analyzer design rules are now single-sourced: each rule is authored once and
+rendered into both the prompt's full guidance and its one-line self-check, so
+the two can no longer drift apart. No change to the design judgment itself —
+eval holds at 6/6 on vanilla petclinic with no regression versus v0.6.0.
+
+### Changed
+- **Rule-as-object model in the analyzer prompt.** `analyzer.md` defines a Rule
+  concept (`id` / `title` / `guidance` / `why` / `appliesWhen` / `severity` /
+  `assertion`); the `rules/*.md` files carry normalized frontmatter plus an
+  `assertion:` line, and the prompt gains an explicit "Apply the rules" step.
+- **`AnalyzeService` loads rules once and renders them twice.** Rules are read
+  into a single `Rule` record and rendered into both `{RULES}` (full guidance)
+  and `{SELF_CHECK_RULES}` (one assertion line each) from the same objects;
+  the separate dev/jar loaders collapse into one `loadRules()`.
+
+[v0.6.1]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.6.1
+
 ## [v0.6.0] - 2026-06-16
 
 The analyzer prompt is rebuilt around two explicit invariants — "shape, not
