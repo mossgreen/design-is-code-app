@@ -44,9 +44,11 @@ tasks.register('eval', Test) {
     useJUnitPlatform {
         includeTags 'eval'
     }
-    // Forward disc.eval.* -D flags from the gradle invocation into the test JVM.
+    // Forward disc.eval.* (analyzer eval) and disc.diff.* (code→design round-trip
+    // golden) -D flags from the gradle invocation into the test JVM.
     System.properties.each { k, v ->
-        if (k.toString().startsWith('disc.eval.')) systemProperty(k.toString(), v.toString())
+        def key = k.toString()
+        if (key.startsWith('disc.eval.') || key.startsWith('disc.diff.')) systemProperty(key, v.toString())
     }
     outputs.upToDateWhen { false }
     testLogging {
