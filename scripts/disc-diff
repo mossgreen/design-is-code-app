@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# disc-diff — full A–E pipeline for a variance ticket: derived slice +
+# classified binding time + minimal design delta + apply artifacts.
+#
+#   disc-diff --repo <path> --entry Class#method \
+#             --discriminator <token> --callee <Type> --new-variant <Class> \
+#             --mapping K=Strategy,K2=Strategy2 \
+#             [--strategy-interface <Name>] [--ac-file <file>] [--files ...]
+#
+# Writes disc-out/{diff.json, slice.md, slice.puml, delta.md, pr-body.md}.
+# pr-body.md is ready for: gh pr create --body-file disc-out/pr-body.md
+
+set -euo pipefail
+. "$(dirname "$0")/_disc-lib.sh"
+
+REPO="" ENTRY="" DISCRIMINATOR="" CALLEE="" NEW_VARIANT="" MAPPING="" IFACE="" AC_FILE="" FILES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --entry) ENTRY="$2"; shift 2 ;;
+    --discriminator) DISCRIMINATOR="$2"; shift 2 ;;
+    --callee) CALLEE="$2"; shift 2 ;;
+    --new-variant) NEW_VARIANT="$2"; shift 2 ;;
+    --mapping) MAPPING="$2"; shift 2 ;;
+    --strategy-interface) IFACE="$2"; shift 2 ;;
+    --ac-file) AC_FILE="$2"; shift 2 ;;
+    --files) shift; while [ $# -gt 0 ] && [[ "$1" != --* ]]; do FILES+=("$1"); shift; done ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+[ -n "$REPO" ] && [ -n "$ENTRY" ] && [ -n "$DISCRIMINATOR" ] && [ -n "$CALLEE" ] \
+  && [ -n "$NEW_VARIANT" ] && [ -n "$MAPPING" ] || {
+  echo "usage: disc-diff --repo <path> --entry Class#method --discriminator <token>" >&2
+  echo "                --callee <Type> --new-variant <Class> --mapping K=V,K2=V2" >&2
+  echo "                [--strategy-interface <Name>] [--ac-file <file>] [--files ...]" >&2
+  exit 1
+}
+
+require_tools
+require_server
+parse_entry "$ENTRY"
+[ ${#FILES[@]} -gt 0 ] || { while IFS= read -r f; do FILES+=("$f"); done < <(default_sources "$REPO"); }
+
+SOURCES=$(sources_json "${FILES[@]}")
+AC_TEXT=""
+[ -n "$AC_FILE" ] && AC_TEXT=$(cat "$AC_FILE")
+
+BODY=$(jq -n --argjson sources "$SOURCES" --arg c "$ENTRY_CLASS" --arg m "$ENTRY_METHOD" \
+  --arg d "$DISCRIMINATOR" --arg ac "$AC_TEXT" --arg callee "$CALLEE" \
+  --arg nv "$NEW_VARIANT" --arg mapping "$MAPPING" --arg iface "$IFACE" '
+  {sources:$sources, entryClass:$c, entryMethod:$m, discriminator:$d,
+   acText:(if $ac == "" then null else $ac end),
+   request:{calleeType:$callee, newVariant:$nv,
+            mapping:($mapping | split(",") | map(split("=") | {key:.[0], strategy:.[1]})),
+            strategyInterfaceName:(if $iface == "" then null else $iface end)}}')
+
+mkdir -p "$OUT_DIR"
+post /api/code-diff "$BODY" >"$OUT_DIR/diff.json"
+
+jq -r .sliceMarkdown "$OUT_DIR/diff.json" >"$OUT_DIR/slice.md"
+jq -r .slicePuml "$OUT_DIR/diff.json" >"$OUT_DIR/slice.puml"
+jq -r .deltaMarkdown "$OUT_DIR/diff.json" >"$OUT_DIR/delta.md"
+
+{
+  cat "$OUT_DIR/slice.md"
+  echo
+  echo '```plantuml'
+  cat "$OUT_DIR/slice.puml"
+  echo '```'
+  echo
+  cat "$OUT_DIR/delta.md"
+} >"$OUT_DIR/pr-body.md"
+
+DISPOSITION=$(jq -r .disposition "$OUT_DIR/diff.json")
+echo "disposition: $DISPOSITION → $OUT_DIR/pr-body.md"
+case "$DISPOSITION" in
+  generate)
+    echo "artifacts ready — review $OUT_DIR/delta.md, then: disc-apply --repo $REPO" ;;
+  *)
+    echo; jq -r .deltaMarkdown "$OUT_DIR/diff.json" ;;
+esac

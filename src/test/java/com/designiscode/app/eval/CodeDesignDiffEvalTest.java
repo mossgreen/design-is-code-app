@@ -7,9 +7,11 @@ import com.designiscode.app.dto.VariantRequest;
 import com.designiscode.app.service.BindingTimeClassifier;
 import com.designiscode.app.service.CallGraphDeriver;
 import com.designiscode.app.service.CodeDesignDiffService;
+import com.designiscode.app.service.DeltaRenderer;
 import com.designiscode.app.service.DesignDeltaEmitter;
 import com.designiscode.app.service.DesignDiffer;
 import com.designiscode.app.service.DesignService;
+import com.designiscode.app.service.SliceRenderer;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -51,7 +53,8 @@ class CodeDesignDiffEvalTest {
 
     private final CodeDesignDiffService pipeline = new CodeDesignDiffService(
             new CallGraphDeriver(), new BindingTimeClassifier(), new DesignDiffer(),
-            new DesignDeltaEmitter(), new DesignService());
+            new DesignDeltaEmitter(), new DesignService(),
+            new SliceRenderer(), new DeltaRenderer());
 
     @Test
     void appliesRequestDynamicVariantToARealProject() throws Exception {

@@ -1,0 +1,22 @@
+@startuml
+' @package org.springframework.samples.petclinic.owner
+' derived what-IS slice of CancelVisitService.cancel — read-only view, not a design artifact
+
+participant CancelVisitService
+participant OwnerLoader
+participant CancellationGuard
+participant CancellationFeePolicy
+participant Owner
+participant OwnerRepository
+
+[*] -> CancelVisitService : cancel(ownerId, petId, visitId, initiator)
+CancelVisitService -> OwnerLoader : load(ownerId)
+CancelVisitService <-- OwnerLoader : owner : Owner
+CancelVisitService -> CancellationGuard : check(owner, petId, visitId)
+CancelVisitService <-- CancellationGuard : hoursUntilVisit : long
+CancelVisitService -> CancellationFeePolicy : feeFor(hoursUntilVisit)
+CancelVisitService <-- CancellationFeePolicy : fee : BigDecimal
+CancelVisitService -> Owner : removeVisit(petId, visitId)
+CancelVisitService -> OwnerRepository : save(owner)
+CancelVisitService --> [*] : result : CancellationResult
+@enduml

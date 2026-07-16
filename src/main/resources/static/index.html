@@ -77,23 +77,13 @@
 
             <div class="section-block design-input-block">
                 <div class="section-head">
-                    <h3>Your story</h3>
-                    <span class="hint inline">Describe what you want to build in plain English.</span>
-                </div>
-                <textarea id="story-input" rows="5" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;."></textarea>
-            </div>
-
-            <div class="section-block design-input-block" id="ac-section">
-                <div class="section-head">
-                    <h3>Acceptance criteria</h3>
-                    <span class="hint inline">Each row constrains the design — the analyzer must satisfy every row.</span>
-                    <span class="section-count" id="ac-count">0 rows</span>
+                    <h3>Your story &amp; acceptance criteria</h3>
+                    <span class="hint inline">Story in plain English, then one criterion per line as &ldquo;Given &hellip;, when &hellip;, then &hellip;&rdquo; — each criterion constrains the design.</span>
+                    <span class="section-count" id="ac-count">0 criteria</span>
                     <span class="section-count" id="ac-coverage" title="acceptance-criteria rows with at least one carrier participant"></span>
                 </div>
+                <textarea id="story-input" rows="9" placeholder="As a &lt;role&gt;, I want to &lt;action&gt;, so that &lt;outcome&gt;.&#10;&#10;Given &lt;a precondition&gt;, when &lt;an action&gt;, then &lt;the expected outcome&gt;.&#10;Given &lt;another precondition&gt;, when &lt;an action&gt;, then &lt;the expected outcome&gt;."></textarea>
                 <div id="ac-rows" class="ac-rows"></div>
-                <div class="ac-actions">
-                    <button type="button" class="secondary small" id="ac-add">+ Add criterion</button>
-                </div>
             </div>
 
             <div class="design-analyze-row">

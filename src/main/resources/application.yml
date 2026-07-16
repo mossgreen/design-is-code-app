@@ -4,3 +4,9 @@ spring:
 
 server:
   port: 8080
+
+disc:
+  claude:
+    # Reasoning effort passed to the claude CLI (--effort) for the
+    # analyze / sequence / validate calls. Default in code is "low".
+    effort: medium

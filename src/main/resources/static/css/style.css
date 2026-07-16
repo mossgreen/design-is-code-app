@@ -4004,6 +4004,20 @@ button.small {
     transition: opacity 0.12s, box-shadow 0.12s;
 }
 
+/* Read-only parsed-AC rows under the story textarea: single text line +
+ * carrier chip. The Gherkin is edited in the textarea itself. */
+.ac-rows:not(:empty) { margin-top: 0.6rem; }
+.ac-row.ac-row-readonly {
+    grid-template-columns: 1fr auto;
+    padding: 0.45rem 0.6rem;
+}
+.ac-ro-text {
+    min-width: 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+.ac-ro-text .ac-field-label { margin-right: 0.15rem; }
+
 .ac-row .ac-field {
     display: flex;
     flex-direction: column;

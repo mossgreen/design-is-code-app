@@ -22,7 +22,8 @@ class CodeDesignDiffServiceTest {
 
     private final CodeDesignDiffService pipeline = new CodeDesignDiffService(
             new CallGraphDeriver(), new BindingTimeClassifier(), new DesignDiffer(),
-            new DesignDeltaEmitter(), new DesignService());
+            new DesignDeltaEmitter(), new DesignService(),
+            new SliceRenderer(), new DeltaRenderer());
 
     private static final String ORDER = """
             package com.demo;

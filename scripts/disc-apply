@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# disc-apply — write the reviewed apply artifacts (from disc-diff) into
+# <repo>/design/ so the plugin can consume them.
+#
+#   disc-apply --repo <path>
+
+set -euo pipefail
+. "$(dirname "$0")/_disc-lib.sh"
+
+REPO=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+[ -n "$REPO" ] || { echo "usage: disc-apply --repo <path>  (after disc-diff)" >&2; exit 1; }
+[ -f "$OUT_DIR/diff.json" ] || { echo "error: $OUT_DIR/diff.json not found — run disc-diff first" >&2; exit 1; }
+
+require_tools
+require_server
+
+ARTIFACTS=$(jq .artifacts "$OUT_DIR/diff.json")
+[ "$ARTIFACTS" != "null" ] || { echo "error: no artifacts (delta was parked or ask)" >&2; exit 1; }
+
+BODY=$(jq -n --arg p "$REPO" --argjson a "$ARTIFACTS" '{projectPath:$p, artifacts:$a}')
+post /api/code-diff/apply "$BODY" | jq .
+echo "applied → $REPO/design/ — next: disc-generate --repo $REPO"

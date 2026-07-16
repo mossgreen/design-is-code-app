@@ -29,6 +29,8 @@ e2e/playwright-report/
 ### Local notes ###
 about.md
 TODO.md
+action.md
+demo.md
 
 ### Analyzer eval (machine-local config; template is eval.properties.example) ###
 src/test/resources/eval.properties

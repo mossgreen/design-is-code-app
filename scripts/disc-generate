@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# disc-generate — validate the design in <repo>/design/ with the plugin's
+# Step-1 preflight, then run generation (tests → implementation), streaming
+# the plugin's progress to stdout.
+#
+#   disc-generate --repo <path> [--file <design/x.puml>] [--model <model>]
+
+set -euo pipefail
+. "$(dirname "$0")/_disc-lib.sh"
+
+REPO="" FILE="" MODEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --file) FILE="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+[ -n "$REPO" ] || { echo "usage: disc-generate --repo <path> [--file design/x.puml] [--model m]" >&2; exit 1; }
+
+require_tools
+require_server
+
+if [ -z "$FILE" ]; then
+  FILE=$(find "$REPO/design" -maxdepth 1 -name '*.puml' | sort | head -1)
+  [ -n "$FILE" ] || { echo "error: no .puml under $REPO/design — run disc-apply first" >&2; exit 1; }
+fi
+
+PUML=$(jq -Rs . <"$FILE")
+VALIDATE=$(jq -n --arg p "$REPO" --argjson puml "$PUML" --arg m "$MODEL" \
+  '{projectPath:$p, puml:$puml, model:(if $m == "" then null else $m end)}')
+echo "validate: $FILE"
+RESULT=$(post /api/generator/validate "$VALIDATE")
+echo "$RESULT" | jq .
+[ "$(echo "$RESULT" | jq -r .refused)" != "true" ] || { echo "error: design refused — fix and re-run" >&2; exit 1; }
+
+echo "generate: streaming plugin output —"
+RUN=$(jq -n --arg p "$REPO" --arg f "$FILE" --arg m "$MODEL" \
+  '{projectPath:$p, filePath:$f, model:(if $m == "" then null else $m end)}')
+curl -sN -X POST "$DISC_URL/api/generator/run" -H 'Content-Type: application/json' -d "$RUN"
+echo
+echo "done — verify with the parity checklist, then run the target repo's tests"

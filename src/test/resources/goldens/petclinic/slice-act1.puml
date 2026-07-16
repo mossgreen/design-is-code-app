@@ -1,0 +1,13 @@
+@startuml
+' @package org.springframework.samples.petclinic.owner
+' derived what-IS slice of VisitController.processNewVisitForm — read-only view, not a design artifact
+
+participant VisitController
+participant Owner
+participant OwnerRepository
+
+[*] -> VisitController : processNewVisitForm(owner, petId, visit, result, redirectAttributes)
+VisitController -> Owner : addVisit(petId, visit)
+VisitController -> OwnerRepository : save(owner)
+VisitController --> [*] : result : String
+@enduml

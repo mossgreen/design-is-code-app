@@ -186,6 +186,20 @@ public class CallGraphDeriver {
                         v.getNameAsString(), v.getTypeAsString(), "field", q)));
             }
         }
+        // Lombok wiring: @AllArgsConstructor/@RequiredArgsConstructor generate the
+        // constructor at compile time, so the source has none — the fields ARE the
+        // constructor parameters (all non-static, or the final ones respectively).
+        boolean lombokAll = sut.getAnnotationByName("AllArgsConstructor").isPresent();
+        boolean lombokRequired = sut.getAnnotationByName("RequiredArgsConstructor").isPresent();
+        if (deps.isEmpty() && (lombokAll || lombokRequired)) {
+            for (FieldDeclaration f : sut.getFields()) {
+                if (f.isStatic()) continue;
+                if (lombokRequired && !lombokAll && !f.isFinal()) continue;
+                String q = qualifierOf(f);
+                f.getVariables().forEach(v -> deps.add(new DerivedSlice.Dependency(
+                        v.getNameAsString(), v.getTypeAsString(), "constructor", q)));
+            }
+        }
         return deps;
     }
 

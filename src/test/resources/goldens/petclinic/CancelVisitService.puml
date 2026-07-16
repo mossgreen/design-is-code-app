@@ -1,0 +1,32 @@
+@startuml
+' @package org.springframework.samples.petclinic.owner
+
+' @disc-entities resolver strategy family + reused domain types
+class CancellationResult <<@class:org.springframework.samples.petclinic.owner.CancellationResult>>
+class CancellationFeePolicy <<interface>> <<@permits:StandardCancellationFee,ClinicInitiatedFee>> {
+  + feeFor(hoursUntilVisit: long): BigDecimal
+}
+class StandardCancellationFee <<@class:org.springframework.samples.petclinic.owner.StandardCancellationFee>>
+class ClinicInitiatedFee <<class>>
+
+' @disc-classification CREATE (no stereotype), REUSE (@class), REGEN (@regen), UPDATE (@class + +methods)
+participant CancelVisitService <<@regen:org.springframework.samples.petclinic.owner.CancelVisitService>>
+participant CancellationFeePolicyResolver
+participant OwnerLoader <<@class:org.springframework.samples.petclinic.owner.OwnerLoader>>
+participant CancellationGuard <<@class:org.springframework.samples.petclinic.owner.CancellationGuard>>
+participant Owner <<@class:org.springframework.samples.petclinic.owner.Owner>>
+participant OwnerRepository <<@class:org.springframework.samples.petclinic.owner.OwnerRepository>>
+
+[*] -> CancelVisitService : cancel(ownerId, petId, visitId, initiator)
+CancelVisitService -> OwnerLoader : load(ownerId)
+CancelVisitService <-- OwnerLoader : owner : Owner
+CancelVisitService -> CancellationGuard : check(owner, petId, visitId)
+CancelVisitService <-- CancellationGuard : hoursUntilVisit : long
+CancelVisitService -> CancellationFeePolicyResolver : resolve(key)
+CancellationFeePolicyResolver --> CancelVisitService : strategy : CancellationFeePolicy
+CancelVisitService -> CancellationFeePolicy : feeFor(hoursUntilVisit)
+CancelVisitService <-- CancellationFeePolicy : fee : BigDecimal
+CancelVisitService -> Owner : removeVisit(petId, visitId)
+CancelVisitService -> OwnerRepository : save(owner)
+CancelVisitService --> [*] : result : CancellationResult
+@enduml

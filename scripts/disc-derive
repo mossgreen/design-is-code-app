@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# disc-derive — the what-IS view of one entry method (Stage A + rendering).
+#
+#   disc-derive --repo <path> --entry Class#method [--files f1.java f2.java ...]
+#
+# Files default to every *.java under <repo>/src/main/java. Writes
+# disc-out/slice.md, disc-out/slice.puml, disc-out/derive.json.
+
+set -euo pipefail
+. "$(dirname "$0")/_disc-lib.sh"
+
+REPO="" ENTRY="" FILES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="$2"; shift 2 ;;
+    --entry) ENTRY="$2"; shift 2 ;;
+    --files) shift; while [ $# -gt 0 ] && [[ "$1" != --* ]]; do FILES+=("$1"); shift; done ;;
+    *) echo "unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+[ -n "$REPO" ] && [ -n "$ENTRY" ] || { echo "usage: disc-derive --repo <path> --entry Class#method [--files ...]" >&2; exit 1; }
+
+require_tools
+require_server
+parse_entry "$ENTRY"
+[ ${#FILES[@]} -gt 0 ] || { while IFS= read -r f; do FILES+=("$f"); done < <(default_sources "$REPO"); }
+
+SOURCES=$(sources_json "${FILES[@]}")
+BODY=$(jq -n --argjson sources "$SOURCES" --arg c "$ENTRY_CLASS" --arg m "$ENTRY_METHOD" \
+  '{sources:$sources, entryClass:$c, entryMethod:$m}')
+
+mkdir -p "$OUT_DIR"
+post /api/code-derive "$BODY" >"$OUT_DIR/derive.json"
+jq -r .sliceMarkdown "$OUT_DIR/derive.json" >"$OUT_DIR/slice.md"
+jq -r .slicePuml "$OUT_DIR/derive.json" >"$OUT_DIR/slice.puml"
+
+echo "derived ${#FILES[@]} files → $OUT_DIR/slice.md, $OUT_DIR/slice.puml"
+echo
+cat "$OUT_DIR/slice.md"

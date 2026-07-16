@@ -5,8 +5,13 @@ const state = {
     // the AI analyser and to populate Step 2's type autocomplete.
     codebaseCatalog: null,
     userStory: '',
+    // The story textarea's verbatim content: story prose + Gherkin AC
+    // lines together. Parsed on input into userStory (prose) + ac (rows);
+    // kept so the textarea can be restored exactly on step re-entry.
+    storyRaw: '',
     // Acceptance criteria as structured Gherkin rows. Each row is
-    // { given, when, then }. Fed to /api/analyze as `acceptanceCriteria`
+    // { given, when, then }. Parsed from "Given …, when …, then …" lines
+    // in the story textarea. Fed to /api/analyze as `acceptanceCriteria`
     // so generated participants/sequence satisfy each row.
     ac: [],
     // Types/entities the participants pass around — records, enums,
@@ -313,9 +318,7 @@ const storyInput = document.getElementById('story-input');
 
 const step2Els = {
     storyInput: storyInput,
-    acSection: document.getElementById('ac-section'),
     acRows: document.getElementById('ac-rows'),
-    acAdd: document.getElementById('ac-add'),
     acCount: document.getElementById('ac-count'),
     acCoverage: document.getElementById('ac-coverage'),
     analyzeBtn: document.getElementById('analyze-btn'),
@@ -353,11 +356,64 @@ function updateAnalyzeGate() {
     step2Els.analyzeBtn.disabled = !(state.userStory && state.userStory.trim().length);
 }
 
+// One textarea carries both the story and the acceptance criteria.
+// Lines starting with a Gherkin keyword (Given/When/Then/And) parse into
+// structured { given, when, then } rows; everything else is story prose.
+// Both inline ("Given …, when …, then …") and multi-line (Given / When /
+// Then on separate lines) Gherkin are accepted; "And" extends the last
+// clause of the current row.
+function parseStoryAndAc(text) {
+    const storyLines = [];
+    const rows = [];
+    let cur = null;
+    let lastField = null;
+    for (const raw of (text || '').split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (!/^(given|when|then|and)\b/i.test(line)) {
+            storyLines.push(line);
+            cur = null;
+            lastField = null;
+            continue;
+        }
+        // "And …" with no other keyword continues the current clause.
+        if (/^and\b/i.test(line) && !/\b(given|when|then)\b/i.test(line.replace(/^and\b/i, ''))) {
+            if (cur && lastField) {
+                const txt = line.replace(/^and\b[\s:,]*/i, '').replace(/[\s,;.]+$/, '');
+                cur[lastField] = cur[lastField] ? cur[lastField] + ' and ' + txt : txt;
+            }
+            continue;
+        }
+        // Tokenise on the keywords: odd indices are keywords, the
+        // element after each is that clause's text.
+        const parts = line.split(/\b(given|when|then)\b/i);
+        for (let i = 1; i < parts.length; i += 2) {
+            const kw = parts[i].toLowerCase();
+            const txt = (parts[i + 1] || '').replace(/^[\s:,]+/, '').replace(/[\s,;.]+$/, '');
+            if (kw === 'given') {
+                cur = { given: txt, when: '', then: '' };
+                rows.push(cur);
+            } else {
+                if (!cur) { cur = { given: '', when: '', then: '' }; rows.push(cur); }
+                cur[kw] = cur[kw] ? cur[kw] + ' ' + txt : txt;
+            }
+            lastField = kw;
+        }
+    }
+    return { story: storyLines.join('\n'), rows };
+}
+
+function applyStoryInput(text) {
+    state.storyRaw = text;
+    const { story, rows } = parseStoryAndAc(text);
+    state.userStory = story;
+    state.ac = rows;
+    renderAcRows();
+    updateAnalyzeGate();
+}
+
 if (storyInput) {
-    storyInput.addEventListener('input', () => {
-        state.userStory = storyInput.value;
-        updateAnalyzeGate();
-    });
+    storyInput.addEventListener('input', () => applyStoryInput(storyInput.value));
 }
 
 // --- Step 2 acceptance criteria (Gherkin rows) ---
@@ -438,32 +494,18 @@ function renderAcRows() {
             return `<span class="ac-carrier-chip${carrierWarn}" title="${escapeAttr(carrierTitle)}">${carriers.length} ${carriers.length === 1 ? 'participant' : 'participants'}</span>`;
         })();
 
+        // Read-only: the rows are parsed live from the story textarea —
+        // editing happens there, this list just confirms what was parsed
+        // and carries the coverage chip + cross-highlight.
+        wrap.classList.add('ac-row-readonly');
         wrap.innerHTML = `
-            <div class="ac-field">
-                <span class="ac-field-label">Given</span>
-                <textarea data-ac-field="given" rows="2" placeholder="a precondition">${escapeHtml(row.given || '')}</textarea>
-            </div>
-            <div class="ac-field">
-                <span class="ac-field-label">When</span>
-                <textarea data-ac-field="when" rows="2" placeholder="an action">${escapeHtml(row.when || '')}</textarea>
-            </div>
-            <div class="ac-field">
-                <span class="ac-field-label">Then</span>
-                <textarea data-ac-field="then" rows="2" placeholder="the expected outcome">${escapeHtml(row.then || '')}</textarea>
+            <div class="ac-ro-text">
+                <span class="ac-field-label">Given</span> ${escapeHtml(row.given || '—')}
+                <span class="ac-field-label">when</span> ${escapeHtml(row.when || '—')}
+                <span class="ac-field-label">then</span> ${escapeHtml(row.then || '—')}
             </div>
             ${carrierChip}
-            <button type="button" class="ac-remove" data-ac-remove="${idx}" aria-label="Remove this row">×</button>
         `;
-        wrap.querySelectorAll('textarea[data-ac-field]').forEach(ta => {
-            ta.addEventListener('input', () => {
-                const field = ta.dataset.acField;
-                state.ac[idx][field] = ta.value;
-            });
-        });
-        wrap.querySelector('[data-ac-remove]').addEventListener('click', () => {
-            state.ac.splice(idx, 1);
-            renderAcRows();
-        });
         // Cross-highlight: when this row is hovered, dim non-carrier
         // participants. Cleared on leave.
         wrap.addEventListener('mouseenter', () => setAcHover(idx));
@@ -472,7 +514,7 @@ function renderAcRows() {
     });
     if (step2Els.acCount) {
         const n = state.ac.length;
-        step2Els.acCount.textContent = `${n} row${n === 1 ? '' : 's'}`;
+        step2Els.acCount.textContent = `${n} criteri${n === 1 ? 'on' : 'a'}`;
     }
     if (step2Els.acCoverage) {
         const { covered, total } = acCoverageStats();
@@ -488,13 +530,6 @@ function renderAcRows() {
             step2Els.acCoverage.classList.toggle('is-warn', covered < total);
         }
     }
-}
-
-if (step2Els.acAdd) {
-    step2Els.acAdd.addEventListener('click', () => {
-        state.ac.push({ given: '', when: '', then: '' });
-        renderAcRows();
-    });
 }
 
 // --- Step 2 Analyze button: explicit trigger (no auto-fire) ---
@@ -1233,8 +1268,8 @@ function resolveCreates(seq) {
 // --- Step 2 entry ---
 
 function enterStep2() {
-    if (step2Els.storyInput && step2Els.storyInput.value !== (state.userStory || '')) {
-        step2Els.storyInput.value = state.userStory || '';
+    if (step2Els.storyInput && step2Els.storyInput.value !== (state.storyRaw || '')) {
+        step2Els.storyInput.value = state.storyRaw || '';
     }
     renderAcRows();
     updateAnalyzeGate();
@@ -1254,11 +1289,17 @@ async function runAnalyze(context) {
     state.analyzing = true;
     state.analyzeError = null;
     showAnalyzeBanner('Analysing your story…', { spinning: true });
+    const t0 = performance.now();
+    const elapsed = () => Math.round((performance.now() - t0) / 1000);
+    const heartbeat = setInterval(() => {
+        console.info(`[wizard] still working… ${elapsed()}s elapsed`);
+    }, 10000);
     try {
         // Drop empty AC rows so the prompt only includes meaningful criteria.
         const ac = (state.ac || []).filter(r =>
             (r.given || '').trim() || (r.when || '').trim() || (r.then || '').trim());
         const model = (document.getElementById('analyze-model') || {}).value || null;
+        console.info(`[wizard] POST /api/analyze — model=${model || 'default'}, story=${(context || '').length} chars, ac=${ac.length} rows`);
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1268,6 +1309,7 @@ async function runAnalyze(context) {
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
         // Analyser contract: {sut, participants, story, entities}.
         const rawParticipants = Array.isArray(data && data.participants) ? data.participants : [];
+        console.info(`[wizard] analyzer done in ${elapsed()}s — ${rawParticipants.length} participants, ${Array.isArray(data && data.entities) ? data.entities.length : 0} entities`);
         const story = (data && data.story) || '';
         state.story = story;
         state.participants = rawParticipants.map(adoptParticipant).filter(Boolean);
@@ -1307,6 +1349,20 @@ async function runAnalyze(context) {
                 : null;
             setSut((sut || state.participants[0]).id);
 
+            // setSut only auto-adds the [*] entry/return rows when the SUT
+            // has exactly one method; with 2+ it waits for the user to pick.
+            // The validator refuses any .puml without an entry interaction,
+            // so default to the SUT's first method (the analyzer lists the
+            // entry-point method first) — the user can re-pick afterwards.
+            const sutP = findParticipant(state.sutParticipantId);
+            const hasEntry = state.sequence.some(s =>
+                s.kind === STEP_KIND.CALL && isSystemCaller(s.callerId));
+            if (!hasEntry && sutP && (sutP.methods || []).length > 0) {
+                addSystemCallerStepsFor(sutP.id, sutP.methods[0].id);
+                console.info(`[wizard] SUT has ${sutP.methods.length} methods — defaulted entry to ${sutP.methods[0].name}()`);
+                renderSequence();
+            }
+
             // Phase 3: validate against the codegen plugin. One retry on refusal.
             showAnalyzeBanner('Validating the design…', { spinning: true });
             let result = await runValidator();
@@ -1324,21 +1380,27 @@ async function runAnalyze(context) {
                 }
             }
             hideAnalyzeBanner();
+            console.info(`[wizard] analyze chain complete in ${elapsed()}s`);
         } else {
             hideAnalyzeBanner();
         }
     } catch (err) {
         state.analyzeError = err.message;
+        console.error(`[wizard] analyze failed after ${elapsed()}s: ${err.message}`);
         showAnalyzeBanner(
             'Couldn\'t suggest abstractions: ' + err.message + '. Add participants manually below.',
             { spinning: false, error: true, dismissable: true }
         );
     } finally {
+        clearInterval(heartbeat);
         state.analyzing = false;
     }
 }
 
 function showAnalyzeBanner(text, opts = {}) {
+    // Mirror every phase transition to the console so long LLM calls are
+    // observable without watching the server log.
+    console.info(`[wizard] ${text}`);
     const b = step2Els.analyzeBanner;
     if (!b) return;
     b.classList.remove('hidden');

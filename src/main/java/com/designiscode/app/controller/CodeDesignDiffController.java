@@ -26,6 +26,18 @@ public class CodeDesignDiffController {
         this.pipeline = pipeline;
     }
 
+    /** Stage A + rendering only — the what-IS view for an additive ticket (no variance delta). */
+    @PostMapping("/code-derive")
+    public ResponseEntity<?> derive(@RequestBody CodeDiffRequest r) {
+        try {
+            return ResponseEntity.ok(pipeline.derive(r.sources(), r.entryClass(), r.entryMethod()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "derive failed: " + e.getMessage()));
+        }
+    }
+
     @PostMapping("/code-diff")
     public ResponseEntity<?> diff(@RequestBody CodeDiffRequest r) {
         try {

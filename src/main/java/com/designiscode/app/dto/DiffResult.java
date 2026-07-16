@@ -18,5 +18,8 @@ public record DiffResult(
         DesignDelta delta,
         List<String> validationViolations,  // empty when the delta is well-formed/minimal
         List<String> warnings,              // non-blocking review notes (e.g. manual-wiring fallback)
-        ApplyArtifacts artifacts            // null unless disposition == generate and validation passed
+        ApplyArtifacts artifacts,           // null unless disposition == generate and validation passed
+        String sliceMarkdown,               // human-readable what-IS slice (PR body, Stage-D review)
+        String slicePuml,                   // what-IS sequence diagram (read-only view, not a design artifact)
+        String deltaMarkdown                // human-readable delta (PR body, Stage-D review)
 ) {}
