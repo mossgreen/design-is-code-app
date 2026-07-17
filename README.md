@@ -146,14 +146,6 @@ Spring Boot 4 / Java 17 / vanilla HTML+CSS+JS / hand-rolled SVG. No frontend bui
 ./gradlew test           # Java unit tests
 ```
 
-**E2E** (Playwright against a running app) lives in [`e2e/`](e2e/). Start the app in one terminal, then:
-```sh
-cd e2e
-npm install
-npx playwright install chromium
-npx playwright test
-```
-
 **Releasing:** see [RELEASE.md](RELEASE.md).
 
 ## Status
