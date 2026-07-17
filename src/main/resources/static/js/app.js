@@ -376,11 +376,14 @@ function parseStoryAndAc(text) {
             lastField = null;
             continue;
         }
-        // "And …" with no other keyword continues the current clause.
+        // "And …" with no other keyword continues the current clause; with no
+        // clause to continue it is story prose — never silently dropped.
         if (/^and\b/i.test(line) && !/\b(given|when|then)\b/i.test(line.replace(/^and\b/i, ''))) {
             if (cur && lastField) {
                 const txt = line.replace(/^and\b[\s:,]*/i, '').replace(/[\s,;.]+$/, '');
                 cur[lastField] = cur[lastField] ? cur[lastField] + ' and ' + txt : txt;
+            } else {
+                storyLines.push(line);
             }
             continue;
         }
@@ -4188,7 +4191,11 @@ const reviewEls = {
     acBlock: document.getElementById('review-ac-block'),
     acList: document.getElementById('review-ac'),
     summary: document.getElementById('review-summary'),
-    sequence: document.getElementById('review-sequence')
+    sequence: document.getElementById('review-sequence'),
+    diff: document.getElementById('review-diff'),
+    beforeBody: document.getElementById('review-before-body'),
+    reasonsBlock: document.getElementById('review-reasons-block'),
+    reasonsList: document.getElementById('review-reasons')
 };
 
 // --- Step 3 team-signoff gate ---
@@ -4221,6 +4228,116 @@ function allSignedOff() {
         syncSignoffUI();
     });
 })();
+
+// --- Step 3 design diff: before (what exists) vs after (under review) ---
+
+// The entry under review: the SUT participant + the method the system-caller
+// entry row targets. Null when no SUT/entry is set.
+function resolveReviewEntry() {
+    const sut = findParticipant(state.sutParticipantId);
+    if (!sut) return null;
+    const entry = (state.sequence || []).find(s =>
+        s.kind === STEP_KIND.CALL && isSystemCaller(s.callerId));
+    if (!entry) return null;
+    const m = (sut.methods || []).find(mm => mm.id === entry.methodId);
+    return m ? { sut, methodName: m.name } : null;
+}
+
+// "Why this design" — the analyzer's variancePlan, surfaced at review time
+// instead of being used only for sidecar export. Hidden when no variance.
+function renderReviewReasons() {
+    if (!reviewEls.reasonsBlock || !reviewEls.reasonsList) return;
+    const plans = (state.variancePlan || []).filter(v => v && v.axis);
+    if (plans.length === 0) {
+        reviewEls.reasonsBlock.classList.add('hidden');
+        return;
+    }
+    reviewEls.reasonsBlock.classList.remove('hidden');
+    reviewEls.reasonsList.innerHTML = '';
+    for (const v of plans) {
+        const li = document.createElement('li');
+        const mapping = Array.isArray(v.mapping) && v.mapping.length
+            ? ` <span class="muted">(${v.mapping.length} rule row${v.mapping.length === 1 ? '' : 's'})</span>`
+            : '';
+        li.innerHTML = `<b>${escapeHtml(v.axis)}</b> — <code>${escapeHtml(v.pattern || '?')}</code>: `
+            + `${escapeHtml(v.rationale || '')}${mapping}`;
+        reviewEls.reasonsList.appendChild(li);
+    }
+}
+
+// Before = the current status of this feature. Brownfield (the entry method
+// already exists in the connected project) → derive its what-IS slice
+// server-side and draw it. Greenfield → a slim banner; everything after is
+// new. Derive failures fall back to the banner — the review never blocks.
+const reviewBeforeCache = Object.create(null);
+
+function greenfieldBannerHtml() {
+    const existing = [
+        ...(state.participants || []).filter(p => p && p.existingFqn).map(p => p.existingFqn),
+        ...(state.entities || []).filter(e => e && e.existingFqn).map(e => e.existingFqn)
+    ];
+    const builds = existing.length
+        ? `<div class="review-before-reuse">Builds on existing: ${existing.map(f => `<code>${escapeHtml(f)}</code>`).join(', ')}</div>`
+        : '';
+    return `<div class="review-before-banner">Greenfield — this flow doesn't exist yet. Everything in the proposed design is new.${builds}</div>`;
+}
+
+function renderReviewBefore() {
+    const body = reviewEls.beforeBody;
+    if (!body || !reviewEls.diff) return;
+    const showBanner = (extraNote) => {
+        reviewEls.diff.classList.remove('has-before');
+        body.innerHTML = greenfieldBannerHtml()
+            + (extraNote ? `<div class="review-before-note muted">${escapeHtml(extraNote)}</div>` : '');
+    };
+
+    const entry = resolveReviewEntry();
+    const catalog = state.codebaseCatalog;
+    const fqn = entry && entry.sut.existingFqn ? entry.sut.existingFqn.trim() : null;
+    const catalogType = (fqn && catalog && Array.isArray(catalog.types))
+        ? catalog.types.find(t => t.fqn === fqn)
+        : null;
+    const existsInCode = !!(state.projectPath && catalogType
+        && (catalogType.publicMethods || []).some(m => m.name === entry.methodName));
+    if (!existsInCode) { showBanner(); return; }
+
+    const key = `${state.projectPath}::${entry.sut.name}#${entry.methodName}`;
+    const drawModel = (model) => {
+        reviewEls.diff.classList.add('has-before');
+        body.innerHTML = '';
+        renderSeqSvg(model, body, '#64748b',
+            { line: '#cbd5e1', ink: '#1f2937', muted: '#64748b', box: '#f1f5f9' });
+    };
+    const cached = reviewBeforeCache[key];
+    if (cached) {
+        if (cached.model) drawModel(cached.model);
+        else showBanner(cached.note);
+        return;
+    }
+
+    body.innerHTML = '<div class="muted">Deriving the current code…</div>';
+    fetch('/api/code-derive-by-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            projectPath: state.projectPath,
+            entryClass: entry.sut.name,
+            entryMethod: entry.methodName
+        })
+    })
+        .then(async res => {
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `derive failed (${res.status})`);
+            reviewBeforeCache[key] = { model: data.sliceModel };
+            drawModel(data.sliceModel);
+        })
+        .catch(err => {
+            const note = `Couldn't derive the current code: ${err.message}`;
+            reviewBeforeCache[key] = { note };
+            console.warn('[wizard] before-derive failed:', err);
+            showBanner(note);
+        });
+}
 
 function enterStep3() {
     reviewEls.story.textContent = state.userStory || '(no story given)';
@@ -4288,6 +4405,8 @@ function enterStep3() {
     `;
 
     renderSequenceDiagram(state.sequence, reviewEls.sequence);
+    renderReviewReasons();
+    renderReviewBefore();
     syncSignoffUI();
 }
 

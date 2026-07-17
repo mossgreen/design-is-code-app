@@ -28,7 +28,8 @@ class CodeDesignDiffPetclinicRoundTripTest {
     private final CodeDesignDiffService pipeline = new CodeDesignDiffService(
             new CallGraphDeriver(), new BindingTimeClassifier(), new DesignDiffer(),
             new DesignDeltaEmitter(), new DesignService(),
-            new SliceRenderer(), new DeltaRenderer());
+            new SliceRenderer(), new DeltaRenderer(),
+            new CounterfactualRenderer(), new WhyRenderer());
 
     @Test
     void act2VarianceTicketGeneratesRegenArtifacts() {
@@ -65,5 +66,11 @@ class CodeDesignDiffPetclinicRoundTripTest {
         assertGolden("CancelVisitService.puml", result.artifacts().puml());
         assertGolden("CancellationFeePolicyResolver.decision.md",
                 result.artifacts().sidecars().get(0).content());
+
+        // Stage-D before/after review pair
+        assertNotNull(result.oldWayModel());
+        assertNotNull(result.newWayModel());
+        assertGolden("oldway-act2.puml", result.oldWayPuml());
+        assertGolden("why-act2.md", result.whyMarkdown());
     }
 }

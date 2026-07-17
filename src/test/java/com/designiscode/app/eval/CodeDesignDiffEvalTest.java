@@ -7,6 +7,8 @@ import com.designiscode.app.dto.VariantRequest;
 import com.designiscode.app.service.BindingTimeClassifier;
 import com.designiscode.app.service.CallGraphDeriver;
 import com.designiscode.app.service.CodeDesignDiffService;
+import com.designiscode.app.service.CounterfactualRenderer;
+import com.designiscode.app.service.WhyRenderer;
 import com.designiscode.app.service.DeltaRenderer;
 import com.designiscode.app.service.DesignDeltaEmitter;
 import com.designiscode.app.service.DesignDiffer;
@@ -54,7 +56,8 @@ class CodeDesignDiffEvalTest {
     private final CodeDesignDiffService pipeline = new CodeDesignDiffService(
             new CallGraphDeriver(), new BindingTimeClassifier(), new DesignDiffer(),
             new DesignDeltaEmitter(), new DesignService(),
-            new SliceRenderer(), new DeltaRenderer());
+            new SliceRenderer(), new DeltaRenderer(),
+            new CounterfactualRenderer(), new WhyRenderer());
 
     @Test
     void appliesRequestDynamicVariantToARealProject() throws Exception {

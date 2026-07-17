@@ -21,5 +21,10 @@ public record DiffResult(
         ApplyArtifacts artifacts,           // null unless disposition == generate and validation passed
         String sliceMarkdown,               // human-readable what-IS slice (PR body, Stage-D review)
         String slicePuml,                   // what-IS sequence diagram (read-only view, not a design artifact)
-        String deltaMarkdown                // human-readable delta (PR body, Stage-D review)
+        String deltaMarkdown,               // human-readable delta (PR body, Stage-D review)
+        // Before/after review pair — null unless disposition == generate and validation passed.
+        DiagramModel oldWayModel,           // naive-patch counterfactual (ticket as a branch)
+        String oldWayPuml,                  // same, as puml (golden + copy button)
+        DiagramModel newWayModel,           // the target design's flow arrows
+        String whyMarkdown                  // deterministic "why the new design" rationale
 ) {}

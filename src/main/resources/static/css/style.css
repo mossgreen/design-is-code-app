@@ -3157,6 +3157,58 @@ button.small {
     overflow-x: auto;
 }
 
+/* Step 3 design diff — before (current status) vs after (proposed design).
+ * Stacked by default; side-by-side on wide screens only when a before
+ * DIAGRAM exists (.has-before). The greenfield banner stays full-width. */
+.review-diff {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+@media (min-width: 1500px) {
+    .review-diff.has-before {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+    }
+}
+.review-diff-col {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-top-width: 3px;
+    border-radius: 6px;
+    padding: 0.7rem 0.8rem;
+    background: #fff;
+    overflow-x: auto;
+}
+#review-before-col { border-top-color: #94a3b8; }
+.review-diff-col:last-child { border-top-color: #34d399; }
+.review-diff-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.5rem;
+}
+.review-diff-title.before { color: #64748b; }
+.review-diff-title.after { color: #047857; }
+/* the after diagram already carries its own frame — avoid a double border */
+.review-diff-col .review-sequence { border: none; padding: 0; }
+
+.review-before-banner {
+    padding: 0.55rem 0.7rem;
+    background: #f8fafc;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    color: #475569;
+    font-size: 0.9rem;
+}
+.review-before-reuse { margin-top: 0.4rem; font-size: 0.85rem; }
+.review-before-note { margin-top: 0.4rem; font-size: 0.8rem; }
+
+.review-reasons { margin: 0; padding-left: 1.2rem; }
+.review-reasons li { margin: 0.3rem 0; }
+
 .review-sequence .seq-empty {
     color: #9ca3af;
 }

@@ -371,13 +371,27 @@
             </div>
 
             <div class="review-block">
-                <div class="review-label">Summary</div>
-                <div id="review-summary" class="review-summary"></div>
+                <div class="review-label">Design diff</div>
+                <div id="review-diff" class="review-diff">
+                    <div class="review-diff-col" id="review-before-col">
+                        <div class="review-diff-title before">Before — current status</div>
+                        <div id="review-before-body"></div>
+                    </div>
+                    <div class="review-diff-col">
+                        <div class="review-diff-title after">After — proposed design (under review)</div>
+                        <div id="review-sequence" class="review-sequence"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="review-block hidden" id="review-reasons-block">
+                <div class="review-label">Why this design</div>
+                <ul id="review-reasons" class="review-reasons"></ul>
             </div>
 
             <div class="review-block">
-                <div class="review-label">Sequence</div>
-                <div id="review-sequence" class="review-sequence"></div>
+                <div class="review-label">Summary</div>
+                <div id="review-summary" class="review-summary"></div>
             </div>
 
             <div class="review-block">
@@ -506,6 +520,7 @@
         </section>
     </main>
 
+    <script src="/js/diagram-svg.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>

@@ -60,6 +60,32 @@ class SliceRendererTest {
     }
 
     @Test
+    void act2ModelMirrorsPumlArrows() {
+        // The drawn diagram and the puml text must never disagree: same arrow
+        // count, same order — entry first, final return last.
+        DerivedSlice slice = act2();
+        com.designiscode.app.dto.DiagramModel m = renderer.renderModel(slice);
+        String puml = renderer.renderPuml(slice);
+
+        long pumlArrows = puml.lines().filter(l -> l.contains(" -> ") || l.contains(" <-- ") || l.contains(" --> ")).count();
+        assertEquals(pumlArrows, m.steps().size(), "model steps == puml arrows");
+
+        var first = m.steps().get(0);
+        assertEquals("call", first.kind());
+        assertEquals("[*]", first.from());
+        assertEquals("CancelVisitService", first.to());
+        assertTrue(first.label().startsWith("cancel("));
+
+        var last = m.steps().get(m.steps().size() - 1);
+        assertEquals("return", last.kind());
+        assertEquals("[*]", last.to());
+        assertTrue(last.label().endsWith("CancellationResult"));
+
+        assertTrue(m.participants().containsAll(
+                java.util.List.of("[*]", "CancelVisitService", "OwnerLoader", "CancellationGuard")));
+    }
+
+    @Test
     void flattensMultilineArgsForDisplay() {
         // Anonymous-class args span lines in source (step-0 probe: RealWorld's
         // ResponseEntity.ok(new HashMap...)); display must be one bounded line.

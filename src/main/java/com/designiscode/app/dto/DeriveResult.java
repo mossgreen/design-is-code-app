@@ -8,5 +8,6 @@ package com.designiscode.app.dto;
 public record DeriveResult(
         DerivedSlice slice,
         String sliceMarkdown,
-        String slicePuml
+        String slicePuml,
+        DiagramModel sliceModel   // renderable what-IS diagram (wizard Step 3 "before")
 ) {}

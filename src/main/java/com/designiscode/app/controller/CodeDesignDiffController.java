@@ -1,6 +1,7 @@
 package com.designiscode.app.controller;
 
 import com.designiscode.app.dto.CodeApplyRequest;
+import com.designiscode.app.dto.CodeDeriveByPathRequest;
 import com.designiscode.app.dto.CodeDiffRequest;
 import com.designiscode.app.service.CodeDesignDiffService;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +32,18 @@ public class CodeDesignDiffController {
     public ResponseEntity<?> derive(@RequestBody CodeDiffRequest r) {
         try {
             return ResponseEntity.ok(pipeline.derive(r.sources(), r.entryClass(), r.entryMethod()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "derive failed: " + e.getMessage()));
+        }
+    }
+
+    /** {@link #derive} with sources read server-side from the project path (wizard Step-3 "before"). */
+    @PostMapping("/code-derive-by-path")
+    public ResponseEntity<?> deriveByPath(@RequestBody CodeDeriveByPathRequest r) {
+        try {
+            return ResponseEntity.ok(pipeline.deriveByPath(r.projectPath(), r.entryClass(), r.entryMethod()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {

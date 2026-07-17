@@ -176,7 +176,7 @@ public class DesignDeltaEmitter {
      * signature. Null when the family method wasn't resolved (renderMethod then
      * falls back to the generic {@code apply(input: Object): Object}).
      */
-    private MethodSig strategyMethod(DerivedSlice slice, DesignDelta delta) {
+    static MethodSig strategyMethod(DerivedSlice slice, DesignDelta delta) {
         Set<String> family = variantFamily(delta);
         return slice.callSites().stream()
                 .filter(cs -> cs.calleeMethodSig() != null && family.contains(cs.calleeType()))
@@ -186,14 +186,14 @@ public class DesignDeltaEmitter {
     }
 
     /** The variance family: the strategy interface plus every permit class. */
-    private Set<String> variantFamily(DesignDelta delta) {
+    static Set<String> variantFamily(DesignDelta delta) {
         Set<String> family = new HashSet<>(delta.permits());
         family.add(delta.strategyInterface());
         return family;
     }
 
     /** The orchestrator's behavioral collaborator calls, in body order (resolved only). */
-    private List<CallSite> behavioralCallSites(DerivedSlice slice) {
+    static List<CallSite> behavioralCallSites(DerivedSlice slice) {
         return slice.callSites().stream()
                 .filter(cs -> "interface".equals(cs.calleeKind()) || "class".equals(cs.calleeKind()))
                 .filter(cs -> cs.calleeType() != null)
@@ -215,7 +215,7 @@ public class DesignDeltaEmitter {
     }
 
     /** Strip generics and package from a type: {@code java.util.List<Order>} → {@code List}. */
-    private static String simpleName(String type) {
+    static String simpleName(String type) {
         if (type == null) return null;
         String t = type;
         int lt = t.indexOf('<');

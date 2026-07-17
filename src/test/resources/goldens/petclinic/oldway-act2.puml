@@ -1,0 +1,27 @@
+@startuml
+' the old way — initiator as a branch in CancelVisitService (counterfactual for review; never generated)
+
+participant CancelVisitService
+participant OwnerLoader
+participant CancellationGuard
+participant StandardCancellationFee
+participant ClinicInitiatedFee
+participant Owner
+participant OwnerRepository
+
+[*] -> CancelVisitService : cancel(ownerId, petId, visitId, initiator)
+CancelVisitService -> OwnerLoader : load(ownerId)
+CancelVisitService <-- OwnerLoader : owner : Owner
+CancelVisitService -> CancellationGuard : check(owner, petId, visitId)
+CancelVisitService <-- CancellationGuard : hoursUntilVisit : long
+alt initiator == owner
+CancelVisitService -> StandardCancellationFee : feeFor(hoursUntilVisit)
+CancelVisitService <-- StandardCancellationFee : fee : BigDecimal
+else initiator == clinic
+CancelVisitService -> ClinicInitiatedFee : feeFor(hoursUntilVisit)
+CancelVisitService <-- ClinicInitiatedFee : fee : BigDecimal
+end
+CancelVisitService -> Owner : removeVisit(petId, visitId)
+CancelVisitService -> OwnerRepository : save(owner)
+[*] <-- CancelVisitService : result : CancellationResult
+@enduml

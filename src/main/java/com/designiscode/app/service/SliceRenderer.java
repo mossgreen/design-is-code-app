@@ -3,6 +3,7 @@ package com.designiscode.app.service;
 import com.designiscode.app.dto.DerivedSlice;
 import com.designiscode.app.dto.DerivedSlice.CallSite;
 import com.designiscode.app.dto.DerivedSlice.Param;
+import com.designiscode.app.dto.DiagramModel;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -157,6 +158,54 @@ public class SliceRenderer {
         }
         p.append("@enduml\n");
         return p.toString();
+    }
+
+    // --- diagram model (what-IS view as data — same arrows as renderPuml) ---
+
+    /**
+     * The what-IS flow as a renderable {@link DiagramModel}: identical arrow
+     * selection to {@link #renderPuml} so the drawn diagram and the puml text
+     * never disagree. Read-only view; NOT a DisC design artifact.
+     */
+    public DiagramModel renderModel(DerivedSlice slice) {
+        List<CallSite> arrows = pumlArrows(slice);
+
+        List<DiagramModel.Step> steps = new java.util.ArrayList<>();
+        java.util.Set<String> participants = new java.util.LinkedHashSet<>();
+        participants.add("[*]");
+        participants.add(slice.sut());
+        arrows.forEach(cs -> participants.add(cs.calleeType()));
+
+        String entryArgs = slice.entryMethod().params().stream()
+                .map(Param::name).collect(Collectors.joining(", "));
+        steps.add(DiagramModel.Step.call("[*]", slice.sut(),
+                slice.entryMethod().name() + "(" + entryArgs + ")"));
+        for (CallSite cs : arrows) {
+            steps.add(DiagramModel.Step.call(slice.sut(), cs.calleeType(),
+                    cs.method() + "(" + flatArgs(cs) + ")"));
+            String returns = cs.calleeMethodSig() == null ? null : cs.calleeMethodSig().returns();
+            if (cs.resultName() != null && returns != null && !"void".equals(returns)) {
+                steps.add(DiagramModel.Step.ret(cs.calleeType(), slice.sut(),
+                        cs.resultName() + " : " + CallGraphDeriver.simpleType(returns)));
+            }
+        }
+        String ret = slice.entryMethod().returns();
+        if (ret != null && !ret.isBlank() && !"void".equals(ret)) {
+            steps.add(DiagramModel.Step.ret(slice.sut(), "[*]",
+                    "result : " + CallGraphDeriver.simpleType(ret)));
+        }
+        return new DiagramModel(List.copyOf(participants), steps);
+    }
+
+    /** The call sites both renderPuml and renderModel draw, in body order. */
+    private List<CallSite> pumlArrows(DerivedSlice slice) {
+        return slice.callSites().stream()
+                .filter(cs -> {
+                    SiteKind k = classify(slice, cs);
+                    if (k == SiteKind.UNRESOLVED) return false;
+                    return k == SiteKind.COLLABORATOR || !isBareAccessor(cs);
+                })
+                .toList();
     }
 
     // --- helpers ---

@@ -36,10 +36,24 @@
         overflow:auto; font-size:12.5px; }
   .muted { color:var(--muted); } .err { color:#f87171; }
   code { color:#c7d2fe; }
+  /* before/after review pair */
+  .ba-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:10px; }
+  .ba-col { border:1px solid var(--line); border-top-width:3px; border-radius:8px;
+            background:#0b1220; padding:10px; min-width:0; }
+  .ba-col.old { border-top-color:#f87171; } .ba-col.new { border-top-color:#34d399; }
+  .ba-title { font-size:12px; font-weight:700; margin-bottom:6px; }
+  .ba-col.old .ba-title { color:#f87171; } .ba-col.new .ba-title { color:#34d399; }
+  .ba-svg { overflow-x:auto; }
+  .why h4 { margin:0 0 8px; }
+  .why ul { margin:6px 0 10px; padding-left:20px; } .why li { margin:2px 0; }
+  @media (max-width:1500px) { .ba-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
-<header><b>DisC</b> <span>· Code→Design diff — review the design delta before it touches code</span></header>
+<!-- Dev harness over the A–E pipeline endpoints. Not a product surface: the
+     story-driven review lives in the wizard's Step 3; the ticket-driven review
+     venue is the design-first PR body (see TODO.md strategy register). -->
+<header><b>DisC</b> <span>· Code→Design diff — pipeline dev harness (Stage D preview)</span></header>
 <main>
   <section class="form">
     <label>Related files (separate with a line: <code>// ===</code>)</label>
@@ -87,6 +101,7 @@ public class CheckoutService {
   <section class="out" id="out"><p class="muted">Fill the ticket on the left and preview the design diff.</p></section>
 </main>
 
+<script src="/js/diagram-svg.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let lastArtifacts = null;
@@ -142,6 +157,14 @@ function render(d) {
     if (d.warnings && d.warnings.length) {
       html += `<div class="card" style="border-color:var(--park)"><b style="color:var(--park)">Before you apply</b><ul>${d.warnings.map(v=>`<li>${esc(v)}</li>`).join('')}</ul></div>`;
     }
+    if (d.oldWayModel && d.newWayModel) {
+      html += `<div class="card"><b>Two futures for this ticket</b> <span class="muted">— same story, different structure</span>
+        <div class="ba-grid">
+          <div class="ba-col old"><div class="ba-title">The old way — patch another branch in</div><div class="ba-svg" id="svg-old"></div></div>
+          <div class="ba-col new"><div class="ba-title">The DisC way — add a variant, keep the flow linear</div><div class="ba-svg" id="svg-new"></div></div>
+        </div></div>`;
+      html += `<div class="card why">${mdToHtml(d.whyMarkdown)}</div>`;
+    }
     html += `<div class="card"><b>Design delta</b> <span class="muted">— review at the altitude of leverage</span>`;
     html += `<table class="changes"><thead><tr><th>op</th><th>element</th><th>name</th><th>detail</th></tr></thead><tbody>`;
     for (const c of d.delta.changes) {
@@ -160,6 +183,8 @@ function render(d) {
     }
   }
   $('out').innerHTML = html;
+  if ($('svg-old')) renderSeqSvg(d.oldWayModel, $('svg-old'), '#f87171');
+  if ($('svg-new')) renderSeqSvg(d.newWayModel, $('svg-new'), '#34d399');
   const ab = $('applyBtn'); if (ab) ab.addEventListener('click', apply);
 }
 
@@ -182,6 +207,29 @@ async function apply() {
 }
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// renderSeqSvg lives in /js/diagram-svg.js (shared with the wizard's Step 3).
+
+// Minimal renderer for the deterministic why-markdown: ##/bullets/bold/code only.
+function mdToHtml(md) {
+  const inline = s => esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', inList = false;
+  for (const line of (md || '').split('\n')) {
+    if (line.startsWith('- ')) {
+      if (!inList) { html += '<ul>'; inList = true; }
+      html += `<li>${inline(line.slice(2))}</li>`;
+      continue;
+    }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (line.startsWith('## ')) html += `<h4>${inline(line.slice(3))}</h4>`;
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+
 $('preview').addEventListener('click', preview);
 </script>
 </body>

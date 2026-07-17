@@ -7,6 +7,7 @@ import com.designiscode.app.dto.DerivedSlice;
 import com.designiscode.app.dto.DesignDelta;
 import com.designiscode.app.dto.DesignRequest;
 import com.designiscode.app.dto.DesignResult;
+import com.designiscode.app.dto.DiagramModel;
 import com.designiscode.app.dto.DiffResult;
 import com.designiscode.app.dto.VariantRequest;
 import org.springframework.stereotype.Service;
@@ -33,10 +34,13 @@ public class CodeDesignDiffService {
     private final DesignService designService;
     private final SliceRenderer sliceRenderer;
     private final DeltaRenderer deltaRenderer;
+    private final CounterfactualRenderer counterfactualRenderer;
+    private final WhyRenderer whyRenderer;
 
     public CodeDesignDiffService(CallGraphDeriver deriver, BindingTimeClassifier classifier,
                                  DesignDiffer differ, DesignDeltaEmitter emitter, DesignService designService,
-                                 SliceRenderer sliceRenderer, DeltaRenderer deltaRenderer) {
+                                 SliceRenderer sliceRenderer, DeltaRenderer deltaRenderer,
+                                 CounterfactualRenderer counterfactualRenderer, WhyRenderer whyRenderer) {
         this.deriver = deriver;
         this.classifier = classifier;
         this.differ = differ;
@@ -44,12 +48,49 @@ public class CodeDesignDiffService {
         this.designService = designService;
         this.sliceRenderer = sliceRenderer;
         this.deltaRenderer = deltaRenderer;
+        this.counterfactualRenderer = counterfactualRenderer;
+        this.whyRenderer = whyRenderer;
     }
 
     /** Stage A + rendering only: the what-IS view for an additive ticket. */
     public DeriveResult derive(List<String> sources, String entryClass, String entryMethod) {
         DerivedSlice slice = deriver.derive(sources, entryClass, entryMethod);
-        return new DeriveResult(slice, sliceRenderer.renderMarkdown(slice), sliceRenderer.renderPuml(slice));
+        return new DeriveResult(slice, sliceRenderer.renderMarkdown(slice),
+                sliceRenderer.renderPuml(slice), sliceRenderer.renderModel(slice));
+    }
+
+    /**
+     * {@link #derive} with sources read server-side: every {@code *.java} under
+     * {@code <projectPath>/src/main/java} (the same convention as the scan and
+     * the CLI scripts). For clients that hold a project path, not file contents
+     * — the wizard's Step-3 "before" view.
+     */
+    public DeriveResult deriveByPath(String projectPath, String entryClass, String entryMethod) {
+        if (projectPath == null || projectPath.isBlank()) {
+            throw new IllegalArgumentException("projectPath is required");
+        }
+        java.nio.file.Path root = java.nio.file.Path.of(projectPath, "src", "main", "java");
+        if (!java.nio.file.Files.isDirectory(root)) {
+            throw new IllegalArgumentException("no src/main/java under " + projectPath);
+        }
+        List<String> sources;
+        try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+            sources = paths
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .sorted()
+                    .map(p -> {
+                        try {
+                            return java.nio.file.Files.readString(p);
+                        } catch (java.io.IOException e) {
+                            return null; // unreadable file: skip, don't kill the derive
+                        }
+                    })
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("cannot read sources under " + projectPath + ": " + e.getMessage());
+        }
+        return derive(sources, entryClass, entryMethod);
     }
 
     /**
@@ -65,13 +106,22 @@ public class CodeDesignDiffService {
         DesignDeltaValidator.Report report = DesignDeltaValidator.validate(slice, request, delta);
 
         ApplyArtifacts artifacts = null;
+        DiagramModel oldWayModel = null;
+        String oldWayPuml = null;
+        DiagramModel newWayModel = null;
+        String whyMarkdown = null;
         if (DesignDelta.GENERATE.equals(delta.disposition()) && report.ok()) {
             artifacts = emitter.emit(slice, delta);
+            oldWayModel = counterfactualRenderer.oldWayModel(slice, delta, classification);
+            oldWayPuml = counterfactualRenderer.oldWayPuml(slice, delta, classification);
+            newWayModel = counterfactualRenderer.newWayModel(slice, delta);
+            whyMarkdown = whyRenderer.renderMarkdown(slice, delta, classification);
         }
         return new DiffResult(delta.disposition(), classification, delta,
                 report.violations(), report.warnings(), artifacts,
                 sliceRenderer.renderMarkdown(slice), sliceRenderer.renderPuml(slice),
-                deltaRenderer.renderMarkdown(delta, classification, report.warnings()));
+                deltaRenderer.renderMarkdown(delta, classification, report.warnings()),
+                oldWayModel, oldWayPuml, newWayModel, whyMarkdown);
     }
 
     /** Write the emitted .puml + sidecars into {@code <projectPath>/design/}. */
