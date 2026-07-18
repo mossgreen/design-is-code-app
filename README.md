@@ -37,7 +37,21 @@ Install from [claude.com/product/claude-code](https://www.claude.com/product/cla
 
 This is separate from your Anthropic API key — Claude Code uses your interactive session, not a raw key.
 
-### 3. A Java/Spring project to save designs into · required
+### 3. The DisC codegen plugin · required
+
+Step 2's design validation and Step 4's code generation run the DisC plugin
+inside Claude Code. Install it once:
+
+```sh
+claude plugin marketplace add mossgreen/design-is-code
+claude plugin install design-is-code@mossgreen-design-is-code --scope user
+```
+
+Verify with `/plugin` in a Claude Code session — check the Installed tab.
+Without it, Step 2's validation soft-fails and Step 4's **Run it for me** has
+nothing to run.
+
+### 4. A Java/Spring project to save designs into · required
 
 DisC Studio writes the `.puml` and any `.decision.md` sidecars into your project's `design/` folder, alongside the source code being designed. It also reads the project's package layout to suggest target packages on Step 4.
 
@@ -46,9 +60,13 @@ DisC Studio writes the `.puml` and any `.decision.md` sidecars into your project
 git clone https://github.com/spring-projects/spring-petclinic.git
 ```
 
-### 4. A modern browser · required
+### 5. A modern browser · required
 
 Chrome, Firefox, Safari, or Edge. The UI is a single-page web app on `localhost:8080`. No browser extensions or plugins required.
+
+> **The 15-minute bar:** from a fresh clone, this page alone should get you to
+> your first reviewed design in under 15 minutes. If you stall anywhere,
+> that's a bug in this README — please open an issue saying where.
 
 ## Quick start — run from a Release
 
@@ -71,7 +89,7 @@ The redistributable is a single fat jar. Same command on every platform.
 
 3. Open <http://localhost:8080> in any browser. Click the **Connect project** chip in the header and paste the absolute path to your Java project — e.g. `/Users/you/projects/your-app` on macOS/Linux, `C:\Users\you\projects\your-app` on Windows.
 
-4. Walk through the four wizard steps — write the user story + acceptance criteria, review the analyzed participants, refine the sequence, and save. The `.puml` (and any `.decision.md` sidecars) land in your project's `design/` folder.
+4. Walk through the four wizard steps — **Connect** your project, write the story + acceptance criteria and **Analyze** (participants, sequence, live diagram), review the **design diff** at Sign-off (before = what your code does today, after = the proposal, plus why), then **Generate**. The `.puml` (and any `.decision.md` sidecars) land in your project's `design/` folder.
 
 Stop the app with `Ctrl-C` in the terminal.
 
