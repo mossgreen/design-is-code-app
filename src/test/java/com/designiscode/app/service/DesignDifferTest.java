@@ -103,6 +103,44 @@ class DesignDifferTest {
     }
 
     @Test
+    void oneRowMappingWithExistingBehaviorAsksForTotality() {
+        // Code already has DomesticTax, but the ticket maps only the new key —
+        // the family is real, the TABLE is incomplete. Never generate; ask for
+        // the missing row(s), citing the code evidence.
+        DerivedSlice slice = deriver.derive(
+                List.of(ORDER, MONEY, TAX_IFACE, DOMESTIC_TAX, CHECKOUT_IFACE), "CheckoutService", "checkout");
+        BindingClassification bc = classifier.classify(slice, "order.destination", null);
+        VariantRequest req = new VariantRequest("TaxCalculator", "InternationalTax",
+                List.of(new MappingRow("INTERNATIONAL", "InternationalTax")), null);
+
+        DesignDelta d = differ.diff(slice, bc, req);
+
+        assertEquals(DesignDelta.ASK, d.disposition());
+        assertTrue(d.reason().contains("missing mapping row"), d.reason());
+        assertTrue(d.reason().contains("DomesticTax"), d.reason());
+    }
+
+    @Test
+    void oneRowMappingWithNoKnownVariantsAsksAdditiveOrMissingSources() {
+        // No implementation of the interface anywhere in the sources: a
+        // single-variant "family" has nothing to choose — either the ticket is
+        // additive (plain call now; family arrives with the second variant's
+        // ticket via REGEN) or the sources are incomplete. Never generate.
+        DerivedSlice slice = deriver.derive(
+                List.of(ORDER, MONEY, TAX_IFACE, CHECKOUT_IFACE), "CheckoutService", "checkout");
+        BindingClassification bc = classifier.classify(slice, "order.destination", null);
+        VariantRequest req = new VariantRequest("TaxCalculator", "InternationalTax",
+                List.of(new MappingRow("INTERNATIONAL", "InternationalTax")), null);
+
+        DesignDelta d = differ.diff(slice, bc, req);
+
+        assertEquals(DesignDelta.ASK, d.disposition());
+        assertTrue(d.reason().contains("single-variant family"), d.reason());
+        assertTrue(d.reason().contains("additive"), d.reason());
+        assertTrue(d.reason().contains("missing from the provided sources"), d.reason());
+    }
+
+    @Test
     void fallsBackToAddOnlyUpdateWhenBodyNotFullyCaptured() {
         // a branch in the entry body → Stage A can't fully represent the flow → no regen
         String branching = """

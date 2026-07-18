@@ -57,6 +57,31 @@ public class DesignDiffer {
                     + "' not found among " + slice.sut() + "'s call sites");
         }
         CallSite vp = vpOpt.get();
+
+        // A one-row mapping is a single-variant "family" — nothing to choose,
+        // so the abstraction is never generated. Which ask depends on evidence:
+        // other behavior already in code → the mapping is not total (finish the
+        // table); no known variants → the ticket is additive, or the sources
+        // are incomplete. Anticipated variance is explicitly not grounds — the
+        // future family arrives as a cheap REGEN diff when its ticket does.
+        if (req.mapping().size() < 2) {
+            List<String> known = "class".equals(vp.calleeKind())
+                    ? List.of(vp.calleeType())
+                    : vp.calleeImpls();
+            if (!known.isEmpty()) {
+                return parkOrAsk(DesignDelta.ASK, "mapping has a single row, but `" + req.calleeType()
+                        + "` already has behavior in code (" + String.join(", ", known)
+                        + ") — a " + c.bindingTime() + " discriminator selects among ALL values of `"
+                        + c.discriminator() + "`; add the missing mapping row(s) for the value(s) "
+                        + "the existing behavior handles");
+            }
+            return parkOrAsk(DesignDelta.ASK, "single-variant family: only `" + req.newVariant()
+                    + "` is mapped, so there is nothing to resolve. Either this ticket is additive — "
+                    + "keep a plain call and introduce the family when a second variant's ticket "
+                    + "arrives (regeneration makes that a cheap design diff) — or the implementations "
+                    + "of `" + req.calleeType() + "` are missing from the provided sources");
+        }
+
         List<Change> changes = new ArrayList<>();
         String strategyInterface;
         List<String> existingImpls;
