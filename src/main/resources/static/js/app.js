@@ -1291,6 +1291,11 @@ async function runAnalyze(context) {
     hidePluginRefusal();
     state.analyzing = true;
     state.analyzeError = null;
+    state.analyzeAborted = false;
+    state.analyzeRunId = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'run-' + Date.now() + '-' + Math.floor(Math.random() * 1e9);
+    state.analyzeAbort = new AbortController();
     showAnalyzeBanner('Analysing your story…', { spinning: true });
     const t0 = performance.now();
     const elapsed = () => Math.round((performance.now() - t0) / 1000);
@@ -1306,7 +1311,9 @@ async function runAnalyze(context) {
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac, model })
+            body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac, model,
+                runId: state.analyzeRunId }),
+            signal: state.analyzeAbort.signal
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Analyze failed (${res.status})`);
@@ -1369,6 +1376,13 @@ async function runAnalyze(context) {
             // Phase 3: validate against the codegen plugin. One retry on refusal.
             showAnalyzeBanner('Validating the design…', { spinning: true });
             let result = await runValidator();
+            if (state.analyzeAborted) {
+                showAnalyzeBanner(
+                    'Analysis aborted — edit the story or AC and run Analyze again.',
+                    { spinning: false, dismissable: true }
+                );
+                return;
+            }
             if (result && result.refused) {
                 showAnalyzeBanner('Refining the sequence…', { spinning: true });
                 const ok2 = await runSequence(result.message);
@@ -1388,6 +1402,14 @@ async function runAnalyze(context) {
             hideAnalyzeBanner();
         }
     } catch (err) {
+        if (state.analyzeAborted) {
+            console.info(`[wizard] analysis aborted by user after ${elapsed()}s`);
+            showAnalyzeBanner(
+                'Analysis aborted — edit the story or AC and run Analyze again.',
+                { spinning: false, dismissable: true }
+            );
+            return;
+        }
         state.analyzeError = err.message;
         console.error(`[wizard] analyze failed after ${elapsed()}s: ${err.message}`);
         showAnalyzeBanner(
@@ -1414,9 +1436,31 @@ function showAnalyzeBanner(text, opts = {}) {
         action.textContent = 'Dismiss';
         action.classList.remove('hidden');
         action.onclick = hideAnalyzeBanner;
+    } else if (opts.spinning && state.analyzing) {
+        // Every spinning phase is abortable: fix the AC now instead of
+        // waiting minutes for a result you already know you'll discard.
+        action.textContent = 'Abort';
+        action.classList.remove('hidden');
+        action.onclick = abortAnalyze;
     } else {
         action.classList.add('hidden');
         action.onclick = null;
+    }
+}
+
+// Abort the in-flight analyze chain: cancel the browser fetch AND ask the
+// server to kill the claude subprocess (otherwise it burns to completion).
+function abortAnalyze() {
+    if (!state.analyzing) return;
+    state.analyzeAborted = true;
+    console.info('[wizard] aborting analysis…');
+    if (state.analyzeAbort) state.analyzeAbort.abort();
+    if (state.analyzeRunId) {
+        fetch('/api/analyze/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ runId: state.analyzeRunId })
+        }).catch(() => {});
     }
 }
 
@@ -1599,12 +1643,14 @@ async function runSequence(refusalFeedback = null) {
                 permits: e.permits || []
             })),
             model: (document.getElementById('analyze-model') || {}).value || null,
-            refusalFeedback: refusalFeedback || null
+            refusalFeedback: refusalFeedback || null,
+            runId: state.analyzeRunId || null
         };
         const res = await fetch('/api/sequence', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: state.analyzeAbort ? state.analyzeAbort.signal : undefined
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Sequence composition failed (${res.status})`);
@@ -1634,6 +1680,13 @@ async function runSequence(refusalFeedback = null) {
         }
         return true;
     } catch (err) {
+        if (state.analyzeAborted) {
+            showAnalyzeBanner(
+                'Analysis aborted — edit the story or AC and run Analyze again.',
+                { spinning: false, dismissable: true }
+            );
+            return false;
+        }
         showAnalyzeBanner(
             "Couldn't compose the sequence: " + err.message + '. Add steps manually if needed.',
             { spinning: false, error: true, dismissable: true }
@@ -1661,7 +1714,8 @@ async function runValidator() {
                 projectPath: state.projectPath,
                 puml: emitPlantUml(),
                 model: 'claude-haiku-4-5'
-            })
+            }),
+            signal: state.analyzeAbort ? state.analyzeAbort.signal : undefined
         });
         const body = await res.json().catch(() => ({}));
         if (body && body.refused === true) {

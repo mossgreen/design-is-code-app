@@ -56,13 +56,16 @@ public class SequenceService {
 
     private final String promptTemplate;
     private final ObjectMapper json = JsonMapper.builder().build();
+    private final CancelRegistry cancelRegistry;
 
     public SequenceService(
             @Value("${disc.claude.timeout:300}") long timeoutSeconds,
-            @Value("${disc.claude.effort:low}") String effort
+            @Value("${disc.claude.effort:low}") String effort,
+            CancelRegistry cancelRegistry
     ) throws IOException {
         this.timeoutSeconds = timeoutSeconds;
         this.effort = effort;
+        this.cancelRegistry = cancelRegistry;
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
     }
 
@@ -138,7 +141,14 @@ public class SequenceService {
         reader.setDaemon(true);
         reader.start();
 
-        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        String runId = request.runId();
+        if (runId != null && !runId.isBlank()) cancelRegistry.register(runId, process);
+        boolean exited;
+        try {
+            exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        } finally {
+            if (runId != null && !runId.isBlank()) cancelRegistry.unregister(runId);
+        }
         if (!exited) {
             process.destroyForcibly();
             log.warn("sequence composition TIMED OUT after {} ms (model={})",

@@ -81,13 +81,19 @@ public class AnalyzeService {
     private final CatalogRenderer renderer;
     private final ObjectMapper json = JsonMapper.builder().build();
 
+    /** Client-cancellable runs: the subprocess registers under the request's
+     *  runId so POST /api/analyze/cancel can kill it mid-flight. */
+    private final CancelRegistry cancelRegistry;
+
     public AnalyzeService(
             @Value("${disc.catalog.renderer:elided}") String rendererName,
             @Value("${disc.claude.timeout:300}") long timeoutSeconds,
-            @Value("${disc.claude.effort:low}") String effort
+            @Value("${disc.claude.effort:low}") String effort,
+            CancelRegistry cancelRegistry
     ) throws IOException {
         this.timeoutSeconds = timeoutSeconds;
         this.effort = effort;
+        this.cancelRegistry = cancelRegistry;
         this.promptTemplate = loadResource(PROMPT_RESOURCE);
         List<Rule> rules = loadRules();
         this.rulesSection = renderGuidance(rules);
@@ -99,6 +105,12 @@ public class AnalyzeService {
     }
 
     public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria, String model)
+            throws IOException, InterruptedException {
+        return analyze(context, catalog, acceptanceCriteria, model, null);
+    }
+
+    public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria,
+                                       String model, String runId)
             throws IOException, InterruptedException {
         if (context == null || context.isBlank()) {
             throw new IllegalArgumentException("context is required");
@@ -182,7 +194,13 @@ public class AnalyzeService {
         reader.setDaemon(true);
         reader.start();
 
-        boolean exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        if (runId != null && !runId.isBlank()) cancelRegistry.register(runId, process);
+        boolean exited;
+        try {
+            exited = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        } finally {
+            if (runId != null && !runId.isBlank()) cancelRegistry.unregister(runId);
+        }
         if (!exited) {
             process.destroyForcibly();
             log.warn("analyze TIMED OUT after {} ms (model={})",

@@ -41,5 +41,6 @@ public record SequenceRequest(
         List<Map<String, Object>> entities,
         String sut,
         String model,
-        String refusalFeedback
+        String refusalFeedback,
+        String runId   // optional client token; registers the subprocess for POST /api/analyze/cancel
 ) {}

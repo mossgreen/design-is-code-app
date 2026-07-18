@@ -19,6 +19,7 @@ import org.junit.jupiter.api.TestFactory;
 
 import com.designiscode.app.dto.ScanCatalog;
 import com.designiscode.app.service.AnalyzeService;
+import com.designiscode.app.service.CancelRegistry;
 import com.designiscode.app.service.Models;
 import com.designiscode.app.service.ScanService;
 
@@ -98,7 +99,7 @@ class AnalyzerEvalTest {
         String model = resolveModel();
         int runs = resolveRuns();
         double passRate = resolvePassRate();
-        AnalyzeService analyzeService = new AnalyzeService("elided", 300L, "low");
+        AnalyzeService analyzeService = new AnalyzeService("elided", 300L, "low", new CancelRegistry());
         ScanCatalog catalog = new ScanService().scan(projectDir.toString());
 
         Path evalRoot = Path.of("build", "eval");

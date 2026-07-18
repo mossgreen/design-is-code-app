@@ -15,16 +15,27 @@ import java.util.Map;
 public class AnalyzeController {
 
     private final AnalyzeService analyzeService;
+    private final com.designiscode.app.service.CancelRegistry cancelRegistry;
 
-    public AnalyzeController(AnalyzeService analyzeService) {
+    public AnalyzeController(AnalyzeService analyzeService,
+                             com.designiscode.app.service.CancelRegistry cancelRegistry) {
         this.analyzeService = analyzeService;
+        this.cancelRegistry = cancelRegistry;
+    }
+
+    /** Kill an in-flight analyze/sequence subprocess by its client runId. */
+    @PostMapping("/analyze/cancel")
+    public ResponseEntity<?> cancel(@RequestBody Map<String, String> body) {
+        boolean cancelled = cancelRegistry.cancel(body == null ? null : body.get("runId"));
+        return ResponseEntity.ok(Map.of("cancelled", cancelled));
     }
 
     @PostMapping("/analyze")
     public ResponseEntity<?> analyze(@RequestBody AnalyzeRequest request) {
         try {
             return ResponseEntity.ok(analyzeService.analyze(
-                    request.context(), request.catalog(), request.acceptanceCriteria(), request.model()));
+                    request.context(), request.catalog(), request.acceptanceCriteria(), request.model(),
+                    request.runId()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (InterruptedException e) {

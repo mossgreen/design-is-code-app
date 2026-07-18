@@ -10,3 +10,6 @@ disc:
     # Reasoning effort passed to the claude CLI (--effort) for the
     # analyze / sequence / validate calls. Default in code is "low".
     effort: medium
+    # Subprocess cap in seconds (default 300). Medium effort + Opus on a
+    # catalog-grounded prompt regularly needs more than 300s.
+    timeout: 600

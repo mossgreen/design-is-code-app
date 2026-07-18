@@ -25,5 +25,6 @@ public record AnalyzeRequest(
         String context,
         ScanCatalog catalog,
         List<AcRow> acceptanceCriteria,
-        String model
+        String model,
+        String runId   // optional client token; registers the subprocess for POST /api/analyze/cancel
 ) {}
