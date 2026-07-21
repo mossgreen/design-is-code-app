@@ -1307,12 +1307,13 @@ async function runAnalyze(context) {
         const ac = (state.ac || []).filter(r =>
             (r.given || '').trim() || (r.when || '').trim() || (r.then || '').trim());
         const model = (document.getElementById('analyze-model') || {}).value || null;
-        console.info(`[wizard] POST /api/analyze — model=${model || 'default'}, story=${(context || '').length} chars, ac=${ac.length} rows`);
+        const currentFlows = await deriveCurrentFlows(context);
+        console.info(`[wizard] POST /api/analyze — model=${model || 'default'}, story=${(context || '').length} chars, ac=${ac.length} rows, flows=${currentFlows.length}`);
         const res = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ context, catalog: state.codebaseCatalog, acceptanceCriteria: ac, model,
-                runId: state.analyzeRunId }),
+                runId: state.analyzeRunId, currentFlows }),
             signal: state.analyzeAbort.signal
         });
         const data = await res.json();
@@ -1446,6 +1447,61 @@ function showAnalyzeBanner(text, opts = {}) {
         action.classList.add('hidden');
         action.onclick = null;
     }
+}
+
+// --- Update-mode grounding: derive current flows for story-named classes ---
+//
+// When the story names an existing catalog class exactly (e.g. "Update
+// VisitCancellation"), derive that class's what-IS flow server-side and hand
+// the slice markdown to the analyzer as read-only facts — so a variance
+// ticket's design preserves the calls its AC never mentions. Failures
+// degrade to greenfield (empty list); analysis is never blocked.
+
+const currentFlowCache = Object.create(null); // path::Class#method → markdown|null
+
+// Roles whose "methods" are data surface, not behavior to preserve.
+const NON_FLOW_ROLES = new Set(['entity', 'dto', 'enum', 'exception',
+    'domain-primitive', 'value-object', 'repository']);
+
+function detectUpdateTargets(story) {
+    const catalog = state.codebaseCatalog;
+    if (!state.projectPath || !catalog || !Array.isArray(catalog.types)) return [];
+    const tokens = new Set(story.match(/[A-Za-z][A-Za-z0-9]*/g) || []);
+    return catalog.types
+        .filter(t => t && t.name && /^[A-Z]/.test(t.name) && tokens.has(t.name))
+        .filter(t => !NON_FLOW_ROLES.has(t.role))
+        .filter(t => Array.isArray(t.publicMethods) && t.publicMethods.length > 0)
+        .slice(0, 2);
+}
+
+async function deriveCurrentFlows(story) {
+    const targets = detectUpdateTargets(story);
+    const flows = [];
+    for (const t of targets) {
+        for (const m of t.publicMethods.slice(0, 3)) {
+            const key = `${state.projectPath}::${t.name}#${m.name}`;
+            if (!(key in currentFlowCache)) {
+                try {
+                    const res = await fetch('/api/code-derive-by-path', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ projectPath: state.projectPath,
+                            entryClass: t.name, entryMethod: m.name })
+                    });
+                    const data = await res.json();
+                    currentFlowCache[key] = res.ok ? (data.sliceMarkdown || null) : null;
+                } catch (e) {
+                    currentFlowCache[key] = null;
+                }
+            }
+            if (currentFlowCache[key]) flows.push(currentFlowCache[key]);
+        }
+    }
+    if (flows.length) {
+        console.info(`[wizard] update-mode: derived ${flows.length} current flow(s) for `
+            + targets.map(t => t.name).join(', '));
+    }
+    return flows;
 }
 
 // Abort the in-flight analyze chain: cancel the browser fetch AND ask the
@@ -3790,8 +3846,18 @@ function emitPlantUml() {
         if (!name) continue;
         const fqn = (p.existingFqn || '').trim();
         const newMethods = (p.methods || []).filter(m => m.isProposed).map(m => '+' + m.name);
+        // A bound participant that makes calls is an orchestrator whose design
+        // is being changed. REUSE (@class) forbids outgoing call_arrows — the
+        // plugin rightly refuses — so emit the regenerate form instead: its
+        // impl + test are overwritten wholesale from this design. Sound
+        // because the Step-3 dropped-call gate forces the design to show the
+        // complete flow before sign-off (an omitted call would be deleted).
+        const hasOutgoingCalls = state.sequence.some(s =>
+            s.kind === STEP_KIND.CALL && s.callerId === p.id && !isSystemCaller(s.calleeId));
         let stereotype = '';
-        if (fqn && newMethods.length > 0) {
+        if (fqn && hasOutgoingCalls) {
+            stereotype = ` <<@regen:${fqn}>>`;
+        } else if (fqn && newMethods.length > 0) {
             stereotype = ` <<@class:${fqn}, ${newMethods.join(', ')}>>`;
         } else if (fqn) {
             stereotype = ` <<@class:${fqn}>>`;
@@ -3803,7 +3869,7 @@ function emitPlantUml() {
         preludeLines.push(`participant ${name}${stereotype}`);
     }
     if (preludeLines.length > 0) {
-        lines.push("' @disc-classification CREATE (no stereotype), REUSE (@class), UPDATE (@class + +methods)");
+        lines.push("' @disc-classification CREATE (no stereotype), REUSE (@class), UPDATE (@class + +methods), REGEN (@regen — bound orchestrator, overwritten wholesale)");
         for (const line of preludeLines) lines.push(line);
         lines.push('');  // blank line before the sequence interactions
     }
@@ -4254,6 +4320,12 @@ const reviewEls = {
 
 // --- Step 3 team-signoff gate ---
 
+// Sign-off is blocked while the design silently removes calls that exist in
+// the current code (see the dropped-call gate) — until explicitly acknowledged.
+function signoffBlockedByDrops() {
+    return (state.reviewDropped || []).length > 0 && !state.reviewDroppedAck;
+}
+
 function syncSignoffUI() {
     const input = document.getElementById('signoff-team');
     const signed = !!state.teamSignedOff;
@@ -4261,17 +4333,22 @@ function syncSignoffUI() {
 
     const status = document.getElementById('signoff-status');
     if (status) {
-        status.textContent = signed
-            ? 'Team signoff received — ready to generate.'
-            : 'Not yet signed off';
-        status.classList.toggle('complete', signed);
+        if (signoffBlockedByDrops()) {
+            status.textContent = 'Blocked — this design removes existing calls; acknowledge under Design diff first.';
+            status.classList.remove('complete');
+        } else {
+            status.textContent = signed
+                ? 'Team signoff received — ready to generate.'
+                : 'Not yet signed off';
+            status.classList.toggle('complete', signed);
+        }
     }
     const nextBtn = document.getElementById('preview-next');
-    if (nextBtn) nextBtn.disabled = !signed;
+    if (nextBtn) nextBtn.disabled = !allSignedOff();
 }
 
 function allSignedOff() {
-    return !!state.teamSignedOff;
+    return !!state.teamSignedOff && !signoffBlockedByDrops();
 }
 
 (() => {
@@ -4336,9 +4413,72 @@ function greenfieldBannerHtml() {
     return `<div class="review-before-banner">Greenfield — this flow doesn't exist yet. Everything in the proposed design is new.${builds}</div>`;
 }
 
+// --- Dropped-call gate (F3): a proposal must not silently delete calls ---
+//
+// Compare the derived before-flow's calls against the proposed sequence.
+// Anything present in code but absent from the design blocks team sign-off
+// until explicitly acknowledged — deterministic set comparison, no LLM.
+
+function proposedCallSet() {
+    const set = new Set();
+    for (const s of (state.sequence || [])) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+        if (isSystemCaller(s.callerId) || isSystemCaller(s.calleeId)) continue;
+        const callee = findCallee(s.calleeId);
+        if (!callee || !callee.name) continue;
+        const m = findCalleeMethod(s.calleeId, s.methodId);
+        if (m && m.name) set.add(callee.name + '.' + m.name);
+    }
+    return set;
+}
+
+function computeDroppedCalls(beforeModel) {
+    const proposed = proposedCallSet();
+    const dropped = [];
+    for (const s of (beforeModel.steps || [])) {
+        if (s.kind !== 'call' || s.from === '[*]') continue;
+        const method = (s.label || '').split('(')[0];
+        if (!s.to || !method) continue;
+        if (!proposed.has(s.to + '.' + method)) dropped.push(`${s.to}.${s.label}`);
+    }
+    return dropped;
+}
+
+function setDroppedCalls(dropped) {
+    const panel = document.getElementById('review-dropped');
+    const signature = dropped.join('|');
+    if (state.reviewDroppedSig !== signature) {
+        state.reviewDroppedSig = signature;
+        state.reviewDroppedAck = false; // a different drop set needs a fresh acknowledgement
+    }
+    state.reviewDropped = dropped;
+    if (panel) {
+        if (dropped.length === 0) {
+            panel.classList.add('hidden');
+            panel.innerHTML = '';
+        } else {
+            panel.classList.remove('hidden');
+            panel.innerHTML = `
+                <div class="review-dropped-title">⚠ This design REMOVES calls that exist in the current code:</div>
+                <ul>${dropped.map(d => `<li><code>${escapeHtml(d)}</code></li>`).join('')}</ul>
+                <label class="review-dropped-ack">
+                    <input type="checkbox" id="dropped-ack" ${state.reviewDroppedAck ? 'checked' : ''}>
+                    <span>Removing these calls is intended</span>
+                </label>`;
+            const ack = document.getElementById('dropped-ack');
+            if (ack) ack.addEventListener('change', e => {
+                state.reviewDroppedAck = !!e.target.checked;
+                syncSignoffUI();
+            });
+        }
+    }
+    syncSignoffUI();
+}
+
 function renderReviewBefore() {
     const body = reviewEls.beforeBody;
     if (!body || !reviewEls.diff) return;
+    setDroppedCalls([]); // no before, no gate — until a flow is derived below
     const showBanner = (extraNote) => {
         reviewEls.diff.classList.remove('has-before');
         body.innerHTML = greenfieldBannerHtml()
@@ -4347,20 +4487,34 @@ function renderReviewBefore() {
 
     const entry = resolveReviewEntry();
     const catalog = state.codebaseCatalog;
-    const fqn = entry && entry.sut.existingFqn ? entry.sut.existingFqn.trim() : null;
-    const catalogType = (fqn && catalog && Array.isArray(catalog.types))
-        ? catalog.types.find(t => t.fqn === fqn)
-        : null;
-    const existsInCode = !!(state.projectPath && catalogType
+    if (!entry || !state.projectPath || !catalog || !Array.isArray(catalog.types)) {
+        showBanner();
+        return;
+    }
+    // Bound reuse first; F4 fallback: an unbound SUT whose NAME matches an
+    // existing class still gets its before derived — with a loud note that
+    // the analysis designed without it (the failure must be visible, and the
+    // dropped-call gate must still run).
+    const fqn = entry.sut.existingFqn ? entry.sut.existingFqn.trim() : null;
+    let catalogType = fqn ? catalog.types.find(t => t.fqn === fqn) : null;
+    const bound = !!catalogType;
+    if (!catalogType) catalogType = catalog.types.find(t => t.name === entry.sut.name);
+    const existsInCode = !!(catalogType
         && (catalogType.publicMethods || []).some(m => m.name === entry.methodName));
     if (!existsInCode) { showBanner(); return; }
 
     const key = `${state.projectPath}::${entry.sut.name}#${entry.methodName}`;
+    const unboundWarn = bound ? '' : `<div class="review-before-warn">Matches existing `
+        + `<code>${escapeHtml(catalogType.name)}</code> but the analysis did not bind it as reuse — `
+        + `the proposal was designed without your current flow.</div>`;
     const drawModel = (model) => {
         reviewEls.diff.classList.add('has-before');
-        body.innerHTML = '';
-        renderSeqSvg(model, body, '#64748b',
+        body.innerHTML = unboundWarn;
+        const holder = document.createElement('div');
+        body.appendChild(holder);
+        renderSeqSvg(model, holder, '#64748b',
             { line: '#cbd5e1', ink: '#1f2937', muted: '#64748b', box: '#f1f5f9' });
+        setDroppedCalls(computeDroppedCalls(model));
     };
     const cached = reviewBeforeCache[key];
     if (cached) {
@@ -4375,7 +4529,7 @@ function renderReviewBefore() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             projectPath: state.projectPath,
-            entryClass: entry.sut.name,
+            entryClass: catalogType.name,
             entryMethod: entry.methodName
         })
     })

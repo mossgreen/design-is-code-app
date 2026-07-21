@@ -26,5 +26,6 @@ public record AnalyzeRequest(
         ScanCatalog catalog,
         List<AcRow> acceptanceCriteria,
         String model,
-        String runId   // optional client token; registers the subprocess for POST /api/analyze/cancel
+        String runId,   // optional client token; registers the subprocess for POST /api/analyze/cancel
+        List<String> currentFlows   // derived what-IS slice markdown for update-mode grounding; null/empty = greenfield
 ) {}

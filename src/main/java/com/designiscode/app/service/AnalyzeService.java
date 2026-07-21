@@ -48,6 +48,7 @@ public class AnalyzeService {
     private static final String PH_CONTEXT = "{CONTEXT}";
     private static final String PH_CODEBASE_SUMMARY = "{CODEBASE_SUMMARY}";
     private static final String PH_CODEBASE_TYPES = "{CODEBASE_TYPES}";
+    private static final String PH_CURRENT_FLOWS = "{CURRENT_FLOWS}";
     private static final String PH_ACCEPTANCE_CRITERIA = "{ACCEPTANCE_CRITERIA}";
     private static final String PH_RULES = "{RULES}";
     private static final String PH_SELF_CHECK_RULES = "{SELF_CHECK_RULES}";
@@ -106,11 +107,11 @@ public class AnalyzeService {
 
     public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria, String model)
             throws IOException, InterruptedException {
-        return analyze(context, catalog, acceptanceCriteria, model, null);
+        return analyze(context, catalog, acceptanceCriteria, model, null, null);
     }
 
     public Map<String, Object> analyze(String context, ScanCatalog catalog, List<AcRow> acceptanceCriteria,
-                                       String model, String runId)
+                                       String model, String runId, List<String> currentFlows)
             throws IOException, InterruptedException {
         if (context == null || context.isBlank()) {
             throw new IllegalArgumentException("context is required");
@@ -125,6 +126,7 @@ public class AnalyzeService {
                 .replace(PH_CONTEXT, context.trim())
                 .replace(PH_CODEBASE_SUMMARY, summaryMd)
                 .replace(PH_CODEBASE_TYPES, typesMd)
+                .replace(PH_CURRENT_FLOWS, renderCurrentFlows(currentFlows))
                 .replace(PH_ACCEPTANCE_CRITERIA, acMd)
                 .replace(PH_RULES, rulesSection)
                 .replace(PH_SELF_CHECK_RULES, selfCheckRulesSection);
@@ -267,6 +269,18 @@ public class AnalyzeService {
      *  no usable rows remain, returns a sentinel string that the prompt
      *  template substitutes into the placeholder so the section reads
      *  cleanly. */
+    /** The derived what-IS flows for update-mode grounding; explicit "none"
+     *  line when absent so the preservation rules visibly don't apply. */
+    static String renderCurrentFlows(List<String> flows) {
+        List<String> present = flows == null ? List.of()
+                : flows.stream().filter(f -> f != null && !f.isBlank()).toList();
+        if (present.isEmpty()) {
+            return "_None — no existing flow was derived for this story "
+                    + "(greenfield, or no catalog class is named as the thing being changed)._";
+        }
+        return String.join("\n\n---\n\n", present);
+    }
+
     private String renderAcceptanceCriteria(List<AcRow> rows) {
         if (rows == null || rows.isEmpty()) {
             return "_No acceptance criteria supplied — design from the story alone._";
@@ -372,7 +386,8 @@ public class AnalyzeService {
                 "invariance.md",
                 "leaf-freestandingness.md",
                 "R2-purpose-specificity.md",
-                "R4a-feature-envy.md"
+                "R4a-feature-envy.md",
+                "update-mode-binding.md"
         };
         java.util.Arrays.sort(knownFiles);
         List<Rule> rules = new ArrayList<>();

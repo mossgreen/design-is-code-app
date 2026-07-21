@@ -487,6 +487,26 @@ because nothing else matches).
 
 {CODEBASE_TYPES}
 
+### Current code flows (derived — read-only facts)
+
+{CURRENT_FLOWS}
+
+When flows are listed above, they are the code's **current truth**, derived
+deterministically from the project's sources — not suggestions. Rules:
+
+- The flow's entry class is the thing the story asks to change: it IS the
+  root participant. Bind it — keep its exact name and set `existingFqn` —
+  and **keep its entry-method signature unchanged**.
+- **Preserve every call in the flow** unless an acceptance-criteria row
+  requires changing that specific call. Loading, guards, and persistence
+  calls that the AC does not mention MUST reappear in your design unchanged.
+  A regenerated orchestrator is overwritten wholesale from the design — any
+  call you omit is DELETED from working code.
+- Collaborators and entities named in the flow that exist in the catalog
+  bind the same way (`existingFqn`).
+- Your design is the *minimal delta* over the flow: the reviewer will diff
+  your proposal against it, and every dropped call must be defended.
+
 # Variance-handling patterns
 
 For each variance axis the AC exposes, choose ONE of the four patterns
