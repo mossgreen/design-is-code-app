@@ -187,6 +187,7 @@ async function runScan(path) {
         renderScanResult(data);
         populateTypesDatalist();
         updateConnectGate();
+        renderUpdateModeChip(); // story may pre-date the (re-)scan
     } catch (err) {
         els.error.textContent = err.message;
         els.error.classList.remove('hidden');
@@ -413,6 +414,61 @@ function applyStoryInput(text) {
     state.ac = rows;
     renderAcRows();
     updateAnalyzeGate();
+    renderUpdateModeChip();
+}
+
+// Update-mode visibility: name drift between the story and the catalog has
+// silently cost runs twice (VisitCanceller vs VisitCancellation). The chip
+// makes detection observable BEFORE Analyze: exact matches announce flow
+// injection; near-misses (shared prefix ≥ 8 chars, no exact match) get a
+// rename hint. Matching stays exact — hint only, never fuzzy auto-adopt.
+let updateChipTimer = null;
+function renderUpdateModeChip() {
+    clearTimeout(updateChipTimer);
+    updateChipTimer = setTimeout(() => {
+        const chip = document.getElementById('update-mode-chip');
+        if (!chip) return;
+        const story = state.userStory || '';
+        const targets = detectUpdateTargets(story);
+        if (targets.length > 0) {
+            chip.className = 'update-mode-chip is-active';
+            chip.innerHTML = 'Update mode: ' + targets.map(t =>
+                `<code>${escapeHtml(t.name)}</code>`).join(', ')
+                + ' — the current code flow will be injected into analysis.';
+            return;
+        }
+        const nearMiss = findNearMissTarget(story);
+        if (nearMiss) {
+            chip.className = 'update-mode-chip is-warn';
+            chip.innerHTML = `Story names <code>${escapeHtml(nearMiss.token)}</code> — no such class in the `
+                + `scanned project; closest is <code>${escapeHtml(nearMiss.candidate)}</code>. `
+                + 'Rename it in the story to inject that class\'s current flow.';
+            return;
+        }
+        chip.className = 'update-mode-chip hidden';
+        chip.innerHTML = '';
+    }, 300);
+}
+
+// A CamelCase story token with no exact catalog match but a close catalog
+// name (shared prefix ≥ 8 chars). Returns {token, candidate} or null.
+function findNearMissTarget(story) {
+    const catalog = state.codebaseCatalog;
+    if (!state.projectPath || !catalog || !Array.isArray(catalog.types)) return null;
+    const names = catalog.types
+        .filter(t => t && t.name && !NON_FLOW_ROLES.has(t.role))
+        .map(t => t.name);
+    const nameSet = new Set(names);
+    const tokens = (story.match(/[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+/g) || [])
+        .filter(tok => !nameSet.has(tok));
+    for (const tok of tokens) {
+        for (const name of names) {
+            let i = 0;
+            while (i < tok.length && i < name.length && tok[i] === name[i]) i++;
+            if (i >= 8) return { token: tok, candidate: name };
+        }
+    }
+    return null;
 }
 
 if (storyInput) {

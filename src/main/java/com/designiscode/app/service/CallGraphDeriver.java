@@ -88,12 +88,46 @@ public class CallGraphDeriver {
 
         Map<String, TypeInfo> typeIndex = buildTypeIndex(units);
 
-        ClassOrInterfaceDeclaration sut = units.stream()
+        // The entry name may denote an interface whose behavior lives in an
+        // implementing class (DisC's own generated code is interface + impl).
+        // Resolve to a declaration whose entry method HAS A BODY: first a
+        // class implementing `entryClass`, then a bodied class named
+        // `entryClass`, and only as a last resort the bodiless declaration —
+        // a name-only match would derive an empty (misleading) slice.
+        List<ClassOrInterfaceDeclaration> named = units.stream()
                 .flatMap(u -> u.findAll(ClassOrInterfaceDeclaration.class).stream())
                 .filter(c -> c.getNameAsString().equals(entryClass))
+                .toList();
+        if (named.isEmpty()) {
+            throw new IllegalArgumentException("entry class not found in provided sources: " + entryClass);
+        }
+        List<ClassOrInterfaceDeclaration> implementors = units.stream()
+                .flatMap(u -> u.findAll(ClassOrInterfaceDeclaration.class).stream())
+                .filter(c -> !c.isInterface())
+                .filter(c -> c.getImplementedTypes().stream()
+                        .anyMatch(t -> t.getNameAsString().equals(entryClass)))
+                .filter(c -> bodiedMethod(c, entryMethod).isPresent())
+                .sorted(java.util.Comparator
+                        .comparing((ClassOrInterfaceDeclaration c) ->
+                                c.getNameAsString().contains(entryClass) ? 0 : 1)
+                        .thenComparing(ClassOrInterfaceDeclaration::getNameAsString))
+                .toList();
+        List<String> resolutionNotes = new ArrayList<>();
+
+        ClassOrInterfaceDeclaration sut = named.stream()
+                .filter(c -> bodiedMethod(c, entryMethod).isPresent())
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "entry class not found in provided sources: " + entryClass));
+                .orElse(null);
+        if (sut == null && !implementors.isEmpty()) {
+            sut = implementors.get(0);
+            if (implementors.size() > 1) {
+                resolutionNotes.add("multiple implementations of " + entryClass + " ("
+                        + implementors.stream().map(ClassOrInterfaceDeclaration::getNameAsString)
+                                .collect(java.util.stream.Collectors.joining(", "))
+                        + ") — derived from " + sut.getNameAsString());
+            }
+        }
+        if (sut == null) sut = named.get(0); // bodiless fallback: honest empty slice
 
         MethodDeclaration entry = sut.getMethods().stream()
                 .filter(m -> m.getNameAsString().equals(entryMethod))
@@ -111,7 +145,8 @@ public class CallGraphDeriver {
         List<DerivedSlice.Dependency> deps = collectDependencies(sut);
         Map<String, String> scope = buildScope(sut, entry);
         List<DerivedSlice.CallSite> callSites = collectCallSites(entry, scope, typeIndex);
-        List<String> captureGaps = detectCaptureGaps(entry);
+        List<String> captureGaps = new ArrayList<>(resolutionNotes);
+        captureGaps.addAll(detectCaptureGaps(entry));
 
         boolean orchestrator = callSites.stream()
                 .anyMatch(cs -> "interface".equals(cs.calleeKind()) || "class".equals(cs.calleeKind()));
@@ -128,6 +163,14 @@ public class CallGraphDeriver {
 
         return new DerivedSlice(entryClass, entrySig, orchestrator, callSites, deps, configFacts,
                 targetPackage, knownTypes, captureGaps);
+    }
+
+    /** The named method WITH an implementation body (absent on interfaces/abstract). */
+    private static Optional<MethodDeclaration> bodiedMethod(ClassOrInterfaceDeclaration c, String name) {
+        return c.getMethods().stream()
+                .filter(m -> m.getNameAsString().equals(name))
+                .filter(m -> m.getBody().isPresent())
+                .findFirst();
     }
 
     // --- type index ---

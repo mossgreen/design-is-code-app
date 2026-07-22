@@ -215,6 +215,66 @@ class CallGraphDeriverTest {
                 () -> deriver.derive(List.of(DOMESTIC_TAX), "DomesticTax", "noSuchMethod"));
     }
 
+    // --- interface-aware entry resolution (2026-07-22: the "empty before" bug) ---
+    //
+    // DisC's own generated code is interface + impl. Deriving by the
+    // interface name must resolve to the implementing class's body — a
+    // name-only match yields an empty, misleading slice.
+
+    private static final String CANCEL_IFACE = """
+            package com.demo;
+            public interface VisitCancellation { String cancel(int visitId); }
+            """;
+    private static final String CANCEL_IMPL = """
+            package com.demo;
+            public class VisitCancellationImpl implements VisitCancellation {
+                private final TaxCalculator taxCalculator;
+                public VisitCancellationImpl(TaxCalculator taxCalculator) { this.taxCalculator = taxCalculator; }
+                public String cancel(int visitId) {
+                    Money fee = taxCalculator.calculate(null);
+                    return "done";
+                }
+            }
+            """;
+
+    @Test
+    void derivesThroughInterfaceToImplementingClassBody() {
+        DerivedSlice slice = deriver.derive(
+                List.of(ORDER, MONEY, TAX_IFACE, CANCEL_IFACE, CANCEL_IMPL),
+                "VisitCancellation", "cancel");
+
+        assertEquals("VisitCancellation", slice.sut(), "slice speaks the abstraction's name");
+        assertEquals(1, slice.callSites().size(), "call sites come from the impl body");
+        assertEquals("taxCalculator", slice.callSites().get(0).receiver());
+        assertEquals(1, slice.dependencies().size(), "wiring comes from the impl constructor");
+    }
+
+    @Test
+    void multipleImplementorsPickDeterministicallyAndNoteTheAmbiguity() {
+        String second = """
+                package com.demo;
+                public class AltCancellation implements VisitCancellation {
+                    public String cancel(int visitId) { return "x"; }
+                }
+                """;
+        DerivedSlice slice = deriver.derive(
+                List.of(ORDER, MONEY, TAX_IFACE, CANCEL_IFACE, CANCEL_IMPL, second),
+                "VisitCancellation", "cancel");
+
+        // name-containing implementor wins; ambiguity recorded as a gap
+        assertEquals(1, slice.callSites().size());
+        assertTrue(slice.captureGaps().stream().anyMatch(g ->
+                g.contains("multiple implementations") && g.contains("VisitCancellationImpl")),
+                () -> "gaps: " + slice.captureGaps());
+    }
+
+    @Test
+    void bodilessInterfaceWithoutImplementorStillDerivesHonestlyEmpty() {
+        DerivedSlice slice = deriver.derive(List.of(CANCEL_IFACE), "VisitCancellation", "cancel");
+        assertEquals(0, slice.callSites().size());
+        assertEquals("cancel", slice.entryMethod().name());
+    }
+
     @Test
     void capturesPackageFqnsAndCalleeSignatureForApply() {
         String checkout = """
