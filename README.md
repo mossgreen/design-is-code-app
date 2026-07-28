@@ -1,6 +1,8 @@
 # DisC Studio
 
-DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it user story and acceptance criteria; it gives back an editable sequence-diagram design. Hand the design off to DisC and you get working Java/Spring code with TDD style tests.
+DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it a user story and acceptance criteria; it gives back an editable sequence-diagram design. Point it at an existing Java/Spring project and it derives the design your code has *today* and shows a **before/after diff** of the change under review — so a team can approve the design before any code is written.
+
+> **What's verified vs experimental (v0.7.0):** the design + review path — derive, before/after diff, and the dropped-call gate — is the product today. Handing the design to the DisC plugin to generate Java/Spring tests + code works but is **experimental**; treat generated output as a draft to review, not a finished result.
 
 ## Demo
 
@@ -78,12 +80,12 @@ The redistributable is a single fat jar. Same command on every platform.
 
    **macOS / Linux** (Terminal):
    ```sh
-   java -jar disc-studio-0.5.0.jar
+   java -jar disc-studio-0.7.0.jar
    ```
 
    **Windows** (PowerShell or Command Prompt):
    ```powershell
-   java -jar disc-studio-0.5.0.jar
+   java -jar disc-studio-0.7.0.jar
    ```
    If `java` isn't recognised, your JDK isn't on PATH — re-run the Temurin installer with "Set JAVA_HOME / Add to PATH" checked, or open a new terminal so PATH changes take effect.
 
@@ -97,7 +99,7 @@ Stop the app with `Ctrl-C` in the terminal.
 
 By default the app binds `:8080`. To run on a different port:
 ```sh
-java -jar disc-studio-0.5.0.jar --server.port=8090
+java -jar disc-studio-0.7.0.jar --server.port=8090
 ```
 
 ## How it works
@@ -106,8 +108,8 @@ Four steps, top to bottom:
 
 1. **Connect** — pick the target Java project folder; the Studio scans it so existing types can be reused in the design.
 2. **Design** — write the user story + acceptance criteria, then click **Analyze**. Claude Code decomposes them into participants, entities, and a call sequence. Edit any of it inline; the live SVG preview updates as you go.
-3. **Sign-off** — read-only snapshot of the story, participants, and frozen diagram. The hand-off point.
-4. **Generate** — pick the target Java package, name the file, save into your project's `design/` folder, and click **Run it for me** to run the DisC codegen plugin — or copy the slash command and run it yourself from Claude Code.
+3. **Sign-off** — the **design diff**: your code's current flow (*before*) beside the proposed design (*after*), the analyzer's reasons, and a gate that blocks sign-off if the proposal drops calls that exist in your code today. The team-review point.
+4. **Generate** *(experimental)* — pick the target Java package, name the file, save into your project's `design/` folder, and click **Run it for me** to run the DisC codegen plugin — or copy the slash command and run it yourself from Claude Code. Review the generated tests + code as a draft.
 
 ## Run from source
 

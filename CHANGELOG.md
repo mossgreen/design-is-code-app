@@ -5,6 +5,51 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [v0.7.0] - 2026-07-27
+
+DisC Studio becomes a **design-review tool**: point it at an existing
+Java/Spring project and it derives the current design from your code, shows a
+before/after diff of the change under review, and blocks sign-off if the
+proposed design would silently drop calls that exist today. Handing the design
+to the DisC plugin to generate tests + code is included but **experimental** —
+the design-review path is the verified one.
+
+### Added
+- **Code→design derivation.** A deterministic projection of a Java entry
+  method's call flow into a sequence diagram (`POST /api/code-derive`,
+  `/api/code-derive-by-path`): same code in, same diagram out; a small edit
+  makes a small diagram change. Resolves through an interface to its
+  implementing class, so the derived flow is the real one, not an empty stub.
+- **Step 3 is a design diff.** Sign-off shows *before* (your code's current
+  flow, or a greenfield banner) beside *after* (the proposed design), plus a
+  plain-language "why this design" from the analyzer's variance plan.
+- **Dropped-call gate.** If the proposed design removes a call that exists in
+  the current code, Step 3 lists it and blocks team sign-off until the removal
+  is explicitly acknowledged — catching silent behaviour regressions before
+  any generation.
+- **Update-mode grounding.** When the story names an existing class
+  ("Update X"), that class's current flow is injected into analysis so the
+  design preserves calls the acceptance criteria never mention; a chip under
+  the story box shows whether the name matched (and hints on near-misses).
+- **Code→design diff pipeline** (dev harness at `code-diff.html`): a ticket +
+  code → minimal design delta (new variant behind a resolver / rule-table),
+  with a before/after view and a deterministic test-cost rationale.
+- **Abort a running analysis** — the Analyze banner gains an Abort action that
+  stops the in-flight LLM chain and kills the subprocess.
+
+### Changed
+- Story and acceptance criteria are entered together in one Step-2 box;
+  Gherkin lines parse into criteria automatically.
+- `disc.claude.effort` defaults to `medium`; subprocess timeout raised to 600s.
+- A one-variant "family" is refused with a question instead of generating an
+  abstraction with nothing to choose.
+
+### Requires
+- The DisC plugin **v0.11.1+** (validate no longer false-refuses correct
+  designs). Install/update: `/plugin marketplace update mossgreen-design-is-code`.
+
+[v0.7.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.7.0
+
 ## [v0.6.1] - 2026-06-25
 
 Analyzer design rules are now single-sourced: each rule is authored once and
