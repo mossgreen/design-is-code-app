@@ -143,4 +143,124 @@ const bound = reusedTypeMethods();
 state.codebaseCatalog = null;
 JSON.stringify({ bound, unconnected: reusedTypeMethods() });
 `));
+
+// The .decision.md frontmatter contract, across all three sidecar emitters at
+// once. The plugin refuses at Step 1 when a required_decision is pinned by
+// neither rows nor `config:` — but resolver mode is exempt, because its body is
+// a Map lookup with no such decision in it. Emitting the wrong one either way is
+// a file the generator will not accept, and nothing tested this before.
+out.decisionFrontmatter = JSON.parse(withApp(`
+state.targetPackage = 'com.example.checkout';
+
+const feeLeaf = { id: newId(), name: 'LateFeeCalculator', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('calculate', [{ name: 'hours', type: 'Integer' }], 'BigDecimal',
+             [{ inputs: { hours: 12 }, expected: '20.00' },
+              { inputs: { hours: 72 }, expected: '0.00' }])
+]};
+const rateTable = { id: newId(), name: 'FeeRateTable', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('ruleFor', [{ name: 'initiator', type: 'String' }], 'FeeRate')
+]};
+const resolver = { id: newId(), name: 'FeePolicyResolver', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('resolve', [{ name: 'initiator', type: 'String' }], 'FeePolicy')
+]};
+state.participants = [feeLeaf, rateTable, resolver];
+
+state.entities = [
+  { id: newId(), name: 'FeeRate', kind: 'record', existingFqn: null,
+    fields: [{ name: 'percent', type: 'int' }, { name: 'cap', type: 'BigDecimal' }],
+    values: [], behaviors: [], permits: [] },
+  { id: newId(), name: 'FeePolicy', kind: 'interface', existingFqn: null, fields: [], values: [],
+    behaviors: [{ name: 'feeFor' }], permits: ['StandardFee', 'ClinicInitiatedFee'] }
+];
+
+state.variancePlan = [
+  { axis: 'initiator', pattern: 'resolver', mapping: [
+      { key: 'owner', strategy: 'StandardFee' },
+      { key: 'clinic', strategy: 'ClinicInitiatedFee' } ] },
+  { axis: 'rate', pattern: 'rule-table', mapping: [
+      { key: 'owner', expected: { percent: 20, cap: '50.00' } },
+      { key: 'clinic', expected: { percent: 0, cap: '0.00' } } ] }
+];
+
+JSON.stringify({
+  resolver: collectResolverDecisionTables(),
+  ruleTable: collectRuleTableDecisionTables(),
+  leaf: collectPureFunctionLeafDecisionTables(),
+  all: collectAllDecisionTables().map(d => d.fileName)
+});
+`));
+
+// Save writes one set of sidecars and the gate judges one set; they must be the
+// same set, or the reviewer is warned about files that never land. Precedence
+// matters too: a table the human filled in must not be replaced by a
+// synthesised one for the same participant.
+out.decisionPrecedence = JSON.parse(withApp(`
+state.targetPackage = 'com.example.checkout';
+const leaf = { id: newId(), name: 'LateFeeCalculator', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('calculate', [{ name: 'hours', type: 'Integer' }], 'BigDecimal',
+             [{ inputs: { hours: 12 }, expected: '20.00' }])
+]};
+state.participants = [leaf];
+state.entities = [];
+state.variancePlan = [];
+const auto = collectAllDecisionTables();
+
+// Now attach a human-authored table to the same participant via a CALL step.
+state.sequence = [{ id: newId(), kind: STEP_KIND.CALL, callerId: SYSTEM_CALLER_ID,
+                    calleeId: leaf.id, methodId: leaf.methods[0].id,
+                    decisionTable: { config: { nullHandling: 'passThrough' },
+                                     rows: [{ values: ['12'], expected: '99.99' }] } }];
+const authored = collectAllDecisionTables();
+
+JSON.stringify({
+  autoCount: auto.length,
+  authoredCount: authored.length,
+  authoredContent: authored[0].content
+});
+`));
+
+// A default the wizard picked is a decision nobody made, and the sign-off panel
+// is the last place it can still be caught. The summary is what that panel
+// renders from, so it must name the file and the specific keys — "some defaults
+// were applied" tells a reviewer nothing they can act on.
+out.appliedDefaultsSummary = JSON.parse(withApp(`
+state.targetPackage = 'com.example.checkout';
+const leaf = { id: newId(), name: 'LateFeeCalculator', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('calculate', [{ name: 'hours', type: 'Integer' }], 'BigDecimal',
+             [{ inputs: { hours: 12 }, expected: '20.00' },
+              { inputs: { hours: 72 }, expected: '0.00' }])
+]};
+const resolver = { id: newId(), name: 'FeePolicyResolver', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('resolve', [{ name: 'initiator', type: 'String' }], 'FeePolicy')
+]};
+state.participants = [leaf, resolver];
+state.entities = [
+  { id: newId(), name: 'FeePolicy', kind: 'interface', existingFqn: null, fields: [], values: [],
+    behaviors: [{ name: 'feeFor' }], permits: ['StandardFee', 'ClinicInitiatedFee'] }
+];
+state.variancePlan = [
+  { axis: 'initiator', pattern: 'resolver', mapping: [
+      { key: 'owner', strategy: 'StandardFee' },
+      { key: 'clinic', strategy: 'ClinicInitiatedFee' } ] }
+];
+
+// Nothing authored yet: the numeric leaf should report every config key as a
+// default, and the resolver — which emits no config block — should not appear.
+const untouched = appliedDefaultsSummary();
+
+// Now the human states nullHandling. It must drop out of the summary while the
+// arithmetic keys it did not state stay.
+state.sequence = [{ id: newId(), kind: STEP_KIND.CALL, callerId: SYSTEM_CALLER_ID,
+                    calleeId: leaf.id, methodId: leaf.methods[0].id,
+                    decisionTable: { config: { nullHandling: 'passThrough' },
+                                     rows: [{ values: ['12'], expected: '20.00' }] } }];
+const authored = appliedDefaultsSummary();
+
+JSON.stringify({
+  untouched: untouched,
+  authored: authored,
+  resolverListed: untouched.some(s => s.fileName.indexOf('Resolver') !== -1)
+});
+`));
+
 process.stdout.write(JSON.stringify(out, null, 2));

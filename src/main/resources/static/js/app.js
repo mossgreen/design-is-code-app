@@ -2003,10 +2003,17 @@ function reusedTypeMethods() {
 
 async function lintDesign() {
     try {
+        // Sidecars travel with the diagram: a decision table and the flow it
+        // belongs to can each be right alone and disagree with each other, and
+        // that disagreement is only visible when both are in hand.
+        const sidecars = {};
+        for (const dt of collectAllDecisionTables()) sidecars[dt.fileName] = dt.content;
         const res = await fetch('/api/design/lint', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ puml: emitPlantUml(), knownTypes: reusedTypeMethods() })
+            body: JSON.stringify({
+                puml: emitPlantUml(), knownTypes: reusedTypeMethods(), sidecars
+            })
         });
         if (!res.ok) return { violations: [], warnings: [] };
         const report = await res.json();
@@ -4802,11 +4809,68 @@ function setDataflowIssues(violations, warnings) {
     syncSignoffUI();
 }
 
+// --- Defaults applied on the human's behalf ------------------------------------
+//
+// A decision table pins behaviour at its sampled rows; its `config:` block pins
+// what happens off the rows — nulls, rounding, the exception type. When the
+// author leaves those blank the wizard fills them in, and an unstated default is
+// exactly the kind of decision this tool exists to surface. So they are listed
+// at sign-off. Informational, never a gate: the defaults are usually right, and
+// a gate you always dismiss teaches people to dismiss gates.
+
+// Human-readable gloss per config key. Anything unlisted falls back to the key.
+const DEFAULT_LABELS = {
+    nullHandling: 'null input',
+    exceptionType: 'exception type',
+    rounding: 'rounding mode',
+    scale: 'decimal scale',
+    defaultValue: 'default value',
+    locale: 'locale'
+};
+
+// Pure: [{ fileName, keys: [...] }] for every sidecar that took at least one
+// default. Kept separate from the DOM so it is testable in the Node harness.
+function appliedDefaultsSummary(tables) {
+    return (tables || collectAllDecisionTables())
+        .filter(t => (t.appliedDefaults || []).length > 0)
+        .map(t => ({ fileName: t.fileName, keys: t.appliedDefaults.slice() }));
+}
+
+function renderAppliedDefaults() {
+    const panel = document.getElementById('review-defaults');
+    if (!panel) return;
+    let summary;
+    try {
+        summary = appliedDefaultsSummary();
+    } catch (err) {
+        console.warn('appliedDefaults summary failed:', err);
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+    if (summary.length === 0) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+    const items = summary.map(s => {
+        const keys = s.keys.map(k => escapeHtml(DEFAULT_LABELS[k] || k)).join(', ');
+        return `<li><code>${escapeHtml(s.fileName)}</code> — ${keys}</li>`;
+    }).join('');
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+        <div class="review-defaults-title">Chosen for you — no one stated these:</div>
+        <ul>${items}</ul>
+        <div class="review-defaults-note">Off-row behaviour the table does not pin.
+        Edit the decision table if any of these should be different.</div>`;
+}
+
 function renderReviewBefore() {
     const body = reviewEls.beforeBody;
     if (!body || !reviewEls.diff) return;
     setDroppedCalls([]); // no before, no gate — until a flow is derived below
     refreshDataflowLint();
+    renderAppliedDefaults();
     const showBanner = (extraNote) => {
         reviewEls.diff.classList.remove('has-before');
         body.innerHTML = greenfieldBannerHtml()
@@ -5530,9 +5594,12 @@ function collectDecisionTablesForSave() {
         const participant = findParticipant(step.calleeId);
         const method = findMethod(step.calleeId, step.methodId);
         if (!participant || !method) continue;
+        const { content, appliedDefaults } = emitDecisionTable(
+            participant, method, step.decisionTable, state.targetPackage);
         out.push({
             fileName: decisionTableFileName(participant),
-            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
+            content,
+            appliedDefaults
         });
     }
     return out;
@@ -5587,15 +5654,16 @@ function collectResolverDecisionTables() {
         // Build the YAML+markdown sidecar directly — the plugin's resolver
         // mode (see java_spring.md "Resolver impl from decision table")
         // recognises this shape and generates a Map-based resolver.
-        const lines = [];
-        lines.push('---');
-        lines.push(`target: ${resolver.name}.${resolveMethod.name}`);
-        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-        lines.push('input:');
-        lines.push(`  ${input.name}: ${input.type || '?'}`);
-        lines.push(`output: ${iface.name}`);
-        lines.push('---');
-        lines.push('');
+        // Resolver mode, deliberately without `config:` — the generated body is
+        // `map.get(key)`, so it contains no rounding, scale or null decision to
+        // pin, and the plugin's documented resolver frontmatter has none.
+        const { lines } = decisionFrontmatter({
+            target: `${resolver.name}.${resolveMethod.name}`,
+            pkg: state.targetPackage,
+            inputs: [{ name: input.name, type: input.type }],
+            output: iface.name,
+            mode: 'resolver'
+        });
         const headers = [input.name, 'expected'];
         const rows = v.mapping.map(m => [String(m.key || ''), String(m.strategy || '')]);
         lines.push(emitMarkdownTable(headers, rows));
@@ -5657,15 +5725,19 @@ function collectRuleTableDecisionTables() {
         const input = method.inputs[0];
         if (!input || !input.name) continue;
 
-        const lines = [];
-        lines.push('---');
-        lines.push(`target: ${repo.name}.${method.name}`);
-        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-        lines.push('input:');
-        lines.push(`  ${input.name}: ${input.type || '?'}`);
-        lines.push(`output: ${rule.name}`);
-        lines.push('---');
-        lines.push('');
+        // A rule-table lookup is not one of the plugin's special modes — it is a
+        // pure-function leaf returning a record, so standard filled mode applies
+        // and its required_decisions must be pinned. The body is a Map lookup,
+        // so only the null decision is live; `isNumericOutput` keeps rounding
+        // and scale out of a table that does no arithmetic.
+        const { lines, appliedDefaults } = decisionFrontmatter({
+            target: `${repo.name}.${method.name}`,
+            pkg: state.targetPackage,
+            inputs: [{ name: input.name, type: input.type }],
+            output: rule.name,
+            method,
+            mode: 'filled'
+        });
         const headers = [input.name, ...fieldNames.map(f => `expected.${f}`)];
         const rows = v.mapping.map(m => [
             String(m.key || ''),
@@ -5679,9 +5751,49 @@ function collectRuleTableDecisionTables() {
 
         out.push({
             fileName: decisionTableFileName(repo),
-            content: lines.join('\n')
+            content: lines.join('\n'),
+            appliedDefaults
         });
     }
+    return out;
+}
+
+// Every sidecar this design will write, in precedence order. Save writes this
+// set and the data-flow gate judges this set — one function, so the files the
+// reviewer is warned about are exactly the files that land on disk.
+//
+// A user-authored table (the DT chip) wins over an auto-synthesised one for the
+// same participant: the human answered the question, so the generator should
+// not get a machine's guess instead.
+function collectAllDecisionTables() {
+    const out = [];
+    const taken = new Set();
+    const add = (dt) => {
+        if (!dt || taken.has(dt.fileName)) return;
+        taken.add(dt.fileName);
+        out.push(dt);
+    };
+
+    for (const step of state.sequence || []) {
+        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
+        const participant = findParticipant(step.calleeId);
+        const method = findMethod(step.calleeId, step.methodId);
+        if (!participant || !method) continue;
+        const { content, appliedDefaults } = emitDecisionTable(
+            participant, method, step.decisionTable, state.targetPackage);
+        add({
+            fileName: decisionTableFileName(participant),
+            content,
+            appliedDefaults
+        });
+    }
+    // Auto-emitted sidecars per resolver / rule-table entry in the analyzer's
+    // variancePlan, then per AC-driven pure-function leaf. The plugin reads
+    // these and generates working implementations; without them the
+    // participants ship as UnsupportedOperationException skeletons.
+    collectResolverDecisionTables().forEach(add);
+    collectRuleTableDecisionTables().forEach(add);
+    collectPureFunctionLeafDecisionTables().forEach(add);
     return out;
 }
 
@@ -5702,16 +5814,16 @@ function collectPureFunctionLeafDecisionTables() {
             const inputs = (m.inputs || []);
             if (inputs.length === 0) continue;
 
-            const lines = [];
-            lines.push('---');
-            lines.push(`target: ${p.name}.${m.name}`);
-            if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-            lines.push('input:');
-            inputs.forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
-            lines.push(`output: ${m.output || 'void'}`);
-            boundariesFrontmatterLines(m).forEach(l => lines.push(l));
-            lines.push('---');
-            lines.push('');
+            // Standard filled mode: the plugin refuses here when a
+            // required_decision is unpinned, so this table needs `config:`.
+            const { lines, appliedDefaults } = decisionFrontmatter({
+                target: `${p.name}.${m.name}`,
+                pkg: state.targetPackage,
+                inputs,
+                output: m.output || 'void',
+                method: m,
+                mode: 'filled'
+            });
 
             const headers = [...inputs.map(i => i.name), 'expected'];
             const rows = cases.map(c => {
@@ -5729,7 +5841,8 @@ function collectPureFunctionLeafDecisionTables() {
 
             out.push({
                 fileName: decisionTableFileName(p),
-                content: lines.join('\n')
+                content: lines.join('\n'),
+                appliedDefaults
             });
         }
     }
@@ -5841,41 +5954,7 @@ saveEls.save.addEventListener('click', async () => {
     const originalLabel = saveEls.save.textContent;
     saveEls.save.textContent = 'Saving…';
 
-    // Collect any decision tables attached to CALL steps and serialize each
-    // as a YAML+markdown sidecar. The backend writes them next to the .puml.
-    const decisionTables = [];
-    for (const step of state.sequence) {
-        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
-        const participant = findParticipant(step.calleeId);
-        const method = findMethod(step.calleeId, step.methodId);
-        if (!participant || !method) continue;
-        decisionTables.push({
-            fileName: decisionTableFileName(participant),
-            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
-        });
-    }
-    // Auto-emit a decision-table sidecar per resolver / rule-table entry in
-    // the analyzer's variancePlan. The plugin reads these and generates
-    // working Map-based / lookup implementations; without them participants
-    // stay as UnsupportedOperationException skeletons. Deduplicate by
-    // fileName so a user-authored table for the same participant wins over
-    // the auto one.
-    const existingNames = new Set(decisionTables.map(d => d.fileName));
-    for (const dt of collectResolverDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
-    for (const dt of collectRuleTableDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
-    for (const dt of collectPureFunctionLeafDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
+    const decisionTables = collectAllDecisionTables();
 
     // Surface any design that will generate stubs (non-blocking — the save
     // still proceeds so the user can iterate). These are invisible to the
@@ -6283,6 +6362,64 @@ function boundariesFrontmatterLines(method) {
     return lines.length > 0 ? ['boundaries:', ...lines] : [];
 }
 
+// The `.decision.md` frontmatter contract, stated once.
+//
+// Four places emit a sidecar — the DT modal, the pure-function-leaf
+// synthesiser, the rule-table synthesiser and the resolver — and they had
+// drifted: three of the four omitted `config:` entirely. The plugin refuses at
+// Step 1 when a `required_decision` (rounding, scale, nullHandling,
+// exceptionType) is pinned by neither the rows nor `config:`, so a drifted
+// emitter writes a file the generator will not accept.
+//
+// `mode` matters because the plugin's decision-table modes do NOT share one
+// contract:
+//   'resolver' — a Map lookup keyed by the input (java_spring.md, "Resolver
+//                impl from decision table"). Its documented frontmatter has no
+//                `config:` at all, and correctly so: the generated body is
+//                `map.get(key)`, so there is no rounding, scale or null
+//                decision in it to pin.
+//   'filled'   — standard pure-function filled mode, where every
+//                `required_decision` must be pinned or Step 1 refuses.
+//
+// Returns the frontmatter lines plus the config keys that came from a DEFAULT
+// rather than from a human. Those are choices the methodology assigns to a
+// person (SKILL.md: when AI invents both the cases and the implementation, the
+// pair can agree and still be wrong), so the caller carries them forward to be
+// shown at sign-off rather than applied silently.
+function decisionFrontmatter({ target, pkg, inputs, output, method, config, mode }) {
+    const lines = ['---', `target: ${target}`];
+    if (pkg) lines.push(`package: ${pkg}`);
+    lines.push('input:');
+    (inputs || []).forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
+    lines.push(`output: ${output}`);
+    if (method) boundariesFrontmatterLines(method).forEach(l => lines.push(l));
+
+    const appliedDefaults = [];
+    if (mode !== 'resolver') {
+        const chosen = config || {};
+        const defaults = defaultDecisionConfig(method || {});
+        const effective = { ...defaults, ...chosen };
+        const cfg = [];
+        const take = (key) => {
+            if (effective[key] === undefined || effective[key] === '') return;
+            cfg.push(`  ${key}: ${effective[key]}`);
+            if (chosen[key] === undefined || chosen[key] === '') appliedDefaults.push(key);
+        };
+        if (isNumericOutput(method || {})) {
+            take('rounding');
+            take('scale');
+        }
+        take('nullHandling');
+        if (effective.nullHandling === 'throw') take('exceptionType');
+        if (effective.nullHandling === 'defaultValue') take('defaultValue');
+        if (effective.locale && String(effective.locale).trim()) take('locale');
+        if (cfg.length > 0) lines.push('config:', ...cfg);
+    }
+
+    lines.push('---', '');
+    return { lines, appliedDefaults };
+}
+
 // Markdown-table column-width formatter: pads each column to its longest cell
 // (header included) so the saved sidecar reads cleanly when opened in an editor.
 function emitMarkdownTable(headers, rows) {
@@ -6301,33 +6438,21 @@ function emitDecisionTable(participant, method, dt, targetPackage) {
         type: (i.type || '').trim() || '?'
     }));
     const output = (method.output || '').trim() || 'void';
-    const config = dt.config || defaultDecisionConfig(method);
 
-    const lines = [];
-    lines.push('---');
-    lines.push(`target: ${participant.name || '?'}.${method.name || '?'}`);
-    if (targetPackage) lines.push(`package: ${targetPackage}`);
-    lines.push('input:');
-    inputs.forEach(i => lines.push(`  ${i.name}: ${i.type}`));
-    lines.push(`output: ${output}`);
-    boundariesFrontmatterLines(method).forEach(l => lines.push(l));
-    lines.push('config:');
-    if (isNumericOutput(method)) {
-        if (config.rounding) lines.push(`  rounding: ${config.rounding}`);
-        if (config.scale !== undefined && config.scale !== '') lines.push(`  scale: ${config.scale}`);
-    }
-    if (config.nullHandling) lines.push(`  nullHandling: ${config.nullHandling}`);
-    if (config.nullHandling === 'throw' && config.exceptionType) {
-        lines.push(`  exceptionType: ${config.exceptionType}`);
-    }
-    if (config.nullHandling === 'defaultValue' && config.defaultValue) {
-        lines.push(`  defaultValue: ${config.defaultValue}`);
-    }
-    if (config.locale && config.locale.trim()) {
-        lines.push(`  locale: ${config.locale.trim()}`);
-    }
-    lines.push('---');
-    lines.push('');
+    // The DT modal is the one path where a human actually answered these, so
+    // its `dt.config` is passed as the chosen values rather than defaults.
+    // Anything they left blank is still a default, and this is the case that
+    // most needs reporting: the author opened the editor and believes the
+    // config is theirs.
+    const { lines, appliedDefaults } = decisionFrontmatter({
+        target: `${participant.name || '?'}.${method.name || '?'}`,
+        pkg: targetPackage,
+        inputs,
+        output,
+        method,
+        config: dt.config,
+        mode: 'filled'
+    });
 
     const headers = [...inputs.map(i => i.name), 'expected'];
     const tableRows = (dt.rows || []).map(r => {
@@ -6337,7 +6462,7 @@ function emitDecisionTable(participant, method, dt, targetPackage) {
     });
     lines.push(emitMarkdownTable(headers, tableRows));
     lines.push('');
-    return lines.join('\n');
+    return { content: lines.join('\n'), appliedDefaults };
 }
 
 // --- DT modal ---
