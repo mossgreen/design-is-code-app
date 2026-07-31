@@ -5,6 +5,40 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [Unreleased]
+
+Post-v0.8.0 work on `main`. Not in the published jar.
+
+### Fixed
+- **The design validator now sees the decision tables.** `--validate-only`
+  received the `.puml` alone, so Step 1 judged the design as if every leaf were
+  unspecified: a decision table could contradict the diagram, or specify a call
+  the design never makes, and validation still passed — the reviewer was told the
+  design was fine while the generator went on to read a different one. Sidecars
+  are now staged beside the design being validated. (Long-standing; tracked as
+  "P4".)
+- **A Stage-D guard that could never fire.** The "SUT must not be added" rule
+  required the change to be filed under `element == "participant"`, but the
+  differ files SUT rewiring under `"arrow"`, so no real delta could ever trip it.
+  Now keyed on the operation and name, which is the actual invariant.
+
+### Added
+- **Tests that prove the claims in [WHY.md](WHY.md)**, all free of model calls:
+  `DerivationStabilityTest` (repeated derivation is byte-identical; a comment
+  moves nothing; one added call moves exactly one arrow),
+  `DesignDeltaValidatorTest` (Stage D had no direct tests despite owning the rule
+  that prevents a wholesale overwrite from deleting uncaptured code),
+  `DesignReceiptTest` (the orchestrator has zero branches while the naive
+  counterfactual for the same ticket has three; the expected `verify()` count is
+  computable from the design alone).
+- **`DerivationStabilityForeignRepoTest`** — the same stability properties
+  against any repository, opt-in and free:
+  `./gradlew test --tests '*ForeignRepo*' -Ddisc.stability.repo=<path>
+  -Ddisc.stability.entry=Class#method`. Verified on upstream `spring-petclinic`.
+- **[WHY.md](WHY.md)** — the seven-claim argument for DisC, each claim with its
+  mechanism, the test that proves it, and an explicit list of what DisC does
+  *not* claim.
+
 ## [v0.8.0] - 2026-07-31
 
 The theme is a single defect class: **a design could name values that nothing
