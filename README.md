@@ -4,6 +4,8 @@
 
 DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it a user story and acceptance criteria; it gives back an editable sequence-diagram design. Point it at an existing Java/Spring project and it derives the design your code has *today* and shows a **before/after diff** of the change under review — so a team can approve the design before any code is written.
 
+**Why:** DisC makes an AI's structural decisions reviewable before the code exists, refuses the ones that can't be tested cleanly, and derives the design from code afterwards so it can never drift. The full argument — seven claims, each with its mechanism and the honest status of its evidence, plus what DisC explicitly does *not* claim — is in **[WHY.md](WHY.md)**.
+
 > **What's verified (v0.8.0):** the design + review path — derive, before/after diff, the dropped-call gate, and the data-flow gate — is the product. **Generation is now verified end-to-end on [spring-petclinic](https://github.com/spring-projects/spring-petclinic)**: a greenfield feature and then a variance change over its own generated code, both to a green suite with zero hand edits ([PR #1](https://github.com/mossgreen/spring-petclinic/pull/1), [PR #2](https://github.com/mossgreen/spring-petclinic/pull/2)). It has not been verified on any other codebase — one repository is evidence, not a guarantee. Review generated output.
 
 ## Demo
