@@ -3232,6 +3232,21 @@ button.small {
     cursor: pointer;
 }
 
+/* Data-flow gate. Same anatomy as the dropped-call gate; the amber accent marks
+ * the warning-only case (a value produced and never used), which informs the
+ * reviewer without blocking sign-off. */
+.review-dataflow-warn-title {
+    font-weight: 600;
+    color: #92400e;
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+}
+.review-dataflow:not(:has(.review-dropped-title)) {
+    background: #fffbeb;
+    border-color: #fde68a;
+    border-left-color: #d97706;
+}
+
 /* Update-mode chip: shows whether story-named classes matched the catalog
  * (flow injection will fire) or nearly missed (rename hint). */
 .update-mode-chip {

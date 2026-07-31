@@ -1273,6 +1273,22 @@ function methodSignature(m) {
     return `${n.name || '?'}(${inputs})`;
 }
 
+// What a call arrow says: `feeFor(hoursUntilVisit)` — the VALUES passed, not the
+// callee's parameter list. The plugin reads this label as a binding (it becomes
+// `verify(collab).feeFor(hoursUntilVisit)`), so a value that exists nowhere in
+// the flow produces code that references something undefined.
+//
+// Falls back to the declared parameter names when a step carries no binding —
+// hand-built sequences and pre-binding AI responses still emit something valid,
+// and DataflowLinter then judges whether those names actually resolve.
+function callSignature(step, m) {
+    const n = normalizeMethodLike(m); if (!n) return '?()';
+    const bound = (step && Array.isArray(step.args)) ? step.args.filter(Boolean) : [];
+    if (bound.length > 0) return `${n.name || '?'}(${bound.join(', ')})`;
+    const declared = (n.inputs || []).map(i => (i.name || i.type || '').trim()).filter(Boolean);
+    return `${n.name || '?'}(${declared.join(', ')})`;
+}
+
 function methodPreviewSignature(m) {
     const n = normalizeMethodLike(m); if (!n) return '?() → void';
     const types = (n.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
@@ -1293,6 +1309,110 @@ function returnLabelFor(m) {
     const n = normalizeMethodLike(m);
     if (!n || !n.output || n.output.trim() === '' || n.output.trim().toLowerCase() === 'void') return null;
     return n.output.trim();
+}
+
+// --- Named results: the value a call hands back ---
+//
+// The grammar's return arrow is `value : Type` (java_spring.md) — a NAME, then
+// its type. Emitting the type alone loses the data flow: nothing downstream can
+// say "this is the value I pass on", so a design can fetch a strategy and never
+// use it and still look correct. Names are derived from the type, deduplicated
+// in flow order, and overridable per step via `step.resultName`.
+
+// "Optional<Owner>" / "List<Visit>" / "org.x.Owner" → "Owner".
+function payloadTypeName(type) {
+    let t = unwrapOptional((type || '').trim());
+    const generic = /^([A-Za-z_][\w]*)<(.+)>$/.exec(t);
+    if (generic && JDK_GENERIC_OUTER.has(generic[1])) {
+        // A container's payload is what the reader cares about; Map keeps its outer name.
+        const inner = generic[2].split(',').pop().trim();
+        t = generic[1] === 'Map' ? generic[1] : inner;
+    } else if (generic) {
+        t = generic[1];
+    }
+    const dot = t.lastIndexOf('.');
+    return dot >= 0 ? t.slice(dot + 1) : t;
+}
+
+function defaultResultName(type) {
+    const t = payloadTypeName(type);
+    if (!t) return 'result';
+    const base = t.charAt(0).toLowerCase() + t.slice(1);
+    // A collection returns many of them: List<Visit> → visits.
+    const isCollection = /^(List|Set|Collection|Iterable|Queue|Deque|Stream)</.test((type || '').trim());
+    return isCollection ? base + 's' : base;
+}
+
+// Returns Map<step.id, resultName>. Void calls are absent (no return arrow).
+// The entry method's parameters seed the namespace so a result never shadows an
+// input the flow already refers to by that name.
+//
+// A returned value is named after the first later argument that needs its type
+// and has no other source — a guard returning `long` into `feeFor(hoursUntilVisit)`
+// is `hoursUntilVisit`, not `long`. That is not cosmetic: it is how the design
+// states which value feeds which call, and it is what makes an unconsumed
+// result visible (nothing claims it, so it keeps its type-derived name and the
+// data-flow gate can see it dangling).
+function resolveResultNames(seq) {
+    const seq2 = seq || state.sequence;
+    const used = new Set();
+    const entry = seq2.find(s => s.kind === STEP_KIND.CALL && isSystemCaller(s.callerId));
+    if (entry) {
+        const entryMethod = findMethod(entry.calleeId, entry.methodId);
+        for (const i of ((entryMethod && entryMethod.inputs) || [])) {
+            if (i && i.name) used.add(i.name);
+        }
+    }
+
+    // Every argument consumed downstream, in flow order, with the step that consumes it.
+    const consumers = [];
+    seq2.forEach((s, idx) => {
+        if (s.kind !== STEP_KIND.CALL || isSystemCaller(s.callerId) || isSystemCaller(s.calleeId)) return;
+        const m = findCalleeMethod(s.calleeId, s.methodId);
+        for (const i of ((normalizeMethodLike(m) || {}).inputs || [])) {
+            if (i && i.name && i.type) consumers.push({ idx, name: i.name, type: i.type, claimed: false });
+        }
+    });
+
+    const map = new Map();
+    seq2.forEach((s, idx) => {
+        if (s.kind !== STEP_KIND.CALL || isSystemCaller(s.callerId)) return;
+        const method = isSystemCaller(s.calleeId)
+            ? findMethod(s.callerId, s.methodId)
+            : findCalleeMethod(s.calleeId, s.methodId);
+        const type = method ? returnLabelFor(method) : null;
+        if (!type) return;
+
+        let wanted = (s.resultName || '').trim();
+        if (!wanted && isSystemCaller(s.calleeId)) {
+            // The final return to [*] is named `result`, matching DesignDeltaEmitter
+            // so a derived before-flow and a proposed after-flow read the same.
+            wanted = 'result';
+        }
+        if (!wanted) {
+            const need = consumers.find(c => !c.claimed && c.idx > idx && !used.has(c.name)
+                && payloadTypeName(c.type) === payloadTypeName(type));
+            if (need) {
+                need.claimed = true;
+                wanted = need.name;
+            }
+        }
+        if (!wanted) wanted = defaultResultName(type);
+
+        let name = wanted;
+        for (let n = 2; used.has(name); n++) name = wanted + n;
+        used.add(name);
+        map.set(s.id, name);
+    });
+    return map;
+}
+
+// The return-arrow label for one step: `owner : Owner`, or null when void.
+function returnLabelForStep(step, method, names) {
+    const type = returnLabelFor(method);
+    if (!type) return null;
+    const name = names ? names.get(step.id) : null;
+    return name ? `${name} : ${type}` : type;
 }
 
 // Returns Map<step.id, participant | null>. A call step "creates" a participant
@@ -1595,8 +1715,18 @@ function hideAnalyzeBanner() {
 // Walk the AI's recursive {steps} response and produce state.sequence
 // entries. Caller/callee names resolve to participant IDs; methods
 // resolve by name on the named callee, and if missing are AUTO-CREATED
-// on that participant using the AI's args/returns (or empty/void).
+// on that participant from the step's `newMethod` signature.
 // Unknown participants → step dropped + warning surfaced.
+//
+// Two different things travel on a step and must not be confused:
+//   step.args      — the VALUES the caller passes here (a data_pipe binding),
+//                    e.g. ["initiator"]. Strings, caller's vocabulary.
+//   method.inputs  — the callee's declared PARAMETERS, e.g. [{name:"key"}].
+//                    Objects, callee's vocabulary; decision-table sidecars key
+//                    on these names, so they must not be rewritten to match a
+//                    binding (analyzer.md: cases[].inputs keys match args[].name).
+// The .puml arrow shows the binding, because that is what the plugin needs to
+// generate `verify(collab).method(value)`.
 function resolveSequence(aiResponse) {
     const seq = [];
     const warnings = [];
@@ -1616,16 +1746,30 @@ function resolveSequence(aiResponse) {
             || null;
     }
 
-    function findOrCreateMethod(callee, methodName, args, returns) {
+    // The signature comes from `newMethod` (the AI proposing a contract). Older
+    // responses put a {name,type} list in `args`; accept that shape too so a
+    // design produced before the binding split still resolves.
+    function findOrCreateMethod(callee, methodName, step) {
         if (!methodName) return null;
         let m = callee.methods.find(mm => mm.name === methodName);
         if (m) return m;
-        const inputs = (args || [])
-            .filter(a => a && (a.name || a.type))
+        const proposed = step.newMethod || {};
+        const rawParams = Array.isArray(proposed.params) ? proposed.params
+            : (Array.isArray(step.args) ? step.args : []);
+        const inputs = rawParams
+            .filter(a => a && typeof a === 'object' && (a.name || a.type))
             .map(a => ({ name: a.name || '', type: a.type || '' }));
-        m = makeMethod(methodName, inputs, returns || '');
+        m = makeMethod(methodName, inputs, proposed.returns || step.returns || '');
         callee.methods.push(m);
         return m;
+    }
+
+    // The values passed at this call site. Strings only — an object here is a
+    // signature from a pre-binding response, and a signature is not a binding.
+    function bindingsOf(step) {
+        return (Array.isArray(step.args) ? step.args : [])
+            .filter(a => typeof a === 'string' && a.trim())
+            .map(a => a.trim());
     }
 
     function visit(steps) {
@@ -1669,7 +1813,7 @@ function resolveSequence(aiResponse) {
             // (behaviors are part of the entity contract — never invent).
             let method;
             if (callee.methods) {
-                method = findOrCreateMethod(callee, s.method, s.args, s.returns);
+                method = findOrCreateMethod(callee, s.method, s);
                 if (!method) {
                     warnings.push(`Dropped call to ${callee.name}: no method name given`);
                     continue;
@@ -1692,7 +1836,12 @@ function resolveSequence(aiResponse) {
                 calleeId: callee.id,
                 // Participant methods have a stable id; entity behaviors
                 // are identified by name (Option A — see findCalleeMethod).
-                methodId: method.id || method.name
+                methodId: method.id || method.name,
+                // The data_pipe binding: what this call passes, and what the
+                // returned value is called. Absent → the emitter falls back to
+                // the declared parameter names (hand-built sequences, older runs).
+                args: bindingsOf(s),
+                resultName: (s.resultName || '').trim()
             });
         }
     }
@@ -1790,6 +1939,25 @@ async function runSequence(refusalFeedback = null) {
             // can still run.
             showAnalyzeBanner(warnings.join(' · '), { spinning: false, error: true, dismissable: true });
         }
+
+        // Check the value graph as soon as the flow exists, not at review time.
+        // Same rule, same server-side implementation as the Step-3 gate — the
+        // only difference is that here the sequencer can still fix it itself.
+        const broken = (await lintDesign()).violations;
+        if (broken.length > 0 && !refusalFeedback) {
+            showAnalyzeBanner('Sequence used values nothing produces — asking for a fix…', { spinning: true });
+            return await runSequence(
+                'The sequence you produced does not connect its values:\n\n'
+                + broken.map(v => '- ' + v).join('\n')
+                + '\n\nEvery argument must be a parameter of the entry method or the '
+                + 'resultName of an earlier step. Add the step that produces the '
+                + 'missing value, or pass a value that already exists. Do not invent names.');
+        }
+        if (broken.length > 0) {
+            // Second attempt still broken: keep the design, let the Step-3 gate
+            // block sign-off. A wrong design that is visible beats a hidden retry loop.
+            showAnalyzeBanner(broken.join(' · '), { spinning: false, error: true, dismissable: true });
+        }
         return true;
     } catch (err) {
         if (state.analyzeAborted) {
@@ -1804,6 +1972,47 @@ async function runSequence(refusalFeedback = null) {
             { spinning: false, error: true, dismissable: true }
         );
         return false;
+    }
+}
+
+// Ask the server whether the design's value graph connects: every argument has
+// a source above it, every stated result has a consumer below it. One rule
+// (DataflowLinter), one endpoint, called from wherever a design exists — after
+// composition, where the sequencer can still fix it, and at Step-3 review, where
+// the team can. Never throws: a gate that cannot run reports nothing rather than
+// blocking the wizard.
+// The public methods of every type this design REUSES, keyed by simple name.
+// Sending only the bound types keeps the payload proportional to the design
+// rather than to the codebase, and it is exactly the set the accessor rule can
+// judge: a type being created has no methods to check against yet.
+function reusedTypeMethods() {
+    const catalog = state.codebaseCatalog;
+    if (!catalog || !Array.isArray(catalog.types)) return {};
+    const boundFqns = new Set([
+        ...(state.participants || []).filter(p => p && p.existingFqn).map(p => p.existingFqn.trim()),
+        ...(state.entities || []).filter(e => e && e.existingFqn).map(e => e.existingFqn.trim())
+    ]);
+    if (boundFqns.size === 0) return {};
+    const out = {};
+    for (const t of catalog.types) {
+        if (!t || !boundFqns.has(t.fqn)) continue;
+        out[t.name] = (t.publicMethods || []).map(m => m && m.name).filter(Boolean);
+    }
+    return out;
+}
+
+async function lintDesign() {
+    try {
+        const res = await fetch('/api/design/lint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ puml: emitPlantUml(), knownTypes: reusedTypeMethods() })
+        });
+        if (!res.ok) return { violations: [], warnings: [] };
+        const report = await res.json();
+        return { violations: report.violations || [], warnings: report.warnings || [] };
+    } catch {
+        return { violations: [], warnings: [] };
     }
 }
 
@@ -3146,6 +3355,7 @@ function renderSteps() {
     }
 
     const creates = resolveCreates();
+    const resultNames = resolveResultNames();
     let callIdx = 0;
 
     // Track the open fragment stack so frag-end rows know what they're closing
@@ -3263,7 +3473,9 @@ function renderSteps() {
             const sutName = sut.name || '(unnamed)';
             const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
             const methodCall = `${method.name || '?'}(${inputArgs})`;
-            const ret = returnLabelFor(method);
+            // The entry row previews the method's return type; the final-return
+            // row is a real return arrow, so it shows the named value.
+            const ret = isEntry ? returnLabelFor(method) : returnLabelForStep(step, method, resultNames);
             const row = document.createElement('div');
             row.className = 'step-row sys-edge';
             row.dataset.id = step.id;
@@ -3319,9 +3531,9 @@ function renderSteps() {
         callIdx++;
         const callerName = caller.name || '(unnamed)';
         const calleeName = callee.name || '(unnamed)';
-        const inputArgs = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
-        const methodCall = `${method.name || '?'}(${inputArgs})`;
-        const ret = returnLabelFor(method);
+        // Show the binding, so the row reads the same as the emitted arrow.
+        const methodCall = callSignature(call, method);
+        const ret = returnLabelForStep(call, method, resultNames);
         const created = creates.get(call.id);
 
         // Inline trailing return suffix on the same line as the call.
@@ -3931,6 +4143,7 @@ function emitPlantUml() {
     }
 
     const creates = resolveCreates();
+    const resultNames = resolveResultNames();
     let indent = 0;
     const pad = () => '  '.repeat(indent);
 
@@ -3986,7 +4199,7 @@ function emitPlantUml() {
             const caller = findParticipant(s.callerId);
             const method = findMethod(s.callerId, s.methodId);
             if (!caller || !method) return;
-            const ret = returnLabelFor(method);
+            const ret = returnLabelForStep(s, method, resultNames);
             if (ret) {
                 lines.push(`${pad()}[*] <-- ${caller.name || '_'} : ${ret}`);
             }
@@ -4015,13 +4228,16 @@ function emitPlantUml() {
             // PlantUML start Builder's lifeline mid-diagram, faithfully
             // reflecting the "constructed at this point" semantics.
             const createdName = created.name;
-            lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
+            lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
             lines.push(`${pad()}create ${createdName}`);
-            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdName}`);
+            // The returned instance is named like any other result, so later calls
+            // can reference it (java_spring.md's factory walkthrough does the same).
+            const createdValue = resultNames.get(s.id) || createdName;
+            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdValue} : ${createdName}`);
             return;
         }
-        lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
-        const ret = returnLabelFor(method);
+        lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
+        const ret = returnLabelForStep(s, method, resultNames);
         if (ret) {
             // Returns use the dashed `<--` form (PlantUML's conventional return
             // arrow) so they're visually distinct from the solid call arrows
@@ -4061,6 +4277,7 @@ function renderSequenceDiagram(steps, container) {
     }
 
     const creates = resolveCreates(steps);
+    const resultNames = resolveResultNames(steps);
 
     // Resolve calls; build lifelines + remember which step (by index) creates which.
     const resolved = [];
@@ -4075,14 +4292,13 @@ function renderSequenceDiagram(steps, container) {
         const toName = callee.name || '(unnamed)';
         if (!lifelines.includes(fromName)) lifelines.push(fromName);
         if (!lifelines.includes(toName)) lifelines.push(toName);
-        const argText = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
         const created = creates.get(s.id);
         if (created && !lifelines.includes(created.name)) lifelines.push(created.name);
         resolved.push({
             from: fromName,
             to: toName,
-            label: `${method.name || '?'}(${argText})`,
-            ret: returnLabelFor(method),
+            label: callSignature(s, method),
+            ret: returnLabelForStep(s, method, resultNames),
             isCreate: !!created,
             createsName: created ? created.name : null
         });
@@ -4392,6 +4608,9 @@ function syncSignoffUI() {
         if (signoffBlockedByDrops()) {
             status.textContent = 'Blocked — this design removes existing calls; acknowledge under Design diff first.';
             status.classList.remove('complete');
+        } else if (signoffBlockedByDataflow()) {
+            status.textContent = 'Blocked — this design uses values nothing produces; acknowledge under Design diff first.';
+            status.classList.remove('complete');
         } else {
             status.textContent = signed
                 ? 'Team signoff received — ready to generate.'
@@ -4404,7 +4623,7 @@ function syncSignoffUI() {
 }
 
 function allSignedOff() {
-    return !!state.teamSignedOff && !signoffBlockedByDrops();
+    return !!state.teamSignedOff && !signoffBlockedByDrops() && !signoffBlockedByDataflow();
 }
 
 (() => {
@@ -4531,10 +4750,63 @@ function setDroppedCalls(dropped) {
     syncSignoffUI();
 }
 
+// --- Data-flow gate: a proposal must connect the values it names ---
+//
+// Sibling of the dropped-call gate, and the same shape: a deterministic verdict
+// that blocks sign-off until acknowledged. The rules live server-side
+// (DataflowLinter) so the wizard, the CLI and CI all judge a design the same way.
+// Violations = a call consumes a value nothing produces. Warnings = a value is
+// produced and never used (severed variance) — informational, never blocking.
+
+function signoffBlockedByDataflow() {
+    return (state.reviewDataflow || []).length > 0 && !state.reviewDataflowAck;
+}
+
+async function refreshDataflowLint() {
+    const report = await lintDesign();
+    setDataflowIssues(report.violations, report.warnings);
+}
+
+function setDataflowIssues(violations, warnings) {
+    const panel = document.getElementById('review-dataflow');
+    const signature = violations.join('|');
+    if (state.reviewDataflowSig !== signature) {
+        state.reviewDataflowSig = signature;
+        state.reviewDataflowAck = false;  // a different set of breaks needs a fresh acknowledgement
+    }
+    state.reviewDataflow = violations;
+    if (panel) {
+        if (violations.length === 0 && warnings.length === 0) {
+            panel.classList.add('hidden');
+            panel.innerHTML = '';
+        } else {
+            panel.classList.remove('hidden');
+            const vBlock = violations.length === 0 ? '' : `
+                <div class="review-dropped-title">⚠ This design uses values that nothing in the flow produces:</div>
+                <ul>${violations.map(v => `<li><code>${escapeHtml(v)}</code></li>`).join('')}</ul>
+                <label class="review-dropped-ack">
+                    <input type="checkbox" id="dataflow-ack" ${state.reviewDataflowAck ? 'checked' : ''}>
+                    <span>These values arrive some other way — proceed</span>
+                </label>`;
+            const wBlock = warnings.length === 0 ? '' : `
+                <div class="review-dataflow-warn-title">Produced but never used:</div>
+                <ul>${warnings.map(w => `<li><code>${escapeHtml(w)}</code></li>`).join('')}</ul>`;
+            panel.innerHTML = vBlock + wBlock;
+            const ack = document.getElementById('dataflow-ack');
+            if (ack) ack.addEventListener('change', e => {
+                state.reviewDataflowAck = !!e.target.checked;
+                syncSignoffUI();
+            });
+        }
+    }
+    syncSignoffUI();
+}
+
 function renderReviewBefore() {
     const body = reviewEls.beforeBody;
     if (!body || !reviewEls.diff) return;
     setDroppedCalls([]); // no before, no gate — until a flow is derived below
+    refreshDataflowLint();
     const showBanner = (extraNote) => {
         reviewEls.diff.classList.remove('has-before');
         body.innerHTML = greenfieldBannerHtml()

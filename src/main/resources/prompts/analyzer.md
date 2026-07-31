@@ -187,6 +187,14 @@ its **collaborators**.
   and the parameter — not the method's name — distinguishes one case from
   another. One method per operation, regardless of how many cases the
   parameter can take.
+- `behaviors[].args` — the inputs the method needs. **A signature is a promise
+  the orchestrator has to keep.** Every argument here must be something the SUT
+  can actually hand over when it calls this behavior: one of the SUT entry
+  behavior's own parameters, or the return of a behavior called earlier in the
+  flow. Design the SUT's flow first and let it decide these; a leaf does not get
+  to demand an input nobody can produce. This chaining — one behavior's `returns`
+  becoming the next behavior's argument — is what the rest of DisC calls a
+  **`data_pipe`**, and it is the property rule `dataflow-provenance` enforces.
 - `behaviors[].touches` — OPTIONAL list of {entity, fields, mode} describing
   what entity state the method's body would read or write. Be conservative —
   only what the method would plausibly touch given its name and purpose;
@@ -549,7 +557,11 @@ windows, eligibility predicates). The case set can grow without new code.
 - NO `sealed-interface` entity for this axis — the discriminator is a plain
   enum or reused value type.
 
-Shape sketch (abstract placeholders, no domain content):
+Shape sketch. The names below are PLACEHOLDERS for a shape, never output:
+replace `key` with the actual discriminator the orchestrator holds
+(`initiator`, `region`), `input` and `rule` with the real values that flow in,
+and `Strategy` / `Rule` with domain type names. A literal `key` or `input` in
+your output means you copied the shape instead of instantiating it.
 
 ```
 participants:
@@ -596,7 +608,11 @@ interchangeable at the same call site, selected by an external key.
   interface as ONE call arrow in the wizard-composed sequence; never
   enumerate variants as separate arrows from the orchestrator.
 
-Shape sketch (abstract placeholders, no domain content):
+Shape sketch. The names below are PLACEHOLDERS for a shape, never output:
+replace `key` with the actual discriminator the orchestrator holds
+(`initiator`, `region`), `input` and `rule` with the real values that flow in,
+and `Strategy` / `Rule` with domain type names. A literal `key` or `input` in
+your output means you copied the shape instead of instantiating it.
 
 ```
 participants:
