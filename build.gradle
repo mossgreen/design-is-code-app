@@ -31,6 +31,13 @@ tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'eval'
     }
+    // Forward disc.stability.* into the test JVM: the foreign-repo derivation
+    // check is opt-in (it needs a checkout to point at) but costs no model
+    // calls, so it belongs in `test` rather than `eval`. Skips when unset.
+    System.properties.each { k, v ->
+        def key = k.toString()
+        if (key.startsWith('disc.stability.')) systemProperty(key, v.toString())
+    }
 }
 
 // Analyzer eval: `./gradlew eval [-Ddisc.eval.runs=3] [-Ddisc.eval.passRate=0.66]`.

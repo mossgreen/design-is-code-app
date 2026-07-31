@@ -324,9 +324,15 @@ public class RunService {
         Path tmpDir = projectRoot.resolve(".disc-tmp");
         Files.createDirectories(tmpDir);
         Path tmpFile = Files.createTempFile(tmpDir, "validate-", ".puml");
+        List<Path> staged = new ArrayList<>();
 
         try {
             Files.writeString(tmpFile, req.puml(), StandardCharsets.UTF_8);
+            // Step 1 pairs a decision table to its leaf by filename, next to the
+            // .puml. Without them the plugin judged the design as if every leaf
+            // were unspecified, so a sidecar could disagree with the diagram and
+            // validate would still pass.
+            staged.addAll(stageSidecars(tmpDir, req.sidecars()));
             Path relPath = projectRoot.relativize(tmpFile);
 
             String slashCommand = DISC_SLASH_COMMAND + " " + relPath.toString() + " --validate-only";
@@ -419,7 +425,39 @@ public class RunService {
                 // Best-effort cleanup; leftover .disc-tmp/validate-*.puml is
                 // harmless and gitignorable.
             }
+            for (Path p : staged) {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (java.io.IOException ignored) {
+                    // same: best effort
+                }
+            }
         }
+    }
+
+    /**
+     * Writes decision-table sidecars beside the temp {@code .puml} so Step 1 sees
+     * the same design the reviewer did, and returns what it wrote so the caller
+     * can clean up.
+     *
+     * <p>File names are taken from the client but treated as untrusted: anything
+     * with a path separator or a parent reference is dropped rather than allowed
+     * to escape {@code .disc-tmp}.
+     */
+    static List<Path> stageSidecars(Path tmpDir, java.util.Map<String, String> sidecars)
+            throws java.io.IOException {
+        List<Path> written = new ArrayList<>();
+        if (sidecars == null || sidecars.isEmpty()) return written;
+        for (java.util.Map.Entry<String, String> e : sidecars.entrySet()) {
+            String name = e.getKey();
+            if (name == null || name.isBlank() || e.getValue() == null) continue;
+            if (name.contains("/") || name.contains("\\") || name.contains("..")) continue;
+            Path target = tmpDir.resolve(name).normalize();
+            if (!target.getParent().equals(tmpDir)) continue;
+            Files.writeString(target, e.getValue(), StandardCharsets.UTF_8);
+            written.add(target);
+        }
+        return written;
     }
 
     /** Validate is Step-1 only — should finish in seconds. Cap at 60s. */

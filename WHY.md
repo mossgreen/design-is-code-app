@@ -25,7 +25,7 @@ grab-bag of features.
 | 3 | So structure is **bounded, uniform, and testable** — every branch gets an address and a receipt | orchestrator stays linear; resolver variance lives in table rows; leaf variance is table-pinned | ✅ **`DesignReceiptTest`** — the orchestrator has zero fragments; the naive version of the same ticket has three |
 | 4 | Which keeps **NPath complexity low** and change cost flat | branches are *placed*, not accumulated | 🟡 measuring — `experiments/naive-vs-disc`, 1 of 6 chains |
 | 5 | And the reviewer **already understands** the code, having approved its shape | sign-off precedes generation | ⛔ mechanism sound, never tested on anyone outside the project |
-| 6 | **Drift cannot return**, because design is derived and never stored | on-demand projection from code | ✅ **`DerivationStabilityTest`** — repeated derivation is byte-identical, a comment moves nothing, one added call moves one arrow |
+| 6 | **Drift cannot return**, because design is derived and never stored | on-demand projection from code | ✅ **`DerivationStabilityTest`** (DisC-shaped fixture) + **`DerivationStabilityForeignRepoTest`** (any repo, opt-in) — five derivations byte-identical, a comment moves nothing, one added call moves exactly one arrow |
 | 7 | And you can **check all of it in 30 seconds** | arrow count equals `verify()` count | ✅ **`DesignReceiptTest`** computes the expected receipt from the design alone (6 calls, 2 rows) — the same counts the real generation produced |
 
 Every `✅` above names a test you can run with `./gradlew test`. None of them
@@ -111,6 +111,15 @@ check.
 - **Java/Spring only.** The methodology is language-neutral; one profile exists.
 - **Generation is verified on one repository.** Both acts on `spring-petclinic`,
   zero hand edits. One repo is evidence, not a guarantee.
+- **Derivation stability is proven where it has been run, not everywhere.**
+  `DerivationStabilityTest` runs against a DisC-shaped fixture;
+  `DerivationStabilityForeignRepoTest` has been run against upstream
+  `spring-petclinic` (30 sources, `VisitController#processNewVisitForm`) and
+  holds. That is two codebases. The test is opt-in and costs nothing, so the
+  honest position is "point it at yours and find out" — not "it always holds".
+  On that upstream run DisC also reported `captureComplete=false`, correctly
+  refusing to claim it had understood a body containing a branch and a chained
+  static call; a partial derivation is disclosed, not hidden.
 
 ## How to check these yourself
 
@@ -123,7 +132,7 @@ check.
 | 3 | `DesignReceiptTest.theDiscOrchestratorContainsNoBranchAtAll`, beside `theNaiveVersionOfTheSameTicketDoesBranchInTheOrchestrator` — same ticket, one design with three fragments and one with none. |
 | 4 | `experiments/naive-vs-disc/` — pre-registered, PMD-measured, in progress. Predictions were committed before any result existed; see `PROTOCOL.md` and `PROTOCOL-2.md`. |
 | 5 | Not checkable yet. This is the gap. |
-| 6 | `DerivationStabilityTest` — derives five times and compares bytes, then proves a comment changes nothing and one added call adds exactly one arrow. Both edit tests were confirmed to *fail* when given a real change, so they are not passing vacuously. |
+| 6 | `DerivationStabilityTest` — derives five times and compares bytes, then proves a comment changes nothing and one added call adds exactly one arrow. Both edit tests were confirmed to *fail* when given a real change, so they are not passing vacuously. Then run it on **your own** repository, which needs no model calls:<br>`./gradlew test --tests '*ForeignRepo*' -Ddisc.stability.repo=<path> -Ddisc.stability.entry=Class#method` |
 
 ## Where the evidence lives
 

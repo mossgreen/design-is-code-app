@@ -2041,6 +2041,12 @@ async function runValidator() {
             body: JSON.stringify({
                 projectPath: state.projectPath,
                 puml: emitPlantUml(),
+                // Step 1 pairs each decision table to its leaf by filename, so a
+                // validate without them judges a different design than the one
+                // that gets saved — the same set collectAllDecisionTables()
+                // writes, or the check is of something nobody ships.
+                sidecars: Object.fromEntries(
+                    collectAllDecisionTables().map(d => [d.fileName, d.content])),
                 model: 'claude-haiku-4-5'
             }),
             signal: state.analyzeAbort ? state.analyzeAbort.signal : undefined
