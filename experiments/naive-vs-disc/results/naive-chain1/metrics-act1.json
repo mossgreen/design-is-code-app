@@ -1,0 +1,770 @@
+{
+  "pmd_version": "7.26.0",
+  "whole_repo": {
+    "npath": {
+      "max": 36,
+      "mean": 2.22,
+      "total": 211,
+      "methods_measured": 95,
+      "methods_above_1": 21,
+      "all": [
+        {
+          "file": "PetController.java",
+          "method": "processCreationForm(Owner, Pet, BindingResult, RedirectAttributes)",
+          "npath": 36
+        },
+        {
+          "file": "PetController.java",
+          "method": "processUpdateForm(Owner, Pet, BindingResult, RedirectAttributes)",
+          "npath": 36
+        },
+        {
+          "file": "PetValidator.java",
+          "method": "validate(Object, Errors)",
+          "npath": 12
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPet(String, boolean)",
+          "npath": 6
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "processFindForm(int, Owner, BindingResult, Model)",
+          "npath": 6
+        },
+        {
+          "file": "VisitController.java",
+          "method": "processNewVisitForm(Owner, int, Visit, BindingResult, RedirectAttributes)",
+          "npath": 6
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPet(Integer)",
+          "npath": 4
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "processUpdateOwnerForm(Owner, BindingResult, int, RedirectAttributes)",
+          "npath": 3
+        },
+        {
+          "file": "PetTypeFormatter.java",
+          "method": "parse(String, Locale)",
+          "npath": 3
+        },
+        {
+          "file": "Visit.java",
+          "method": "cancellationFee(LocalDateTime, LocalDateTime)",
+          "npath": 3
+        },
+        {
+          "file": "NamedEntity.java",
+          "method": "toString()",
+          "npath": 2
+        },
+        {
+          "file": "Owner.java",
+          "method": "addPet(Pet)",
+          "npath": 2
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "findOwner(Integer)",
+          "npath": 2
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "processCreationForm(Owner, BindingResult, RedirectAttributes)",
+          "npath": 2
+        },
+        {
+          "file": "PetController.java",
+          "method": "findPet(int, Integer)",
+          "npath": 2
+        },
+        {
+          "file": "PetController.java",
+          "method": "updatePetDetails(Owner, Pet)",
+          "npath": 2
+        },
+        {
+          "file": "PetController.java",
+          "method": "isDuplicatePetNameViolation(DataIntegrityViolationException)",
+          "npath": 2
+        },
+        {
+          "file": "PetTypeFormatter.java",
+          "method": "print(PetType, Locale)",
+          "npath": 2
+        },
+        {
+          "file": "VisitController.java",
+          "method": "loadPetWithVisit(int, int, Map<String, Object>)",
+          "npath": 2
+        },
+        {
+          "file": "Vet.java",
+          "method": "getSpecialtiesInternal()",
+          "npath": 2
+        },
+        {
+          "file": "Vets.java",
+          "method": "getVetList()",
+          "npath": 2
+        },
+        {
+          "file": "PetClinicApplication.java",
+          "method": "main(String[])",
+          "npath": 1
+        },
+        {
+          "file": "PetClinicRuntimeHints.java",
+          "method": "registerHints(RuntimeHints, ClassLoader)",
+          "npath": 1
+        },
+        {
+          "file": "BaseEntity.java",
+          "method": "getId()",
+          "npath": 1
+        },
+        {
+          "file": "BaseEntity.java",
+          "method": "setId(Integer)",
+          "npath": 1
+        },
+        {
+          "file": "BaseEntity.java",
+          "method": "isNew()",
+          "npath": 1
+        },
+        {
+          "file": "NamedEntity.java",
+          "method": "getName()",
+          "npath": 1
+        },
+        {
+          "file": "NamedEntity.java",
+          "method": "setName(String)",
+          "npath": 1
+        },
+        {
+          "file": "Person.java",
+          "method": "getFirstName()",
+          "npath": 1
+        },
+        {
+          "file": "Person.java",
+          "method": "setFirstName(String)",
+          "npath": 1
+        },
+        {
+          "file": "Person.java",
+          "method": "getLastName()",
+          "npath": 1
+        },
+        {
+          "file": "Person.java",
+          "method": "setLastName(String)",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "getAddress()",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "setAddress(String)",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "getCity()",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "setCity(String)",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "getTelephone()",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "setTelephone(String)",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPets()",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPet(String)",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "toString()",
+          "npath": 1
+        },
+        {
+          "file": "Owner.java",
+          "method": "addVisit(Integer, Visit)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "OwnerController(OwnerRepository)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "setAllowedFields(WebDataBinder)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "initCreationForm()",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "initFindForm()",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "addPaginationModel(int, Model, Page<Owner>)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "findPaginatedForOwnersLastName(int, String)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "initUpdateOwnerForm()",
+          "npath": 1
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "showOwner(int)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerRepository.java",
+          "method": "findByLastNameStartingWith(String, Pageable)",
+          "npath": 1
+        },
+        {
+          "file": "OwnerRepository.java",
+          "method": "findById(Integer)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "setBirthDate(LocalDate)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getBirthDate()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getType()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "setType(PetType)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getVisits()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "addVisit(Visit)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "removeVisit(Visit)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "PetController(OwnerRepository, PetTypeRepository)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "populatePetTypes()",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "findOwner(int)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "initOwnerBinder(WebDataBinder)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "initPetBinder(WebDataBinder)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "initCreationForm(Owner, ModelMap)",
+          "npath": 1
+        },
+        {
+          "file": "PetController.java",
+          "method": "initUpdateForm()",
+          "npath": 1
+        },
+        {
+          "file": "PetTypeFormatter.java",
+          "method": "PetTypeFormatter(PetTypeRepository)",
+          "npath": 1
+        },
+        {
+          "file": "PetTypeRepository.java",
+          "method": "findPetTypes()",
+          "npath": 1
+        },
+        {
+          "file": "PetValidator.java",
+          "method": "supports(Class<?>)",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "Visit()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "getDate()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "setDate(LocalDate)",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "getDescription()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "setDescription(String)",
+          "npath": 1
+        },
+        {
+          "file": "VisitController.java",
+          "method": "VisitController(OwnerRepository)",
+          "npath": 1
+        },
+        {
+          "file": "VisitController.java",
+          "method": "setAllowedFields(WebDataBinder)",
+          "npath": 1
+        },
+        {
+          "file": "VisitController.java",
+          "method": "minVisitDate()",
+          "npath": 1
+        },
+        {
+          "file": "VisitController.java",
+          "method": "initNewVisitForm()",
+          "npath": 1
+        },
+        {
+          "file": "CacheConfiguration.java",
+          "method": "petclinicCacheConfigurationCustomizer()",
+          "npath": 1
+        },
+        {
+          "file": "CacheConfiguration.java",
+          "method": "cacheConfiguration()",
+          "npath": 1
+        },
+        {
+          "file": "CrashController.java",
+          "method": "triggerException()",
+          "npath": 1
+        },
+        {
+          "file": "WebConfiguration.java",
+          "method": "localeResolver()",
+          "npath": 1
+        },
+        {
+          "file": "WebConfiguration.java",
+          "method": "localeChangeInterceptor()",
+          "npath": 1
+        },
+        {
+          "file": "WebConfiguration.java",
+          "method": "addInterceptors(InterceptorRegistry)",
+          "npath": 1
+        },
+        {
+          "file": "WelcomeController.java",
+          "method": "welcome()",
+          "npath": 1
+        },
+        {
+          "file": "Vet.java",
+          "method": "getSpecialties()",
+          "npath": 1
+        },
+        {
+          "file": "Vet.java",
+          "method": "getNrOfSpecialties()",
+          "npath": 1
+        },
+        {
+          "file": "Vet.java",
+          "method": "addSpecialty(Specialty)",
+          "npath": 1
+        },
+        {
+          "file": "VetController.java",
+          "method": "VetController(VetRepository)",
+          "npath": 1
+        },
+        {
+          "file": "VetController.java",
+          "method": "showVetList(int, Model)",
+          "npath": 1
+        },
+        {
+          "file": "VetController.java",
+          "method": "addPaginationModel(int, Page<Vet>, Model)",
+          "npath": 1
+        },
+        {
+          "file": "VetController.java",
+          "method": "findPaginated(int)",
+          "npath": 1
+        },
+        {
+          "file": "VetController.java",
+          "method": "showResourcesVetList()",
+          "npath": 1
+        },
+        {
+          "file": "VetRepository.java",
+          "method": "findAll()",
+          "npath": 1
+        },
+        {
+          "file": "VetRepository.java",
+          "method": "findAll(Pageable)",
+          "npath": 1
+        }
+      ]
+    },
+    "cyclomatic": {
+      "max": 10,
+      "mean": 1.59,
+      "top": [
+        {
+          "file": "PetController.java",
+          "method": "processCreationForm(Owner, Pet, BindingResult, RedirectAttributes)",
+          "cyclo": 10
+        },
+        {
+          "file": "PetController.java",
+          "method": "processUpdateForm(Owner, Pet, BindingResult, RedirectAttributes)",
+          "cyclo": 10
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPet(String, boolean)",
+          "cyclo": 6
+        },
+        {
+          "file": "PetValidator.java",
+          "method": "validate(Object, Errors)",
+          "cyclo": 5
+        },
+        {
+          "file": "Owner.java",
+          "method": "getPet(Integer)",
+          "cyclo": 4
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "processFindForm(int, Owner, BindingResult, Model)",
+          "cyclo": 4
+        },
+        {
+          "file": "PetTypeFormatter.java",
+          "method": "parse(String, Locale)",
+          "cyclo": 4
+        },
+        {
+          "file": "Visit.java",
+          "method": "cancellationFee(LocalDateTime, LocalDateTime)",
+          "cyclo": 4
+        },
+        {
+          "file": "VisitController.java",
+          "method": "processNewVisitForm(Owner, int, Visit, BindingResult, RedirectAttributes)",
+          "cyclo": 4
+        },
+        {
+          "file": "OwnerController.java",
+          "method": "processUpdateOwnerForm(Owner, BindingResult, int, RedirectAttributes)",
+          "cyclo": 3
+        }
+      ]
+    },
+    "coupling": {
+      "max": 12,
+      "classes_measured": 12,
+      "all": [
+        {
+          "file": "PetController.java",
+          "cbo": 12
+        },
+        {
+          "file": "OwnerController.java",
+          "cbo": 11
+        },
+        {
+          "file": "VisitController.java",
+          "cbo": 10
+        },
+        {
+          "file": "VetController.java",
+          "cbo": 6
+        },
+        {
+          "file": "Pet.java",
+          "cbo": 5
+        },
+        {
+          "file": "PetTypeFormatter.java",
+          "cbo": 4
+        },
+        {
+          "file": "Visit.java",
+          "cbo": 4
+        },
+        {
+          "file": "WebConfiguration.java",
+          "cbo": 4
+        },
+        {
+          "file": "Owner.java",
+          "cbo": 3
+        },
+        {
+          "file": "Vet.java",
+          "cbo": 3
+        },
+        {
+          "file": "PetValidator.java",
+          "cbo": 2
+        },
+        {
+          "file": "CacheConfiguration.java",
+          "cbo": 2
+        }
+      ]
+    }
+  },
+  "ticket_scoped": {
+    "npath": {
+      "max": 3,
+      "mean": 1.15,
+      "total": 15,
+      "methods_measured": 13,
+      "methods_above_1": 1,
+      "all": [
+        {
+          "file": "Visit.java",
+          "method": "cancellationFee(LocalDateTime, LocalDateTime)",
+          "npath": 3
+        },
+        {
+          "file": "Pet.java",
+          "method": "setBirthDate(LocalDate)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getBirthDate()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getType()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "setType(PetType)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getVisits()",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "addVisit(Visit)",
+          "npath": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "removeVisit(Visit)",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "Visit()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "getDate()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "setDate(LocalDate)",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "getDescription()",
+          "npath": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "setDescription(String)",
+          "npath": 1
+        }
+      ]
+    },
+    "cyclomatic": {
+      "max": 4,
+      "mean": 1.23,
+      "top": [
+        {
+          "file": "Visit.java",
+          "method": "cancellationFee(LocalDateTime, LocalDateTime)",
+          "cyclo": 4
+        },
+        {
+          "file": "Pet.java",
+          "method": "setBirthDate(LocalDate)",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getBirthDate()",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getType()",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "setType(PetType)",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "getVisits()",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "addVisit(Visit)",
+          "cyclo": 1
+        },
+        {
+          "file": "Pet.java",
+          "method": "removeVisit(Visit)",
+          "cyclo": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "Visit()",
+          "cyclo": 1
+        },
+        {
+          "file": "Visit.java",
+          "method": "getDate()",
+          "cyclo": 1
+        }
+      ]
+    },
+    "coupling": {
+      "max": 5,
+      "classes_measured": 2,
+      "all": [
+        {
+          "file": "Pet.java",
+          "cbo": 5
+        },
+        {
+          "file": "Visit.java",
+          "cbo": 4
+        }
+      ]
+    },
+    "files_measured": 2
+  },
+  "size": {
+    "main_files": 30,
+    "main_loc": 1896,
+    "test_files": 20,
+    "test_loc": 2345
+  },
+  "tests": {
+    "total": 77,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "change_cost": {
+    "prod_existing_files_modified": 2,
+    "prod_existing_lines_added": 32,
+    "prod_existing_lines_deleted": 0,
+    "test_existing_files_modified": 0,
+    "test_existing_lines_added": 0,
+    "test_existing_lines_deleted": 0,
+    "prod_new_files": 0,
+    "prod_new_lines": 0,
+    "test_new_files": 1,
+    "test_new_lines": 72
+  }
+}

@@ -1,0 +1,19 @@
+The test command needs your approval to run (Maven build). Could you approve it, or would you prefer I run the full suite instead? Here's a summary of what I implemented while we sort out running the tests.
+
+## What I implemented
+
+**Domain logic** — `Visit.java:` added `isCancellable(now)` and `cancellationFee(now)`. Fee is `$0.00` when 48+ hours remain, `$20.00` when less; throws `IllegalStateException` for a past visit. The visit's scheduled moment is its date at start-of-day, so hour-level thresholds are testable.
+
+**Pet.java** — added `getVisit(Integer id)`, `removeVisit(Visit)`, and `orphanRemoval = true` on the visits mapping so a removed visit is deleted, not orphaned.
+
+**VisitCancellationController.java** (new) — `POST /owners/{ownerId}/pets/{petId}/visits/{visitId}/cancel`. Rejects a past visit with a flash `error`; otherwise computes the fee, removes the visit, saves, and redirects with a flash `message`. Separate from `VisitController` to avoid its `@ModelAttribute` that injects a blank visit.
+
+**UI + i18n** — cancel button per visit row in `ownerDetails.html`; added `cancelVisit` key to `messages.properties` and all 9 locale files (keeps `I18nPropertiesSyncTest` green).
+
+**Tests**
+- `VisitTests` — 120h→0.00, exactly 48h→0.00, 47h→20.00, 2h→20.00, past→rejected.
+- `VisitCancellationControllerTests` — future visit removed from pet + save called; past visit rejected and retained.
+
+Every acceptance criterion maps to a test. I could not yet run the suite — the Maven command needs your approval.
+
+Want me to proceed with the run once approved?

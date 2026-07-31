@@ -1,0 +1,143 @@
+diff --git a/src/main/java/org/springframework/samples/petclinic/owner/Pet.java b/src/main/java/org/springframework/samples/petclinic/owner/Pet.java
+index 4f8409e..c6f5bce 100644
+--- a/src/main/java/org/springframework/samples/petclinic/owner/Pet.java
++++ b/src/main/java/org/springframework/samples/petclinic/owner/Pet.java
+@@ -82,4 +82,8 @@ public class Pet extends NamedEntity {
+ 		getVisits().add(visit);
+ 	}
+ 
++	public void removeVisit(Visit visit) {
++		getVisits().remove(visit);
++	}
++
+ }
+diff --git a/src/main/java/org/springframework/samples/petclinic/owner/Visit.java b/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
+index 3bb78e8..7eb5608 100644
+--- a/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
++++ b/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
+@@ -15,7 +15,10 @@
+  */
+ package org.springframework.samples.petclinic.owner;
+ 
++import java.math.BigDecimal;
++import java.time.Duration;
+ import java.time.LocalDate;
++import java.time.LocalDateTime;
+ 
+ import org.springframework.format.annotation.DateTimeFormat;
+ import org.springframework.samples.petclinic.model.BaseEntity;
+@@ -35,6 +38,13 @@ import jakarta.validation.constraints.NotBlank;
+ @Table(name = "visits")
+ public class Visit extends BaseEntity {
+ 
++	/** Cancelling within this window of the appointment incurs a late fee. */
++	public static final Duration LATE_CANCELLATION_WINDOW = Duration.ofHours(48);
++
++	public static final BigDecimal NO_CANCELLATION_FEE = new BigDecimal("0.00");
++
++	public static final BigDecimal LATE_CANCELLATION_FEE = new BigDecimal("20.00");
++
+ 	@Column(name = "visit_date")
+ 	@DateTimeFormat(pattern = "yyyy-MM-dd")
+ 	private LocalDate date;
+@@ -65,4 +75,22 @@ public class Visit extends BaseEntity {
+ 		this.description = description;
+ 	}
+ 
++	/**
++	 * Calculates the fee for cancelling an appointment. A visit cancelled at least
++	 * {@link #LATE_CANCELLATION_WINDOW} before its appointment is free; cancelling later
++	 * incurs the {@link #LATE_CANCELLATION_FEE}.
++	 * @param appointment the moment the visit is scheduled for
++	 * @param cancellationTime the moment the cancellation is requested
++	 * @return the fee charged for the cancellation
++	 * @throws IllegalStateException if the appointment is not in the future relative to
++	 * the cancellation time (a visit that has already happened cannot be cancelled)
++	 */
++	public static BigDecimal cancellationFee(LocalDateTime appointment, LocalDateTime cancellationTime) {
++		if (!appointment.isAfter(cancellationTime)) {
++			throw new IllegalStateException("A visit that has already happened cannot be cancelled");
++		}
++		Duration leadTime = Duration.between(cancellationTime, appointment);
++		return leadTime.compareTo(LATE_CANCELLATION_WINDOW) >= 0 ? NO_CANCELLATION_FEE : LATE_CANCELLATION_FEE;
++	}
++
+ }
+diff --git a/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java b/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java
+new file mode 100644
+index 0000000..d1b810a
+--- /dev/null
++++ b/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java
+@@ -0,0 +1,72 @@
++/*
++ * Copyright 2012-2025 the original author or authors.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      https://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package org.springframework.samples.petclinic.owner;
++
++import java.time.LocalDateTime;
++
++import org.junit.jupiter.api.Test;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
++
++/**
++ * Tests for cancelling a {@link Visit}, covering the late-cancellation fee rules and the
++ * removal of a cancelled visit from an owner's pet.
++ */
++class VisitCancellationTests {
++
++	private static final LocalDateTime NOW = LocalDateTime.of(2025, 1, 1, 12, 0);
++
++	@Test
++	void cancelling120HoursAheadChargesNoFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(120), NOW)).isEqualByComparingTo("0.00");
++	}
++
++	@Test
++	void cancellingExactly48HoursAheadChargesNoFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(48), NOW)).isEqualByComparingTo("0.00");
++	}
++
++	@Test
++	void cancelling47HoursAheadChargesLateFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(47), NOW)).isEqualByComparingTo("20.00");
++	}
++
++	@Test
++	void cancelling2HoursAheadChargesLateFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(2), NOW)).isEqualByComparingTo("20.00");
++	}
++
++	@Test
++	void cancellingAPastVisitIsRejected() {
++		assertThatIllegalStateException().isThrownBy(() -> Visit.cancellationFee(NOW.minusHours(1), NOW));
++	}
++
++	@Test
++	void cancelledVisitIsRemovedFromOwnersPet() {
++		Owner owner = new Owner();
++		Pet pet = new Pet();
++		owner.addPet(pet);
++		pet.setId(1);
++		Visit visit = new Visit();
++		pet.addVisit(visit);
++
++		pet.removeVisit(visit);
++
++		assertThat(owner.getPet(1).getVisits()).doesNotContain(visit);
++	}
++
++}

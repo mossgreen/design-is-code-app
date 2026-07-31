@@ -1,0 +1,83 @@
+diff --git a/src/main/java/org/springframework/samples/petclinic/owner/Visit.java b/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
+index 7eb5608..a3627a3 100644
+--- a/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
++++ b/src/main/java/org/springframework/samples/petclinic/owner/Visit.java
+@@ -45,6 +45,15 @@ public class Visit extends BaseEntity {
+ 
+ 	public static final BigDecimal LATE_CANCELLATION_FEE = new BigDecimal("20.00");
+ 
++	/**
++	 * Identifies who requested a cancellation, which determines the fee rules applied.
++	 */
++	public enum CancellationInitiator {
++
++		OWNER, CLINIC
++
++	}
++
+ 	@Column(name = "visit_date")
+ 	@DateTimeFormat(pattern = "yyyy-MM-dd")
+ 	private LocalDate date;
+@@ -76,7 +85,7 @@ public class Visit extends BaseEntity {
+ 	}
+ 
+ 	/**
+-	 * Calculates the fee for cancelling an appointment. A visit cancelled at least
++	 * Calculates the fee for an owner-initiated cancellation. A visit cancelled at least
+ 	 * {@link #LATE_CANCELLATION_WINDOW} before its appointment is free; cancelling later
+ 	 * incurs the {@link #LATE_CANCELLATION_FEE}.
+ 	 * @param appointment the moment the visit is scheduled for
+@@ -86,9 +95,30 @@ public class Visit extends BaseEntity {
+ 	 * the cancellation time (a visit that has already happened cannot be cancelled)
+ 	 */
+ 	public static BigDecimal cancellationFee(LocalDateTime appointment, LocalDateTime cancellationTime) {
++		return cancellationFee(appointment, cancellationTime, CancellationInitiator.OWNER);
++	}
++
++	/**
++	 * Calculates the fee for cancelling an appointment. When the clinic initiates the
++	 * cancellation the owner is never charged. Owner-initiated cancellations follow the
++	 * late-fee rules: a visit cancelled at least {@link #LATE_CANCELLATION_WINDOW} before
++	 * its appointment is free; cancelling later incurs the
++	 * {@link #LATE_CANCELLATION_FEE}.
++	 * @param appointment the moment the visit is scheduled for
++	 * @param cancellationTime the moment the cancellation is requested
++	 * @param initiator who requested the cancellation
++	 * @return the fee charged for the cancellation
++	 * @throws IllegalStateException if the appointment is not in the future relative to
++	 * the cancellation time (a visit that has already happened cannot be cancelled)
++	 */
++	public static BigDecimal cancellationFee(LocalDateTime appointment, LocalDateTime cancellationTime,
++			CancellationInitiator initiator) {
+ 		if (!appointment.isAfter(cancellationTime)) {
+ 			throw new IllegalStateException("A visit that has already happened cannot be cancelled");
+ 		}
++		if (initiator == CancellationInitiator.CLINIC) {
++			return NO_CANCELLATION_FEE;
++		}
+ 		Duration leadTime = Duration.between(cancellationTime, appointment);
+ 		return leadTime.compareTo(LATE_CANCELLATION_WINDOW) >= 0 ? NO_CANCELLATION_FEE : LATE_CANCELLATION_FEE;
+ 	}
+diff --git a/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java b/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java
+index d1b810a..11fb062 100644
+--- a/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java
++++ b/src/test/java/org/springframework/samples/petclinic/owner/VisitCancellationTests.java
+@@ -50,6 +50,18 @@ class VisitCancellationTests {
+ 		assertThat(Visit.cancellationFee(NOW.plusHours(2), NOW)).isEqualByComparingTo("20.00");
+ 	}
+ 
++	@Test
++	void clinicCancelling2HoursAheadChargesNoFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(2), NOW, Visit.CancellationInitiator.CLINIC))
++			.isEqualByComparingTo("0.00");
++	}
++
++	@Test
++	void ownerCancelling2HoursAheadStillChargesLateFee() {
++		assertThat(Visit.cancellationFee(NOW.plusHours(2), NOW, Visit.CancellationInitiator.OWNER))
++			.isEqualByComparingTo("20.00");
++	}
++
+ 	@Test
+ 	void cancellingAPastVisitIsRejected() {
+ 		assertThatIllegalStateException().isThrownBy(() -> Visit.cancellationFee(NOW.minusHours(1), NOW));
