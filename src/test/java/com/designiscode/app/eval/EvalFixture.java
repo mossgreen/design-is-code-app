@@ -1,5 +1,7 @@
 package com.designiscode.app.eval;
 
+import com.designiscode.app.service.DesignContractValidator;
+
 import com.designiscode.app.dto.AcRow;
 
 import java.util.List;

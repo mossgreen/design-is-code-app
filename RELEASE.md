@@ -100,6 +100,24 @@ When the changelog draft is approved:
 
 ---
 
+## Step 4.5 — When the plugin version changed
+
+If this release bumps the required DisC plugin version, run the plugin contract
+guard before publishing:
+
+```sh
+./gradlew eval --tests '*PluginContractEvalTest*' \
+  -Ddisc.eval.projectPath=<a real Spring project> \
+  -Ddisc.eval.model=claude-sonnet-4-6
+```
+
+It asserts a well-formed design is still accepted and that the refusals the app
+mirrors locally still fire. A plugin update that starts refusing valid designs
+otherwise reaches users as a failed generation. Costs model calls; skips cleanly
+without the project path.
+
+---
+
 ## Step 5 — Tag and publish
 
 1. **Verify the tag doesn't already exist** locally or remotely:

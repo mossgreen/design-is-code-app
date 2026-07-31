@@ -1,5 +1,7 @@
 package com.designiscode.app.eval;
 
+import com.designiscode.app.service.DesignContractValidator;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;

@@ -263,4 +263,45 @@ JSON.stringify({
 });
 `));
 
+// The contract checks read the ANALYZER model shape, but the wizard holds an
+// edited form where behaviors are `methods` and args are `inputs`, and the SUT
+// is an id. designModelForContract() is that translation, and if it is wrong the
+// sign-off panel reports violations about a design nobody has. So: project a
+// known-good design and a deliberately broken one, and let Java judge both
+// through the real validator.
+out.contractProjection = JSON.parse(withApp(`
+state.targetPackage = 'com.example.checkout';
+state.story = 'An owner cancels a visit and may be charged a late fee.';
+state.ac = [{ given: 'a visit', when: 'cancelled late', then: 'a fee applies' }];
+
+const policy = { id: newId(), name: 'CancellationFeePolicy', kind: 'leaf', existingFqn: null, methods: [
+  makeMethod('feeFor', [{ name: 'hoursUntilVisit', type: 'long' }], 'BigDecimal',
+             [{ acIndex: 0, inputs: { hoursUntilVisit: 47 }, expected: '20.00' }])
+]};
+const svc = { id: newId(), name: 'CancelVisitService', kind: 'orchestrator', existingFqn: null, methods: [
+  makeMethod('cancel', [{ name: 'ownerId', type: 'int' }], 'CancellationResult')
+]};
+state.participants = [svc, policy];
+state.sutParticipantId = svc.id;
+state.entities = [
+  { id: newId(), name: 'CancellationResult', kind: 'record', existingFqn: null, ownedBy: 'CancelVisitService',
+    fields: [{ name: 'fee', type: 'BigDecimal' }], values: [], behaviors: [], permits: [] }
+];
+state.variancePlan = [];
+
+const good = designModelForContract();
+
+// Break exactly one rule the validator owns: a sealed family needs >= 2 permits.
+state.entities = state.entities.concat([
+  { id: newId(), name: 'FeePolicy', kind: 'sealed-interface', existingFqn: null, ownedBy: 'CancelVisitService',
+    fields: [], values: [], behaviors: [{ name: 'feeFor', args: [], returns: 'BigDecimal' }],
+    permits: ['OnlyOne'] },
+  { id: newId(), name: 'OnlyOne', kind: 'record', existingFqn: null, ownedBy: 'CancelVisitService',
+    fields: [], values: [], behaviors: [], permits: [] }
+]);
+const broken = designModelForContract();
+
+JSON.stringify({ good: good, broken: broken });
+`));
+
 process.stdout.write(JSON.stringify(out, null, 2));

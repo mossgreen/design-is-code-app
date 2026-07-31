@@ -21,7 +21,7 @@ grab-bag of features.
 | | Claim | Mechanism | Evidence |
 |---|---|---|---|
 | 1 | You approve a **change** at design altitude, before code exists | derived before/after diff + the variance reasons behind it | ✅ shipped — two public PRs open design-only |
-| 2 | The tool **refuses** designs that cannot be built or tested well | Step-1 refusal protocol, boundary bracketing pairs, data-flow gate, sidecar lint | ✅ **`DataflowLinterTest`** (22 cases, both directions), **`DesignDeltaValidatorTest`** (10) |
+| 2 | The tool **refuses** designs that cannot be built or tested well | Step-1 refusal protocol, boundary bracketing pairs, data-flow gate, sidecar lint | ✅ **`DataflowLinterTest`** (22 cases, both directions), **`DesignDeltaValidatorTest`** (10), **`DesignContractValidatorTest`** — all deterministic. ⚠️ The *plugin-side* half is not: see below |
 | 3 | So structure is **bounded, uniform, and testable** — every branch gets an address and a receipt | orchestrator stays linear; resolver variance lives in table rows; leaf variance is table-pinned | ✅ **`DesignReceiptTest`** — the orchestrator has zero fragments; the naive version of the same ticket has three |
 | 4 | Which keeps **NPath complexity low** and change cost flat | branches are *placed*, not accumulated | 🟡 measuring — `experiments/naive-vs-disc`, 1 of 6 chains |
 | 5 | And the reviewer **already understands** the code, having approved its shape | sign-off precedes generation | ⛔ mechanism sound, never tested on anyone outside the project |
@@ -90,6 +90,16 @@ check.
   service type and you modelled the wrong thing. Nor does it judge names —
   analyzer naming is still unstable across runs (`VisitCanceller` vs
   `VisitCancellation`), and a bad name is a bad abstraction.
+- **Half the refusals are deterministic; the other half are a model's opinion.**
+  The rules the app checks itself (`DataflowLinter`, `DesignContractValidator`,
+  `DesignDeltaValidator`) are plain code: same design, same verdict, every time.
+  The plugin's Step 1 is not. It is deterministic rule-checking *written as prose
+  and executed by a language model*, and on 2026-08-01 the same design was
+  **refused by Haiku and accepted by Sonnet**. Validation now asks a capable
+  model, and `PluginContractEvalTest` pins the rules whose verdicts are observed
+  to be stable — but "the tool refuses" is only literally true for the half that
+  runs as code. Making the whole of it deterministic needs a machine-readable
+  grammar spec, which does not exist yet.
 - **Its softer design rules are advisory, not enforced.**
   `R2-purpose-specificity`, `R4a-feature-envy`, `leaf-freestandingness` and
   `composition-over-inheritance` live in `prompts/rules/` and are **judged by a

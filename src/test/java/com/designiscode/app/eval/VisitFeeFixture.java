@@ -1,5 +1,7 @@
 package com.designiscode.app.eval;
 
+import com.designiscode.app.service.DesignContractValidator;
+
 import com.designiscode.app.dto.AcRow;
 
 import java.util.ArrayList;
@@ -11,11 +13,11 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static com.designiscode.app.eval.DesignContractValidator.asMap;
-import static com.designiscode.app.eval.DesignContractValidator.bool;
-import static com.designiscode.app.eval.DesignContractValidator.mapList;
-import static com.designiscode.app.eval.DesignContractValidator.num;
-import static com.designiscode.app.eval.DesignContractValidator.str;
+import static com.designiscode.app.service.DesignContractValidator.asMap;
+import static com.designiscode.app.service.DesignContractValidator.bool;
+import static com.designiscode.app.service.DesignContractValidator.mapList;
+import static com.designiscode.app.service.DesignContractValidator.num;
+import static com.designiscode.app.service.DesignContractValidator.str;
 
 /**
  * Pet-visit-fee discount fixture. Doubles as the regression test for the

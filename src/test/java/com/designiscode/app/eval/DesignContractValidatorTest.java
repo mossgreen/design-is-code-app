@@ -1,5 +1,7 @@
 package com.designiscode.app.eval;
 
+import com.designiscode.app.service.DesignContractValidator;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;

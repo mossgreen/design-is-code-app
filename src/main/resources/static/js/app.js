@@ -56,11 +56,7 @@ const state = {
     // reviewed and approved the design. Must be checked before the Generate
     // button enables. In-memory only; resets on page reload. Persists across
     // step-back navigation in the same session.
-    teamSignedOff: false,
-    // True when the most recent Analyze chain ended with the plugin still
-    // refusing after the one allowed retry. Blocks Continue-to-Sign-off
-    // until the next Analyze. Cleared at the start of every runAnalyze().
-    validatorRefused: false
+    teamSignedOff: false
 };
 
 // Java package name validator: at least two segments, each starting with a
@@ -1461,9 +1457,8 @@ function enterStep2() {
 }
 
 async function runAnalyze(context) {
-    // Every Analyze starts from a clean slate — the prior refusal (if any)
-    // is no longer load-bearing as soon as the user asks for a fresh design.
-    state.validatorRefused = false;
+    // Every Analyze starts from a clean slate — any refusal panel from a
+    // previous Generate attempt is about a design the user is now replacing.
     hidePluginRefusal();
     state.analyzing = true;
     state.analyzeError = null;
@@ -1550,29 +1545,19 @@ async function runAnalyze(context) {
                 renderSequence();
             }
 
-            // Phase 3: validate against the codegen plugin. One retry on refusal.
-            showAnalyzeBanner('Validating the design…', { spinning: true });
-            let result = await runValidator();
-            if (state.analyzeAborted) {
-                showAnalyzeBanner(
-                    'Analysis aborted — edit the story or AC and run Analyze again.',
-                    { spinning: false, dismissable: true }
-                );
-                return;
-            }
-            if (result && result.refused) {
-                showAnalyzeBanner('Refining the sequence…', { spinning: true });
-                const ok2 = await runSequence(result.message);
-                if (!ok2) return;
-                showAnalyzeBanner('Validating the design…', { spinning: true });
-                result = await runValidator();
-                if (result && result.refused) {
-                    state.validatorRefused = true;
-                    hideAnalyzeBanner();
-                    showPluginRefusal(result.message);
-                    return;
-                }
-            }
+            // The plugin's Step-1 check used to run here, on every Analyze, with a
+            // retry. Both are gone:
+            //
+            //   - the retry handed the plugin's GRAMMAR refusal to the sequencer,
+            //     whose only job is the ordered call list. Step-1 refusals are
+            //     about entities, permits and decision tables — nothing the
+            //     sequencer emits could fix one, so the loop cost a model call and
+            //     changed nothing;
+            //   - the check itself is a model call spent before the user has
+            //     decided to generate. The deterministic half of the same rules
+            //     now runs locally and instantly in lintDesign(), and the
+            //     canonical check runs once at Generate, where a refusal actually
+            //     costs something.
             hideAnalyzeBanner();
             console.info(`[wizard] analyze chain complete in ${elapsed()}s`);
         } else {
@@ -2001,6 +1986,41 @@ function reusedTypeMethods() {
     return out;
 }
 
+// Projects the wizard's working state back into the analyzer design-model shape
+// the contract checks read. Two things get renamed on the way in
+// (`methods`/`inputs` here are `behaviors`/`args` there) and the SUT is held as
+// an id rather than a name, so this is the one place that translation lives.
+//
+// It deliberately projects the EDITED state, not the analyzer's original output:
+// the reviewer must be told about the design in front of them, not the one the
+// model first proposed.
+function designModelForContract() {
+    const participants = state.participants || [];
+    const sut = participants.find(p => p.id === state.sutParticipantId);
+    return {
+        story: state.story || '',
+        sut: sut ? sut.name : '',
+        participants: participants.map(p => ({
+            name: p.name,
+            // `kind` collapsed isLeaf on the way in. A REUSE participant is
+            // terminal by rule — REUSE forbids outgoing call arrows — so
+            // anything that is not an orchestrator is a leaf here.
+            isLeaf: p.kind !== 'orchestrator',
+            existingFqn: p.existingFqn || null,
+            purpose: p.purpose || '',
+            behaviors: (p.methods || []).map(m => ({
+                name: m.name,
+                args: (m.inputs || []).map(i => ({ name: i.name, type: i.type })),
+                returns: m.output || 'void',
+                cases: m.cases || [],
+                boundaries: m.boundaries || null
+            }))
+        })),
+        entities: state.entities || [],
+        variancePlan: state.variancePlan || []
+    };
+}
+
 async function lintDesign() {
     try {
         // Sidecars travel with the diagram: a decision table and the flow it
@@ -2012,7 +2032,12 @@ async function lintDesign() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                puml: emitPlantUml(), knownTypes: reusedTypeMethods(), sidecars
+                puml: emitPlantUml(), knownTypes: reusedTypeMethods(), sidecars,
+                // The contract checks: the deterministic half of what the plugin's
+                // Step 1 would refuse, answered here instantly instead of by a
+                // model call on every Analyze.
+                model: designModelForContract(),
+                acCount: (state.ac || []).length
             })
         });
         if (!res.ok) return { violations: [], warnings: [] };
@@ -2023,7 +2048,7 @@ async function lintDesign() {
     }
 }
 
-// --- Plugin validator (chained at the end of runAnalyze) ---
+// --- Plugin validator (runs once, at Generate) ---
 //
 // Asks the codegen plugin's Step 1 (--validate-only) whether the in-progress
 // .puml would be refused. Three outcomes from the server:
@@ -2032,6 +2057,10 @@ async function lintDesign() {
 //                                   surface real generator errors anyway)
 //   {refused: true, message}      → plugin refused; caller decides retry
 // We never throw — failures are advisory at the wizard level.
+// The model Step-1 validation is asked for. Kept as a named constant because
+// the choice is evidence-based, not incidental — see the note at the call site.
+const VALIDATE_MODEL = 'claude-sonnet-4-6';
+
 async function runValidator() {
     if (!state.projectPath) return { ok: true };
     try {
@@ -2047,7 +2076,17 @@ async function runValidator() {
                 // writes, or the check is of something nobody ships.
                 sidecars: Object.fromEntries(
                     collectAllDecisionTables().map(d => [d.fileName, d.content])),
-                model: 'claude-haiku-4-5'
+                // NOT haiku. Step 1 is deterministic rule-checking written as
+                // prose and executed by a model, so the verdict varies with the
+                // model: on 2026-08-01 the same design was refused by haiku and
+                // accepted by sonnet, and haiku also narrated instead of
+                // answering often enough to defeat the verdict parser. A gate
+                // that answers differently each run is not a gate.
+                //
+                // This used to be haiku because the check ran on every Analyze
+                // and had to be cheap. It now runs once, at Generate — so it can
+                // afford to be right.
+                model: VALIDATE_MODEL
             }),
             signal: state.analyzeAbort ? state.analyzeAbort.signal : undefined
         });
@@ -3933,17 +3972,17 @@ function renderAddStep() {
     });
 }
 
-// Continue-to-Sign-off is pure navigation. The plugin pre-flight that used
-// to live here has moved upstream into runAnalyze, so by the time the user
-// reaches this button the design is either already validated or already
-// known-refused (in which case state.validatorRefused gates the advance).
+// Continue-to-Sign-off is pure navigation. The plugin pre-flight no longer runs
+// during Analyze at all — it runs once at Generate — so there is nothing for it
+// to gate here. Gating on a Generate-time refusal would be worse than useless:
+// the user is three steps past this button by then, and the flag would strand
+// them behind a control they are not looking at.
 step2Els.flowNext.addEventListener('click', () => {
     if (state.sequence.length === 0) {
         step2Els.sequenceHint.classList.add('warn');
         return;
     }
     step2Els.sequenceHint.classList.remove('warn');
-    if (state.validatorRefused) return;   // refusal panel is visible; user must re-Analyze
     goToStep(3);
 });
 
@@ -3965,11 +4004,12 @@ function hidePluginRefusal() {
     syncFlowNext();
 }
 
-// Continue-to-Sign-off is disabled while a refusal is on screen. The button
-// also blocks the click handler internally — this is the primary visual cue.
+// Kept as the single place that would re-enable the button, should anything ever
+// need to disable it again. The plugin refusal no longer does: it surfaces at
+// Generate, long after this button matters.
 function syncFlowNext() {
     if (!step2Els.flowNext) return;
-    step2Els.flowNext.disabled = !!state.validatorRefused;
+    step2Els.flowNext.disabled = false;
 }
 
 // --- UML emission + parsing (preserved for Step 3 preview & Step 4 generate) ---
@@ -6004,6 +6044,30 @@ saveEls.save.addEventListener('click', async () => {
 
 saveEls.runBtn.addEventListener('click', async () => {
     if (!lastSavedRelativePath || !state.projectPath) return;
+
+    // The canonical Step-1 check, run once — here, where a refusal is about to
+    // cost a full generation, rather than on every Analyze. The local contract
+    // and data-flow checks have already run for free; this is the plugin's own
+    // verdict on the rules only it owns.
+    //
+    // No retry: the design is signed off by this point, and quietly re-running
+    // the sequencer would change what the team approved. Show the refusal and
+    // let the user go back and edit.
+    saveEls.runBtn.disabled = true;
+    const preflightLabel = saveEls.runBtn.textContent;
+    saveEls.runBtn.textContent = 'Checking the design…';
+    let preflight;
+    try {
+        preflight = await runValidator();
+    } finally {
+        saveEls.runBtn.disabled = false;
+        saveEls.runBtn.textContent = preflightLabel;
+    }
+    if (preflight && preflight.refused) {
+        showPluginRefusal(preflight.message);
+        return;
+    }
+    hidePluginRefusal();
 
     // Reset UI for a fresh run.
     renderRunChecklist();

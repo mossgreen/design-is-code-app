@@ -389,35 +389,7 @@ public class RunService {
                 );
             }
 
-            String stdout = stripFences(buf.toString()).trim();
-
-            // Three shapes possible from the plugin: {"ok": true} JSON,
-            // REFUSAL markdown, or noise. Try JSON pass first.
-            if (stdout.startsWith("{") && stdout.contains("\"ok\"")) {
-                try {
-                    @SuppressWarnings("unchecked")
-                    java.util.Map<String, Object> parsed = planJson.readValue(stdout, java.util.Map.class);
-                    if (Boolean.TRUE.equals(parsed.get("ok"))) {
-                        return java.util.Map.of("refused", false);
-                    }
-                } catch (tools.jackson.core.JacksonException ignored) {
-                    // Fall through to refusal detection.
-                }
-            }
-
-            if (looksLikeRefusal(stdout)) {
-                return java.util.Map.of(
-                        "refused", true,
-                        "message", stdout
-                );
-            }
-
-            // Neither a clean pass nor an identifiable refusal — soft pass
-            // with a diagnostic so the frontend can show it if it wants.
-            return java.util.Map.of(
-                    "refused", false,
-                    "error", "validate returned unexpected output: " + truncate(stdout, 200)
-            );
+            return interpretValidateOutput(stripFences(buf.toString()).trim(), planJson);
         } finally {
             try {
                 Files.deleteIfExists(tmpFile);
@@ -466,6 +438,76 @@ public class RunService {
     /** One regex to identify the plugin's refusal output. The plugin's SKILL.md
      *  uses these stable markers; matching either is sufficient. The wizard
      *  never parses *what* the refusal says — just whether one happened. */
+    /**
+     * Turns the plugin's {@code --validate-only} stdout into a verdict.
+     *
+     * <p>Three shapes are possible: a {@code {"ok": true}} envelope, a REFUSAL
+     * block, or something else. The "something else" case soft-passes — a
+     * transport hiccup must not block a design — which makes it critical that the
+     * first two are actually recognised. They were not: the JSON was only read
+     * when it was the very first thing in stdout, so any run where the model
+     * narrated before answering ("I'll check the language profile first…") fell
+     * through to the soft pass. The gate silently stopped gating, and nothing
+     * said so. Observed 2026-08-01 while building {@code PluginContractEvalTest},
+     * where it turned real verdicts into skips.
+     *
+     * <p>Now the envelope is found anywhere in the output. Refusal is checked
+     * FIRST: a refusal block that also happens to quote {@code "ok"} must read as
+     * a refusal, never as a pass.
+     */
+    static java.util.Map<String, Object> interpretValidateOutput(
+            String stdout, tools.jackson.databind.ObjectMapper json) {
+        String text = stdout == null ? "" : stdout;
+
+        if (looksLikeRefusal(text)) {
+            return java.util.Map.of("refused", true, "message", text);
+        }
+
+        String envelope = lastJsonObject(text);
+        if (envelope != null && envelope.contains("\"ok\"")) {
+            try {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> parsed = json.readValue(envelope, java.util.Map.class);
+                if (Boolean.TRUE.equals(parsed.get("ok"))) {
+                    return java.util.Map.of("refused", false);
+                }
+                // {"ok": false} is a refusal the plugin phrased as JSON.
+                Object message = parsed.get("message");
+                return java.util.Map.of("refused", true,
+                        "message", message == null ? envelope : message.toString());
+            } catch (tools.jackson.core.JacksonException ignored) {
+                // fall through to the soft pass
+            }
+        }
+
+        return java.util.Map.of(
+                "refused", false,
+                "error", "validate returned unexpected output: " + truncate(text, 200)
+        );
+    }
+
+    /**
+     * The last balanced {@code {...}} block in the text, or null. Last rather than
+     * first because the model may quote an example envelope while explaining
+     * itself before emitting the real one.
+     */
+    private static String lastJsonObject(String text) {
+        for (int start = text.lastIndexOf('{'); start >= 0; start = text.lastIndexOf('{', start - 1)) {
+            int depth = 0;
+            for (int i = start; i < text.length(); i++) {
+                char ch = text.charAt(i);
+                if (ch == '{') depth++;
+                else if (ch == '}' && --depth == 0) {
+                    String candidate = text.substring(start, i + 1);
+                    if (candidate.contains("\"ok\"")) return candidate;
+                    break;
+                }
+            }
+            if (start == 0) break;
+        }
+        return null;
+    }
+
     private static boolean looksLikeRefusal(String stdout) {
         if (stdout == null || stdout.isEmpty()) return false;
         return stdout.contains("REFUSAL — STOP") || stdout.contains("#### REFUSAL");

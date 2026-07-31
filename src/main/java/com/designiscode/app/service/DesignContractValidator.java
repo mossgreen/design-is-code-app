@@ -1,4 +1,4 @@
-package com.designiscode.app.eval;
+package com.designiscode.app.service;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -21,10 +21,10 @@ import java.util.regex.Pattern;
  * warnings} are recorded in artifacts but never fail (used where the check
  * is best-effort, e.g. parsing numbers out of Java-expression strings).
  */
-final class DesignContractValidator {
+public final class DesignContractValidator {
 
-    record Report(List<String> violations, List<String> warnings) {
-        boolean ok() {
+    public record Report(List<String> violations, List<String> warnings) {
+        public boolean ok() {
             return violations.isEmpty();
         }
     }
@@ -39,7 +39,7 @@ final class DesignContractValidator {
 
     private DesignContractValidator() {}
 
-    static Report validate(Map<String, Object> model, int acCount) {
+    public static Report validate(Map<String, Object> model, int acCount) {
         List<String> v = new ArrayList<>();
         List<String> w = new ArrayList<>();
 
@@ -184,7 +184,7 @@ final class DesignContractValidator {
     /** The created (non-reuse) record entity whose field-name set matches the
      *  rule-table mapping's expected keys — "the rule record". Empty when the
      *  model has no consistent rule-table axis. Shared with fixture gold. */
-    static Optional<Map<String, Object>> findRuleRecord(Map<String, Object> model) {
+    public static Optional<Map<String, Object>> findRuleRecord(Map<String, Object> model) {
         for (Map<String, Object> entry : mapList(model, "variancePlan")) {
             if (!"rule-table".equals(str(entry, "pattern"))) continue;
             List<Map<String, Object>> mapping = mapList(entry, "mapping");
@@ -310,36 +310,36 @@ final class DesignContractValidator {
     // ---------- null-safe map navigation (shared with fixtures/harness) ----------
 
     @SuppressWarnings("unchecked")
-    static Map<String, Object> asMap(Object o) {
+    public static Map<String, Object> asMap(Object o) {
         return (o instanceof Map) ? (Map<String, Object>) o : Map.of();
     }
 
     @SuppressWarnings("unchecked")
-    static List<Map<String, Object>> asMapList(Object o) {
+    public static List<Map<String, Object>> asMapList(Object o) {
         if (!(o instanceof List<?> raw)) return List.of();
         List<Map<String, Object>> out = new ArrayList<>(raw.size());
         for (Object e : raw) if (e instanceof Map) out.add((Map<String, Object>) e);
         return out;
     }
 
-    static List<Map<String, Object>> mapList(Map<String, Object> m, String key) {
+    public static List<Map<String, Object>> mapList(Map<String, Object> m, String key) {
         return asMapList(m.get(key));
     }
 
-    static String str(Map<String, Object> m, String key) {
+    public static String str(Map<String, Object> m, String key) {
         Object v = m.get(key);
         return (v instanceof String s) ? s : null;
     }
 
-    static boolean bool(Map<String, Object> m, String key) {
+    public static boolean bool(Map<String, Object> m, String key) {
         return Boolean.TRUE.equals(m.get(key));
     }
 
-    static Double num(Object v) {
+    public static Double num(Object v) {
         return (v instanceof Number n) ? n.doubleValue() : null;
     }
 
-    static List<String> strList(Object o) {
+    public static List<String> strList(Object o) {
         if (!(o instanceof List<?> raw)) return List.of();
         List<String> out = new ArrayList<>(raw.size());
         for (Object e : raw) if (e instanceof String s) out.add(s);
@@ -355,7 +355,7 @@ final class DesignContractValidator {
         return out;
     }
 
-    static Set<String> names(List<Map<String, Object>> items) {
+    public static Set<String> names(List<Map<String, Object>> items) {
         Set<String> out = new LinkedHashSet<>();
         for (Map<String, Object> i : items) {
             String n = str(i, "name");

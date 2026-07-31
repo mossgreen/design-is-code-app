@@ -1,5 +1,7 @@
 package com.designiscode.app.eval;
 
+import com.designiscode.app.service.DesignContractValidator;
+
 import com.designiscode.app.dto.ScanCatalog;
 import com.designiscode.app.dto.SequenceRequest;
 import com.designiscode.app.service.AnalyzeService;

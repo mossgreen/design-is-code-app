@@ -9,7 +9,31 @@ adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 Post-v0.8.0 work on `main`. Not in the published jar.
 
+### Changed
+- **Analyze no longer spends a model call on plugin validation.** The
+  deterministic half of what the plugin's Step 1 would refuse now runs locally
+  and instantly as part of the design lint; the plugin's own check runs **once,
+  at Generate**, where a refusal is about to cost a real generation. One fewer
+  model call on every Analyze, and the wizard reports most problems immediately
+  rather than after a round trip.
+- **The refusal retry is gone.** It fed the plugin's *grammar* refusal back to
+  the sequencer, which only produces the ordered call list — nothing it emits
+  could fix a sealed family with one permit or an unpinned decision. It cost a
+  model call and could not have worked. (The *data-flow* retry, which sends
+  argument problems to the component that authors arguments, is untouched.)
+- **Validation asks a capable model, not Haiku.** Step 1 is deterministic
+  rule-checking written as prose and executed by a model, so the verdict varies
+  with the model: the same design was refused by Haiku and accepted by Sonnet on
+  the same day. Cheapness mattered when this ran on every Analyze; it runs once
+  now, so it can afford to be right.
+
 ### Fixed
+- **Validation could silently stop validating.** The verdict parser only read
+  the plugin's `{"ok": …}` envelope when it was the very first thing in the
+  output, so any run where the model narrated before answering fell through to
+  the "unparseable → pass" branch. The gate reported success without judging
+  anything. The envelope is now found anywhere in the output, and a refusal is
+  recognised first so one that quotes the envelope cannot read as a pass.
 - **The design validator now sees the decision tables.** `--validate-only`
   received the `.puml` alone, so Step 1 judged the design as if every leaf were
   unspecified: a decision table could contradict the diagram, or specify a call

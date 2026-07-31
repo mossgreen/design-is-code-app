@@ -241,6 +241,48 @@ class FrontendChainTest {
     }
 
     /**
+     * The contract checks read the analyzer model; the wizard holds an edited
+     * form with different names for the same things ({@code methods}/{@code
+     * inputs} vs {@code behaviors}/{@code args}) and an id where the model wants
+     * the SUT's name. {@code designModelForContract()} is that translation, and a
+     * wrong translation is worse than no check: the panel would report violations
+     * about a design nobody has.
+     *
+     * <p>So the projection is judged by the real validator, not by eye.
+     */
+    @Test
+    void aGoodDesignProjectsToAModelTheContractValidatorAccepts() {
+        JsonNode good = cases.get("contractProjection").get("good");
+        DesignContractValidator.Report r =
+                DesignContractValidator.validate(asModel(good), 1);
+
+        assertTrue(r.ok(), () -> "the projection of a sound design was refused — the "
+                + "translation is wrong, not the design: " + r.violations());
+    }
+
+    /**
+     * And the other direction: a projection that always returns something clean
+     * would be a pre-filter that never fires. One broken rule — a sealed family
+     * with a single permit, which the plugin refuses at Step 1 — must survive the
+     * translation and be reported.
+     */
+    @Test
+    void aBrokenRuleSurvivesTheProjectionAndIsReported() {
+        JsonNode broken = cases.get("contractProjection").get("broken");
+        DesignContractValidator.Report r =
+                DesignContractValidator.validate(asModel(broken), 1);
+
+        assertFalse(r.ok(), "a one-permit sealed family must be caught");
+        assertTrue(r.violations().toString().contains("permits"),
+                () -> "the violation must name the rule: " + r.violations());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.Map<String, Object> asModel(JsonNode node) {
+        return JSON.convertValue(node, java.util.Map.class);
+    }
+
+    /**
      * Save writes one set of sidecars and the data-flow gate judges one set.
      * They must be the same set, or the reviewer is warned about files that
      * never land — the same drift that let four hand-rolled frontmatter blocks

@@ -2,6 +2,7 @@ package com.designiscode.app.controller;
 
 import com.designiscode.app.dto.DesignRequest;
 import com.designiscode.app.service.DataflowLinter;
+import com.designiscode.app.service.DesignContractValidator;
 import com.designiscode.app.service.DesignService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,6 +34,13 @@ public class DesignController {
      * <p>Optional {@code knownTypes} (simple type name → public method names) lets
      * the lint also judge accessors called on types reused from a scanned project.
      * A client without a scanned project simply omits it.
+     *
+     * <p>Optional {@code model} (the design-model: participants, entities,
+     * variancePlan, sut, story) adds the **contract** checks — the deterministic
+     * subset of the plugin's Step-1 refusal rules the app can evaluate itself,
+     * instantly and without a model call. Sending it turns this endpoint into the
+     * one place a design is judged before generation; omitting it leaves the
+     * previous behaviour untouched.
      */
     @PostMapping("/design/lint")
     public ResponseEntity<?> lint(@RequestBody Map<String, Object> request) {
@@ -48,7 +56,37 @@ public class DesignController {
         violations.addAll(decision.violations());
         List<String> warnings = new ArrayList<>(flow.warnings());
         warnings.addAll(decision.warnings());
+
+        DesignContractValidator.Report contract = contract(request);
+        if (contract != null) {
+            violations.addAll(contract.violations());
+            warnings.addAll(contract.warnings());
+        }
         return ResponseEntity.ok(new DataflowLinter.Report(violations, warnings));
+    }
+
+    /**
+     * Runs the contract checks when the client sent a design model. Returns null
+     * when it did not — the checks are additive, so a client that omits the model
+     * must not be told anything new.
+     *
+     * <p>The model is untrusted JSON. A malformed one is reported as a violation
+     * rather than thrown: the caller is a reviewer looking at a panel, and a 500
+     * teaches nothing.
+     */
+    private static DesignContractValidator.Report contract(Map<String, Object> request) {
+        if (!(request.get("model") instanceof Map<?, ?> raw) || raw.isEmpty()) return null;
+        Map<String, Object> model = new LinkedHashMap<>();
+        raw.forEach((k, v) -> {
+            if (k != null) model.put(k.toString(), v);
+        });
+        int acCount = request.get("acCount") instanceof Number n ? n.intValue() : 0;
+        try {
+            return DesignContractValidator.validate(model, acCount);
+        } catch (RuntimeException e) {
+            return new DesignContractValidator.Report(
+                    List.of("the design model could not be checked: " + e), List.of());
+        }
     }
 
     /** Coerce untrusted JSON: a malformed entry is ignored rather than thrown. */
