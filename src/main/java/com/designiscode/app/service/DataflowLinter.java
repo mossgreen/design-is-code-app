@@ -182,6 +182,150 @@ public final class DataflowLinter {
         return o == null ? "" : o.toString().trim();
     }
 
+    /**
+     * The decision-table sidecars judged against the flow they belong to.
+     *
+     * <p>A design is two kinds of file. The {@code .puml} says what calls what;
+     * the {@code .decision.md} says what the code must actually compute. Until
+     * now nothing compared them, so the pair could disagree and both look right
+     * on their own.
+     *
+     * <p>Two properties, chosen because each produces a file the generator
+     * refuses or a rule that cannot be satisfied:
+     * <ol>
+     *   <li><b>The target is called.</b> The plugin refuses a sidecar whose
+     *       {@code target:} resolves to no leaf in the input set. The wizard
+     *       finds a sidecar's participant by name and return type, never by
+     *       whether the sequence calls it, so an orphan is easy to emit.</li>
+     *   <li><b>The rows do not contradict.</b> Two rows with identical inputs
+     *       and different {@code expected} cannot both hold. Whichever the
+     *       generator picks, one row becomes a test that must fail.</li>
+     * </ol>
+     *
+     * <p>Deliberately absent: checking that every {@code expected} permit has a
+     * leaf. The plugin's resolver mode already requires the expected column to
+     * be exhaustive over the permit list, and the wizard only emits a resolver
+     * sidecar when the mapping matches an interface's permits exactly. A third
+     * copy of that rule would be maintenance, not safety.
+     *
+     * @param puml     the assembled diagram
+     * @param sidecars file name → sidecar content
+     */
+    public static Report lintDecision(String puml, Map<String, String> sidecars) {
+        List<String> violations = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        if (sidecars == null || sidecars.isEmpty()) return new Report(violations, warnings);
+
+        Flow flow = puml == null || puml.isBlank()
+                ? new Flow(Set.of(), List.of(), Map.of())
+                : fromPuml(puml, Map.of());
+
+        sidecars.forEach((fileName, content) -> {
+            if (content == null || content.isBlank()) return;
+            String target = frontmatterValue(content, "target");
+            checkTargetIsCalled(flow, fileName, target, violations);
+            checkRowsAgree(content, fileName, target, violations);
+        });
+        return new Report(violations, warnings);
+    }
+
+    /**
+     * A sidecar specifies a call the flow makes. If the flow makes no such call,
+     * the two files describe different designs — and the plugin refuses the pair
+     * at Step 1 rather than guessing which one is right.
+     */
+    private static void checkTargetIsCalled(Flow flow, String fileName, String target,
+                                            List<String> violations) {
+        if (target == null || target.isBlank()) {
+            violations.add(fileName + " — no 'target:' in the frontmatter, so it specifies nothing");
+            return;
+        }
+        int dot = target.lastIndexOf('.');
+        if (dot <= 0 || dot == target.length() - 1) {
+            violations.add(fileName + " — target '" + target + "' is not '<Participant>.<method>'");
+            return;
+        }
+        String participant = target.substring(0, dot).trim();
+        String method = target.substring(dot + 1).trim();
+        // An empty flow means the caller had no diagram to compare against —
+        // silence beats inventing a violation the reader cannot act on.
+        if (flow.arrows().isEmpty()) return;
+        boolean called = flow.arrows().stream().anyMatch(a ->
+                a.isCall() && participant.equals(a.callee()) && method.equals(a.methodName()));
+        if (!called) {
+            violations.add(fileName + " — nothing in the flow calls " + participant + "." + method
+                    + ", so this table specifies a call the design does not make");
+        }
+    }
+
+    /**
+     * Determinism only. Two rows with the same inputs and different outputs are a
+     * contradiction, and finding them needs nothing but the rows.
+     *
+     * <p>Totality — whether the rows cover the input space — is deliberately not
+     * attempted: it needs a model of each column's domain, and a half-built
+     * version would report confident nonsense on the columns it cannot model.
+     */
+    private static void checkRowsAgree(String content, String fileName, String target,
+                                       List<String> violations) {
+        List<List<String>> rows = tableRows(content);
+        if (rows.size() < 2) return;
+        int cols = rows.get(0).size();
+        if (cols < 2) return;
+        String label = (target == null || target.isBlank()) ? fileName : target;
+
+        Map<String, String> seen = new LinkedHashMap<>();
+        for (List<String> row : rows.subList(1, rows.size())) {
+            if (row.size() != cols) continue;                     // ragged row: shape, not logic
+            String inputs = String.join(" | ", row.subList(0, cols - 1));
+            String expected = row.get(cols - 1);
+            String prior = seen.putIfAbsent(inputs, expected);
+            if (prior != null && !prior.equals(expected)) {
+                violations.add(fileName + " — " + label + " maps the same inputs (" + inputs
+                        + ") to both '" + prior + "' and '" + expected + "'; one of those rows"
+                        + " must become a failing test");
+            }
+        }
+    }
+
+    /** First {@code key: value} in the leading {@code ---} frontmatter block. */
+    static String frontmatterValue(String content, String key) {
+        String[] lines = content.split("\\R");
+        boolean inside = false;
+        for (String raw : lines) {
+            String line = raw.strip();
+            if (line.equals("---")) {
+                if (inside) break;
+                inside = true;
+                continue;
+            }
+            if (!inside) continue;
+            if (line.startsWith(key + ":")) return line.substring(key.length() + 1).strip();
+        }
+        return null;
+    }
+
+    /**
+     * The markdown table's cells, header row first. The separator row
+     * ({@code |---|---|}) is dropped: it carries no data and would otherwise read
+     * as a row whose every cell is a run of dashes.
+     */
+    static List<List<String>> tableRows(String content) {
+        List<List<String>> rows = new ArrayList<>();
+        for (String raw : content.split("\\R")) {
+            String line = raw.strip();
+            if (!line.startsWith("|") || !line.endsWith("|") || line.length() < 2) continue;
+            String inner = line.substring(1, line.length() - 1);
+            List<String> cells = new ArrayList<>();
+            for (String cell : inner.split("\\|", -1)) cells.add(cell.strip());
+            if (cells.stream().allMatch(c -> !c.isEmpty() && c.chars().allMatch(ch -> ch == '-' || ch == ':'))) {
+                continue;
+            }
+            rows.add(cells);
+        }
+        return rows;
+    }
+
     /** The rules. Everything above this line only decides how a {@link Flow} is built. */
     static Report lintFlow(Flow flow) {
         List<String> violations = new ArrayList<>();
@@ -397,6 +541,13 @@ public final class DataflowLinter {
 
         boolean involvesSystemCaller() {
             return SYSTEM_CALLER.equals(caller) || SYSTEM_CALLER.equals(callee);
+        }
+
+        /** {@code resolve(initiator)} → {@code resolve}. Empty for a return arrow. */
+        String methodName() {
+            if (!isCall) return "";
+            int open = label.indexOf('(');
+            return (open < 0 ? label : label.substring(0, open)).strip();
         }
 
         /** Split on top-level commas so {@code owner.getPet(petId), fee} stays two arguments. */

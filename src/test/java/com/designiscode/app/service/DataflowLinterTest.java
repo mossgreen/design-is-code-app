@@ -280,6 +280,116 @@ class DataflowLinterTest {
         assertTrue(DataflowLinter.lint(puml, Map.of("Visit", List.of("getDate"))).ok());
     }
 
+    // --- decision-table sidecars against the flow ---
+    //
+    // A design is two kinds of file, and until now nothing compared them. The
+    // .puml says what calls what; the .decision.md says what the code must
+    // compute. Each can be right alone and wrong together.
+
+    @Test
+    void theShippedResolverSidecarAgreesWithItsFlow() {
+        // The golden pair, byte-for-byte as they ship. A false violation here
+        // would mean the gate refuses the project's own worked example.
+        DataflowLinter.Report r = DataflowLinter.lintDecision(
+                golden("CancelVisitService.puml"),
+                Map.of("CancellationFeePolicyResolver.decision.md",
+                        golden("CancellationFeePolicyResolver.decision.md")));
+        assertTrue(r.ok(), () -> r.violations().toString());
+    }
+
+    @Test
+    void aSidecarWhoseTargetIsNeverCalledIsAViolation() {
+        // Easy to emit by accident: the wizard finds a sidecar's participant by
+        // name and return type, never by whether the sequence calls it.
+        String orphan = golden("CancellationFeePolicyResolver.decision.md")
+                .replace("target: CancellationFeePolicyResolver.resolve",
+                        "target: SomeOtherResolver.resolve");
+        DataflowLinter.Report r = DataflowLinter.lintDecision(
+                golden("CancelVisitService.puml"), Map.of("orphan.decision.md", orphan));
+        assertEquals(1, r.violations().size(), () -> r.violations().toString());
+        assertTrue(r.violations().get(0).contains("nothing in the flow calls SomeOtherResolver.resolve"),
+                () -> r.violations().get(0));
+    }
+
+    @Test
+    void twoRowsMappingTheSameInputsToDifferentOutputsIsAViolation() {
+        String contradictory = golden("CancellationFeePolicyResolver.decision.md")
+                .replace("| clinic | ClinicInitiatedFee |", "| owner | ClinicInitiatedFee |");
+        DataflowLinter.Report r = DataflowLinter.lintDecision(
+                golden("CancelVisitService.puml"),
+                Map.of("CancellationFeePolicyResolver.decision.md", contradictory));
+        assertEquals(1, r.violations().size(), () -> r.violations().toString());
+        String v = r.violations().get(0);
+        assertTrue(v.contains("StandardCancellationFee") && v.contains("ClinicInitiatedFee"), v);
+    }
+
+    /** The same inputs mapping to the same output is duplication, not contradiction. */
+    @Test
+    void anExactlyRepeatedRowIsNotAContradiction() {
+        String repeated = golden("CancellationFeePolicyResolver.decision.md")
+                + "| owner | StandardCancellationFee |\n";
+        assertTrue(DataflowLinter.lintDecision(golden("CancelVisitService.puml"),
+                Map.of("dup.decision.md", repeated)).ok());
+    }
+
+    /**
+     * Multi-column tables key on the whole input tuple. Rows that differ in any
+     * column are different cases, however similar the rest looks.
+     */
+    @Test
+    void rowsDifferingInAnyInputColumnAreDistinctCases() {
+        String multi = """
+                ---
+                target: ShippingFeeCalculator.calculate
+                input:
+                  orderTotal: BigDecimal
+                  region: String
+                output: BigDecimal
+                ---
+
+                | orderTotal | region          | expected |
+                |------------|-----------------|----------|
+                | 99.99      | "DOMESTIC"      | 5.00     |
+                | 99.99      | "INTERNATIONAL" | 25.00    |
+                """;
+        String puml = """
+                @startuml
+                participant OrderService
+                participant ShippingFeeCalculator
+
+                [*] -> OrderService : place(orderTotal, region)
+                OrderService -> ShippingFeeCalculator : calculate(orderTotal, region)
+                OrderService <-- ShippingFeeCalculator : fee : BigDecimal
+                @enduml
+                """;
+        assertTrue(DataflowLinter.lintDecision(puml, Map.of("s.decision.md", multi)).ok(),
+                () -> DataflowLinter.lintDecision(puml, Map.of("s.decision.md", multi)).violations().toString());
+    }
+
+    @Test
+    void aSidecarWithNoTargetIsAViolation() {
+        DataflowLinter.Report r = DataflowLinter.lintDecision(
+                golden("CancelVisitService.puml"),
+                Map.of("headless.decision.md", "---\ninput:\n  x: String\n---\n\n| x | expected |\n|---|---|\n| a | B |\n"));
+        assertEquals(1, r.violations().size(), () -> r.violations().toString());
+        assertTrue(r.violations().get(0).contains("no 'target:'"), () -> r.violations().get(0));
+    }
+
+    /**
+     * Without a diagram there is nothing to compare a target against. Reporting
+     * every sidecar as an orphan would make the gate useless exactly when the
+     * user is part-way through composing a design.
+     */
+    @Test
+    void sidecarsAreNotJudgedAgainstAnAbsentFlow() {
+        Map<String, String> one = Map.of("r.decision.md",
+                golden("CancellationFeePolicyResolver.decision.md"));
+        assertTrue(DataflowLinter.lintDecision(null, one).ok());
+        assertTrue(DataflowLinter.lintDecision("", one).ok());
+        assertTrue(DataflowLinter.lintDecision("@startuml\n@enduml\n", one).ok());
+        assertTrue(DataflowLinter.lintDecision(golden("CancelVisitService.puml"), Map.of()).ok());
+    }
+
     @Test
     void emptyAndPreludeOnlyInputAreClean() {
         assertTrue(DataflowLinter.lint(null).ok());

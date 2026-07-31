@@ -36,9 +36,29 @@ public class DesignController {
      */
     @PostMapping("/design/lint")
     public ResponseEntity<?> lint(@RequestBody Map<String, Object> request) {
-        Object puml = request.get("puml");
-        return ResponseEntity.ok(DataflowLinter.lint(
-                puml == null ? null : puml.toString(), knownTypes(request.get("knownTypes"))));
+        Object raw = request.get("puml");
+        String puml = raw == null ? null : raw.toString();
+
+        DataflowLinter.Report flow = DataflowLinter.lint(puml, knownTypes(request.get("knownTypes")));
+        // Optional `sidecars` (file name → .decision.md content). A client that
+        // sends none gets the flow verdict alone, unchanged.
+        DataflowLinter.Report decision = DataflowLinter.lintDecision(puml, sidecars(request.get("sidecars")));
+
+        List<String> violations = new ArrayList<>(flow.violations());
+        violations.addAll(decision.violations());
+        List<String> warnings = new ArrayList<>(flow.warnings());
+        warnings.addAll(decision.warnings());
+        return ResponseEntity.ok(new DataflowLinter.Report(violations, warnings));
+    }
+
+    /** Coerce untrusted JSON: a malformed entry is ignored rather than thrown. */
+    private static Map<String, String> sidecars(Object raw) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (!(raw instanceof Map<?, ?> map)) return out;
+        map.forEach((k, v) -> {
+            if (k != null && v != null) out.put(k.toString(), v.toString());
+        });
+        return out;
     }
 
     /**
