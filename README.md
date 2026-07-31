@@ -1,5 +1,7 @@
 # DisC Studio
 
+> **The design layer of AI coding.** Bringing engineering discipline to what AI writes.
+
 DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it a user story and acceptance criteria; it gives back an editable sequence-diagram design. Point it at an existing Java/Spring project and it derives the design your code has *today* and shows a **before/after diff** of the change under review — so a team can approve the design before any code is written.
 
 > **What's verified vs experimental (v0.7.0):** the design + review path — derive, before/after diff, and the dropped-call gate — is the product today. Handing the design to the DisC plugin to generate Java/Spring tests + code works but is **experimental**; treat generated output as a draft to review, not a finished result.
