@@ -4,7 +4,7 @@
 
 DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it a user story and acceptance criteria; it gives back an editable sequence-diagram design. Point it at an existing Java/Spring project and it derives the design your code has *today* and shows a **before/after diff** of the change under review — so a team can approve the design before any code is written.
 
-> **What's verified vs experimental (v0.7.0):** the design + review path — derive, before/after diff, and the dropped-call gate — is the product today. Handing the design to the DisC plugin to generate Java/Spring tests + code works but is **experimental**; treat generated output as a draft to review, not a finished result.
+> **What's verified (v0.8.0):** the design + review path — derive, before/after diff, the dropped-call gate, and the data-flow gate — is the product. **Generation is now verified end-to-end on [spring-petclinic](https://github.com/spring-projects/spring-petclinic)**: a greenfield feature and then a variance change over its own generated code, both to a green suite with zero hand edits ([PR #1](https://github.com/mossgreen/spring-petclinic/pull/1), [PR #2](https://github.com/mossgreen/spring-petclinic/pull/2)). It has not been verified on any other codebase — one repository is evidence, not a guarantee. Review generated output.
 
 ## Demo
 
@@ -92,12 +92,12 @@ The redistributable is a single fat jar. Same command on every platform.
 
    **macOS / Linux** (Terminal):
    ```sh
-   java -jar disc-studio-0.7.0.jar
+   java -jar disc-studio-0.8.0.jar
    ```
 
    **Windows** (PowerShell or Command Prompt):
    ```powershell
-   java -jar disc-studio-0.7.0.jar
+   java -jar disc-studio-0.8.0.jar
    ```
    If `java` isn't recognised, your JDK isn't on PATH — re-run the Temurin installer with "Set JAVA_HOME / Add to PATH" checked, or open a new terminal so PATH changes take effect.
 
@@ -111,7 +111,7 @@ Stop the app with `Ctrl-C` in the terminal.
 
 By default the app binds `:8080`. To run on a different port:
 ```sh
-java -jar disc-studio-0.7.0.jar --server.port=8090
+java -jar disc-studio-0.8.0.jar --server.port=8090
 ```
 
 ## How it works

@@ -5,15 +5,23 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
-## [Unreleased]
+## [v0.8.0] - 2026-07-31
 
-Unreleased work on `feature/data-pipe-bindings`. The theme is a single defect
-class: **a design could name values that nothing produces.** Call arrows echoed
-the callee's declared parameter names instead of binding the caller's actual
-values, so a flow could fetch something and hand it to nobody — code that
-compiles, tests that pass, and a feature that does nothing. The fix restores
-`data_pipe` in the emitter, then adds a deterministic gate so the same class of
-defect cannot reach a reviewer again.
+The theme is a single defect class: **a design could name values that nothing
+produces.** Call arrows echoed the callee's declared parameter names instead of
+binding the caller's actual values, so a flow could fetch something and hand it
+to nobody — code that compiles, tests that pass, and a feature that does
+nothing. The fix restores `data_pipe` in the emitter, then adds a deterministic
+gate so the same class of defect cannot reach a reviewer again.
+
+**Generation is no longer labelled experimental.** It is verified end-to-end on
+spring-petclinic — both a greenfield feature and a variance change over its own
+generated output, each to a green suite with zero hand edits. That is one
+repository, and the README says so; it is a real result, not a general
+guarantee.
+
+**If you already have the DisC plugin, upgrade it with `claude plugin update`** —
+see Requires, below. The command previous releases documented does not work.
 
 ### Fixed
 - **Call arrows carry value bindings, not signature echoes.** `sequencer.md`
@@ -84,6 +92,26 @@ defect cannot reach a reviewer again.
   contract, forbids placeholder names, and (added after live runs invented a
   `visit.hoursUntilVisit()` that does not exist) states that a reused type's
   method surface is fixed.
+- **Sign-off lists the decision-table defaults nobody chose.** A table pins
+  behaviour at its rows; its `config:` block pins what happens off them — nulls,
+  rounding, the exception type. Blanks get filled in by the wizard, and those are
+  decisions the methodology assigns to a person. They are now shown per file and
+  per key at sign-off, including when the author set *some* config and left the
+  rest — the case where it is easiest to believe you configured something you
+  did not. Informational, never a gate.
+
+### Fixed
+- **The plugin upgrade command the app suggests now works.** When the plugin is
+  installed but behind, `GET /api/generator/status` returns `claude plugin
+  update …` instead of `claude plugin install …`. The install form succeeds,
+  prints "already installed", and leaves the old version in place — so the user
+  runs what the tool told them and stays outdated.
+- **README install command named the wrong repo** (`mossgreen/design-is-code`
+  instead of `mossgreen/design-is-code-plugin`), so every fresh install from the
+  quickstart failed at the plugin step. Present since v0.7.0.
+- README described the analyze chain as three model calls; the data-flow gate's
+  retry makes it four. Its test section named only `./gradlew test`, omitting
+  `./gradlew eval` and the browser e2e — both of which cost money.
 
 ### Requires
 - The DisC plugin **v0.11.2+** — resolver-mode permits are Spring beans. The
@@ -95,6 +123,8 @@ defect cannot reach a reviewer again.
   `plugin install` does **not** upgrade it — `install` reports "already
   installed" and leaves the old version in place. Earlier releases documented
   that sequence, so anyone who followed it is still on the older plugin.
+
+[v0.8.0]: https://github.com/mossgreen/design-is-code-app/releases/tag/v0.8.0
 
 ## [v0.7.0] - 2026-07-27
 
