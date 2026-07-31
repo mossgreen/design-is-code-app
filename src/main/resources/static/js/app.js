@@ -4828,10 +4828,12 @@ const DEFAULT_LABELS = {
     locale: 'locale'
 };
 
-// Pure: [{ fileName, keys: [...] }] for every sidecar that took at least one
-// default. Kept separate from the DOM so it is testable in the Node harness.
-function appliedDefaultsSummary(tables) {
-    return (tables || collectAllDecisionTables())
+// [{ fileName, keys: [...] }] for every sidecar that took at least one default.
+// Reads the same collectAllDecisionTables() set that gets written to disk, so
+// the panel can never report on files that do not land. Kept separate from the
+// DOM so the Node harness can test it.
+function appliedDefaultsSummary() {
+    return collectAllDecisionTables()
         .filter(t => (t.appliedDefaults || []).length > 0)
         .map(t => ({ fileName: t.fileName, keys: t.appliedDefaults.slice() }));
 }

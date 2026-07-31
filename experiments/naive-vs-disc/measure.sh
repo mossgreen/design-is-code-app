@@ -41,11 +41,6 @@ trap 'rm -rf "$TMP"' EXIT
 # --- PMD over production code only -------------------------------------------
 # PMD exits 4 when it reports violations. Here a "violation" IS the measurement,
 # so a non-zero exit is the normal case and must not kill the script.
-run_pmd () {  # run_pmd <target-dir-or-filelist-flag> <out.json>
-    if "$PMD" check "$@" -R "$RULESET" -f json --no-progress >"$TMP/out.json" 2>"$TMP/pmd.err"; then :; fi
-    cat "$TMP/out.json"
-}
-
 if [ -d "$MAIN" ]; then
     "$PMD" check -d "$MAIN" -R "$RULESET" -f json --no-progress >"$TMP/pmd.json" 2>"$TMP/pmd.err" || true
 else
