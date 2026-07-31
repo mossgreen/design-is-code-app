@@ -2,11 +2,11 @@
 target: CancellationFeePolicyResolver.resolve
 package: org.springframework.samples.petclinic.owner
 input:
-  key: String
+  initiator: String
 output: CancellationFeePolicy
 ---
 
-| key | expected |
+| initiator | expected |
 | --- | --- |
 | owner | StandardCancellationFee |
 | clinic | ClinicInitiatedFee |

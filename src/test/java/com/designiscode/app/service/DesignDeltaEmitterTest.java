@@ -91,7 +91,7 @@ class DesignDeltaEmitterTest {
         assertTrue(s.contains("target: TaxCalculatorResolver.resolve"), s);
         assertTrue(s.contains("output: TaxCalculator"), s);
         assertTrue(s.contains("package: com.demo"), s);
-        assertTrue(s.contains("| key | expected |"), s);
+        assertTrue(s.contains("| destination | expected |"), s);
         assertTrue(s.contains("| DOMESTIC | DomesticTax |"), s);
         assertTrue(s.contains("| INTERNATIONAL | InternationalTax |"), s);
     }
@@ -113,7 +113,7 @@ class DesignDeltaEmitterTest {
         assertTrue(puml.contains("class Order <<@class:com.demo.Order>>"), puml);
         // resolver participant + linear dispatch (no branch at the orchestrator)
         assertTrue(puml.contains("participant TaxCalculatorResolver"), puml);
-        assertTrue(puml.contains("CheckoutService -> TaxCalculatorResolver : resolve(key)"), puml);
+        assertTrue(puml.contains("CheckoutService -> TaxCalculatorResolver : resolve(order.destination)"), puml);
         assertTrue(puml.contains("TaxCalculatorResolver --> CheckoutService : strategy : TaxCalculator"), puml);
         assertTrue(puml.contains("CheckoutService -> TaxCalculator : calculate(order)"), puml);
         // single-dispatch body fully captured → orchestrator regenerated wholesale, typed return
@@ -182,7 +182,7 @@ class DesignDeltaEmitterTest {
         assertTrue(puml.contains("participant CheckoutService\n"), puml);
         assertFalse(puml.contains("<<@regen"), "must not regenerate an under-captured body: " + puml);
         // the resolver rewrite is still specified so the plugin regenerates the test
-        assertTrue(puml.contains("CheckoutService -> TaxCalculatorResolver : resolve(key)"), puml);
+        assertTrue(puml.contains("CheckoutService -> TaxCalculatorResolver : resolve(order.destination)"), puml);
     }
 
     @Test
@@ -201,7 +201,7 @@ class DesignDeltaEmitterTest {
     @Test
     void rejectsNonGenerateDelta() {
         DesignDelta parked = new DesignDelta(DesignDelta.PARK, "deploy-static", null, null,
-                List.of(), List.of(), null, null, List.of());
+                List.of(), List.of(), null, null, null, List.of());
         DerivedSlice slice = deriver.derive(
                 List.of(ORDER, MONEY, TAX_IFACE, DOMESTIC_TAX, CHECKOUT_IFACE), "CheckoutService", "checkout");
         assertThrows(IllegalArgumentException.class, () -> emitter.emit(slice, parked));

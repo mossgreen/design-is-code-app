@@ -140,11 +140,11 @@ public class DesignDiffer {
         }
 
         return new DesignDelta(DesignDelta.GENERATE, null, strategyInterface, resolver,
-                permits, req.mapping(), c.bindingTime(), sutMode, changes);
+                permits, req.mapping(), c.bindingTime(), c.discriminator(), sutMode, changes);
     }
 
     private DesignDelta parkOrAsk(String disposition, String reason) {
-        return new DesignDelta(disposition, reason, null, null, List.of(), List.of(), null, null, List.of());
+        return new DesignDelta(disposition, reason, null, null, List.of(), List.of(), null, null, null, List.of());
     }
 
     private static String renderMapping(List<MappingRow> mapping) {
