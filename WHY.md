@@ -20,13 +20,17 @@ grab-bag of features.
 
 | | Claim | Mechanism | Evidence |
 |---|---|---|---|
-| 1 | You approve a **change** at design altitude, before code exists | derived before/after diff + the variance reasons behind it | ✅ shipped |
-| 2 | The tool **refuses** designs that cannot be built or tested well | Step-1 refusal protocol, 2-axis budget, boundary bracketing pairs, data-flow gate | ✅ shipped, mechanical |
-| 3 | So structure is **bounded, uniform, and testable** — every branch gets an address and a receipt | orchestrator stays linear; resolver variance lives in table rows; leaf variance is table-pinned | ✅ by construction |
-| 4 | Which keeps **NPath complexity low** and change cost flat | branches are *placed*, not accumulated | 🟡 measuring — 1 of 6 chains |
+| 1 | You approve a **change** at design altitude, before code exists | derived before/after diff + the variance reasons behind it | ✅ shipped — two public PRs open design-only |
+| 2 | The tool **refuses** designs that cannot be built or tested well | Step-1 refusal protocol, boundary bracketing pairs, data-flow gate, sidecar lint | ✅ **`DataflowLinterTest`** (22 cases, both directions), **`DesignDeltaValidatorTest`** (10) |
+| 3 | So structure is **bounded, uniform, and testable** — every branch gets an address and a receipt | orchestrator stays linear; resolver variance lives in table rows; leaf variance is table-pinned | ✅ **`DesignReceiptTest`** — the orchestrator has zero fragments; the naive version of the same ticket has three |
+| 4 | Which keeps **NPath complexity low** and change cost flat | branches are *placed*, not accumulated | 🟡 measuring — `experiments/naive-vs-disc`, 1 of 6 chains |
 | 5 | And the reviewer **already understands** the code, having approved its shape | sign-off precedes generation | ⛔ mechanism sound, never tested on anyone outside the project |
-| 6 | **Drift cannot return**, because design is derived and never stored | on-demand projection from code | ✅ definitional |
-| 7 | And you can **check all of it in 30 seconds** | arrow count equals `verify()` count | ✅ shipped |
+| 6 | **Drift cannot return**, because design is derived and never stored | on-demand projection from code | ✅ **`DerivationStabilityTest`** — repeated derivation is byte-identical, a comment moves nothing, one added call moves one arrow |
+| 7 | And you can **check all of it in 30 seconds** | arrow count equals `verify()` count | ✅ **`DesignReceiptTest`** computes the expected receipt from the design alone (6 calls, 2 rows) — the same counts the real generation produced |
+
+Every `✅` above names a test you can run with `./gradlew test`. None of them
+costs a model call, so the proofs are reproducible on a laptop in seconds — and
+they fail if the property ever regresses, which a report cannot do.
 
 **Claims 2 and 6 carry the pitch.** They are the two that do not decay when the
 next model ships. Claims 4 and 5 are *consequences* — worth measuring, worth
@@ -110,14 +114,16 @@ check.
 
 ## How to check these yourself
 
+`./gradlew test` runs every proof below except claims 4 and 5. No model calls.
+
 | Claim | How to check |
 |---|---|
-| 1, 7 | Open [PR #1](https://github.com/mossgreen/spring-petclinic/pull/1) and [PR #2](https://github.com/mossgreen/spring-petclinic/pull/2) — each opens with a design-only commit. Count the arrows, then count the `verify()` calls in the generated tests. |
-| 2 | Hand a malformed design to the plugin: a sealed family with one permit, or a declared boundary without its bracketing pair. It refuses and says why. |
-| 3 | Read any generated orchestrator. There is no `if` or `switch` in it. |
-| 4 | `experiments/naive-vs-disc/` — pre-registered, PMD-measured, in progress. Predictions were committed before any result existed; see `PROTOCOL.md`. |
+| 1, 7 | Open [PR #1](https://github.com/mossgreen/spring-petclinic/pull/1) and [PR #2](https://github.com/mossgreen/spring-petclinic/pull/2) — each opens with a design-only commit. Count the arrows, then count the `verify()` calls in the generated tests. `DesignReceiptTest` computes the expected count from the design alone. |
+| 2 | `DataflowLinterTest` and `DesignDeltaValidatorTest` — each refusal has a case, and each has a counterpart proving correct designs are *not* refused. Or hand the plugin a sealed family with one permit and watch Step 1 explain itself. |
+| 3 | `DesignReceiptTest.theDiscOrchestratorContainsNoBranchAtAll`, beside `theNaiveVersionOfTheSameTicketDoesBranchInTheOrchestrator` — same ticket, one design with three fragments and one with none. |
+| 4 | `experiments/naive-vs-disc/` — pre-registered, PMD-measured, in progress. Predictions were committed before any result existed; see `PROTOCOL.md` and `PROTOCOL-2.md`. |
 | 5 | Not checkable yet. This is the gap. |
-| 6 | Derive the same slice twice from unchanged code; the output is byte-identical. Change one line; one arrow changes. |
+| 6 | `DerivationStabilityTest` — derives five times and compares bytes, then proves a comment changes nothing and one added call adds exactly one arrow. Both edit tests were confirmed to *fail* when given a real change, so they are not passing vacuously. |
 
 ## Where the evidence lives
 

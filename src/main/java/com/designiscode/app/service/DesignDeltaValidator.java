@@ -100,7 +100,13 @@ public final class DesignDeltaValidator {
                 v.add("existing variant " + ch.name() + " must be reused (or extract-interface), not "
                         + ch.op() + " — leaves are sacred");
             }
-            if ("participant".equals(ch.element()) && ch.name().equals(slice.sut()) && "add".equals(ch.op())) {
+            // The invariant is "the SUT is never ADDED"; which element a change is
+            // filed under is incidental. This used to also require
+            // element == "participant", which DesignDiffer never emits for the SUT
+            // (it files SUT rewiring under "arrow"), so the guard could not fire on
+            // anything the pipeline produces. Found 2026-07-31 by giving Stage D
+            // its first tests.
+            if ("add".equals(ch.op()) && ch.name().equals(slice.sut())) {
                 v.add("SUT " + slice.sut() + " must not be added — it already exists");
             }
         }

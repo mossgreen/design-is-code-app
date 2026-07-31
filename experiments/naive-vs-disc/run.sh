@@ -25,15 +25,24 @@ M2="$CACHE/m2"                       # shared maven repo: don't re-download per 
 UPSTREAM="https://github.com/spring-projects/spring-petclinic.git"
 PIN="${PETCLINIC_PIN:-}"             # empty = record whatever HEAD is at clone time
 
-ARM="" CHAIN="" MODEL="claude-opus-4-8" SKIP_TESTS=""
+ARM="" CHAIN="" MODEL="claude-opus-4-8" SKIP_TESTS="" TICKET_ARG="act1,act2"
 while [ $# -gt 0 ]; do
     case "$1" in
         --arm)        ARM="$2"; shift 2 ;;
         --chain)      CHAIN="$2"; shift 2 ;;
         --model)      MODEL="$2"; shift 2 ;;
+        --tickets)    TICKET_ARG="$2"; shift 2 ;;
         --skip-tests) SKIP_TESTS=1; shift ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
+done
+# Ordered ticket list; each runs on top of the previous one's output. Defaults to
+# PROTOCOL.md's two; PROTOCOL-2.md extends it to four to test whether change cost
+# stays flat.
+IFS=',' read -r -a TICKETS <<< "$TICKET_ARG"
+[ "${#TICKETS[@]}" -gt 0 ] || { echo "run.sh: --tickets must name at least one" >&2; exit 2; }
+for t in "${TICKETS[@]}"; do
+    [ -f "$HERE/tickets/$t.md" ] || { echo "run.sh: no tickets/$t.md" >&2; exit 2; }
 done
 case "$ARM" in naive|disc) ;; *) echo "usage: run.sh --arm naive|disc --chain N" >&2; exit 2 ;; esac
 [ -n "$CHAIN" ] || { echo "run.sh: --chain is required" >&2; exit 2; }
@@ -148,34 +157,60 @@ discover_entry () {
     echo "$impl#$method"
 }
 
+# The variance request the human supplies when running disc-diff: which callee
+# varies, what the new variant is called, and how discriminator values map to
+# strategies. Mappings are CUMULATIVE — by act4 every initiator value must still
+# resolve, or the resolver would silently drop a case.
+#
+# This is Arm D's human contribution, and it is information Arm N does not get.
+# That asymmetry is real and disclosed (PROTOCOL.md, "Arms"): the experiment
+# measures output structure, not effort. It is written here as data so a reader
+# can see exactly what was supplied rather than take it on trust.
+variant_spec () {  # variant_spec <ticket> -> "callee|newVariant|mapping"
+    case "$1" in
+        act2) echo "CancellationFeePolicy|ClinicInitiatedFee|owner=StandardCancellationFee,clinic=ClinicInitiatedFee" ;;
+        act3) echo "CancellationFeePolicy|InsurerInitiatedFee|owner=StandardCancellationFee,clinic=ClinicInitiatedFee,insurer=InsurerInitiatedFee" ;;
+        act4) echo "CancellationFeePolicy|TrainingCancellationFee|owner=StandardCancellationFee,clinic=ClinicInitiatedFee,insurer=InsurerInitiatedFee,training=TrainingCancellationFee" ;;
+        *) echo "" ;;
+    esac
+}
+
 run_disc () {  # run_disc <ticket>
     local ticket="$1"
     curl -sf http://localhost:8080/api/generator/status >/dev/null 2>&1 || {
         echo "run.sh: DisC Studio not reachable on :8080 — start it with ./gradlew bootRun" >&2
         exit 4
     }
-    if [ "$ticket" = "act1" ]; then
-        # Greenfield: the design is assembled in the frontend, so the wizard
-        # must be driven through a browser. e2e-wizard.js already does exactly
-        # this chain (scan → analyze → sequence → gate → .puml).
-        say "arm disc / act1 — wizard (scan → analyze → sequence → design)"
+    if [ "$ticket" = "${TICKETS[0]}" ]; then
+        # The FIRST ticket is greenfield: no prior flow to derive from, and the
+        # design is assembled in the frontend, so the wizard must be driven
+        # through a browser. e2e-wizard.js already does that chain (scan →
+        # analyze → sequence → gate → .puml). Every later ticket is a variance
+        # change over the previous ticket's own output, which the CLI handles.
+        say "arm disc / $ticket — wizard (scan → analyze → sequence → design)"
         ( cd "$APP_ROOT" && node src/test/js/e2e-wizard.js \
             --repo "$REPO" --model "$MODEL" --out "$LOGS/wizard" \
             >"$LOGS/wizard-$ticket.log" 2>&1 ) || {
                 echo "  wizard failed — see $LOGS/wizard-$ticket.log" >&2; return 1; }
     else
         # Variance over existing code: fully CLI-driven.
-        local entry
+        local entry spec callee newvariant mapping
         entry=$(discover_entry) || return 1
-        say "arm disc / act2 — derive → diff → apply (entry: $entry)"
-        echo "$entry" >"$LOGS/act2-entry.txt"
+        spec=$(variant_spec "$ticket")
+        [ -n "$spec" ] || { echo "  no variant_spec for $ticket — add one before running it" >&2; return 1; }
+        callee=${spec%%|*}
+        newvariant=$(echo "$spec" | cut -d'|' -f2)
+        mapping=${spec##*|}
+        say "arm disc / $ticket — derive → diff → apply (entry: $entry, new: $newvariant)"
+        printf 'entry=%s\ncallee=%s\nnewVariant=%s\nmapping=%s\n' \
+            "$entry" "$callee" "$newvariant" "$mapping" >"$LOGS/$ticket-variant-request.txt"
         ( cd "$APP_ROOT" && DISC_OUT="$LOGS/disc-out" scripts/disc-diff \
             --repo "$REPO" \
             --entry "$entry" \
             --discriminator initiator \
-            --callee CancellationFeePolicy \
-            --new-variant ClinicInitiatedFee \
-            --mapping "owner=StandardCancellationFee,clinic=ClinicInitiatedFee" \
+            --callee "$callee" \
+            --new-variant "$newvariant" \
+            --mapping "$mapping" \
             >"$LOGS/disc-diff-$ticket.log" 2>&1 ) || {
                 echo "  disc-diff failed — see $LOGS/disc-diff-$ticket.log" >&2; return 1; }
         ( cd "$APP_ROOT" && DISC_OUT="$LOGS/disc-out" scripts/disc-apply --repo "$REPO" \
@@ -193,34 +228,45 @@ run_disc () {  # run_disc <ticket>
 
 run_arm () { if [ "$ARM" = naive ]; then run_naive "$1"; else run_disc "$1"; fi; }
 
-# --- ticket 1 -----------------------------------------------------------------
-run_arm act1 || echo "  act1 generation reported failure; measuring whatever landed"
-mvn_test act1; T1_TESTS="$TEST_STATUS"
-"$HERE/measure.sh" --repo "$REPO" --out "$RUN_DIR/metrics-act1.json" \
-    --since "$BASE" --scope-since "$BASE"
-T1=$(checkpoint "act1: $ARM")
-
-# --- ticket 2 -----------------------------------------------------------------
-run_arm act2 || echo "  act2 generation reported failure; measuring whatever landed"
-mvn_test act2; T2_TESTS="$TEST_STATUS"
-"$HERE/measure.sh" --repo "$REPO" --out "$RUN_DIR/metrics-act2.json" \
-    --since "$T1" --scope-since "$T1"
-T2=$(checkpoint "act2: $ARM")
+# --- run each ticket in order ------------------------------------------------
+# Each ticket is measured against the state the PREVIOUS ticket left behind, so
+# "existing lines modified" means existing as of the last ticket — which is the
+# change-cost number PROTOCOL-2.md predicts stays flat for DisC and climbs for
+# the naive arm.
+PREV="$BASE"
+TEST_SUMMARY="{}"
+for ticket in "${TICKETS[@]}"; do
+    run_arm "$ticket" || echo "  $ticket generation reported failure; measuring whatever landed"
+    mvn_test "$ticket"
+    "$HERE/measure.sh" --repo "$REPO" --out "$RUN_DIR/metrics-$ticket.json" \
+        --since "$PREV" --scope-since "$PREV"
+    NEXT=$(checkpoint "$ticket: $ARM")
+    ( cd "$REPO" && git diff "$PREV" "$NEXT" -- src/ ) >"$RUN_DIR/$ticket.diff"
+    TEST_SUMMARY=$(echo "$TEST_SUMMARY" | jq --arg t "$ticket" --arg s "$TEST_STATUS" '. + {($t): $s}')
+    REFS=$(echo "${REFS:-\{\}}" | jq --arg t "$ticket" --arg r "$NEXT" '. + {($t): $r}')
+    PREV="$NEXT"
+done
 
 # --- chain metadata -----------------------------------------------------------
-( cd "$REPO" && git diff "$T1" "$T2" -- src/ ) >"$RUN_DIR/act2.diff"
-( cd "$REPO" && git diff "$BASE" "$T1" -- src/ ) >"$RUN_DIR/act1.diff"
-
 jq -n --arg arm "$ARM" --arg chain "$CHAIN" --arg model "$MODEL" \
-      --arg sha "$PETCLINIC_SHA" --arg base "$BASE" --arg t1 "$T1" --arg t2 "$T2" \
-      --arg t1t "$T1_TESTS" --arg t2t "$T2_TESTS" \
-  '{arm:$arm, chain:$chain, model:$model, petclinic_sha:$sha,
-    refs:{base:$base, after_act1:$t1, after_act2:$t2},
-    tests:{act1:$t1t, act2:$t2t},
+      --arg sha "$PETCLINIC_SHA" --arg base "$BASE" \
+      --argjson refs "${REFS:-\{\}}" --argjson tests "$TEST_SUMMARY" \
+      --arg tickets "$(IFS=,; echo "${TICKETS[*]}")" \
+  '{arm:$arm, chain:$chain, model:$model, petclinic_sha:$sha, tickets:$tickets,
+    refs:({base:$base} + $refs),
+    tests:$tests,
     naive_extracted_strategy:null,
-    note:"naive_extracted_strategy is filled in by hand after reading act2.diff; see PROTOCOL.md"}' \
+    note:"naive_extracted_strategy is filled in by hand after reading the diffs; see PROTOCOL.md"}' \
   >"$RUN_DIR/meta.json"
 
 say "chain complete → $RUN_DIR"
-jq -c '{act1_scoped_npath_max: .ticket_scoped.npath.max}' "$RUN_DIR/metrics-act1.json"
-jq -c '{act2_scoped_npath_max: .ticket_scoped.npath.max, change_cost: .change_cost}' "$RUN_DIR/metrics-act2.json"
+# The change-cost-per-ticket line: flat for DisC, climbing for naive, is the
+# whole prediction of PROTOCOL-2.md.
+for ticket in "${TICKETS[@]}"; do
+    printf '  %-6s ' "$ticket"
+    jq -c '{npath: .ticket_scoped.npath.max,
+            existing_prod_lines: (.change_cost.prod_existing_lines_added // 0),
+            existing_test_lines: (.change_cost.test_existing_lines_added // 0),
+            new_files: (.change_cost.prod_new_files // 0),
+            tests: .tests.total}' "$RUN_DIR/metrics-$ticket.json"
+done
