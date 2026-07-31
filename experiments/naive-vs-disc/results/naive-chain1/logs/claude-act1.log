@@ -1,0 +1,12 @@
+Done. Full suite passes: **77 run, 0 failures, 0 errors** (2 MySQL Docker tests skipped as before; the ERROR lines are the intentional `CrashController` test).
+
+## What I changed
+- `Visit.java:*` — added `cancellationFee(appointment, cancellationTime)`: free if cancelled ≥48h before the appointment, `20.00` otherwise, and throws `IllegalStateException` for a past visit. Fee amounts and the 48h window are named constants.
+- `Pet.java:*` — added `removeVisit(Visit)`.
+- `VisitCancellationTests.java` (new) — one test per acceptance criterion (120h→0.00, exactly 48h→0.00, 47h→20.00, 2h→20.00, past→rejected, removed-from-pet).
+
+## Design decision (worth confirming)
+Every acceptance criterion is domain-level, so I implemented and tested at the domain layer only. I did **not** add an HTTP endpoint or template.
+
+- **Why:** The 47h-vs-48h distinction needs hour precision, but `Visit` stores only a `LocalDate`. Adding a web flow would force either a `LocalDate`→`LocalDateTime` migration (rippling through the form, 4 DB schema/data files, and existing tests) or a controller that can't actually exercise the hour-boundary rules. Neither is required by the criteria, and it conflicts with "smallest correct change."
+- **Trade-off:** There's no owner-facing "Cancel" button yet — the logic is ready but unwired. If you want the UI flow, tell me and I'll add the endpoint plus decide how to represent the appointment time.

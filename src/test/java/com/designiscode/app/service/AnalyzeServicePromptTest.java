@@ -54,6 +54,37 @@ class AnalyzeServicePromptTest {
     }
 
     @Test
+    void dataflowProvenanceRuleExistsAndIsWellFormed() throws IOException {
+        Path rule = PROMPTS.resolve("rules").resolve("dataflow-provenance.md");
+        assertTrue(Files.exists(rule), "dataflow-provenance.md rule file missing");
+        String body = Files.readString(rule);
+        assertTrue(body.startsWith("---"), "rule needs frontmatter");
+        assertTrue(body.contains("id: dataflow-provenance"));
+        assertTrue(body.contains("severity: must"));
+        assertTrue(body.contains("data_pipe"),
+                "the rule must name the concept SKILL.md defines, so both ends use one word");
+    }
+
+    /**
+     * The sequencer is the only stage that knows which values are in scope, and it
+     * used to be told to omit them ("If you're using an existing method, omit
+     * args/returns"). That instruction is why designs could name a value nothing
+     * produced. Pin the fix: args are bindings now, and they are required.
+     */
+    @Test
+    void sequencerRequiresValueBindings() throws IOException {
+        String seq = Files.readString(PROMPTS.resolve("sequencer.md"));
+        assertTrue(seq.contains("Values in scope"),
+                "sequencer.md must define what a step is allowed to pass");
+        assertTrue(seq.contains("resultName"),
+                "a returned value needs a name later steps can consume");
+        assertTrue(!seq.contains("omit args/returns"),
+                "the old instruction to omit args is the bug's origin — it must not return");
+        assertTrue(!seq.contains("\"method\": \"loadFor\" }"),
+                "the worked example must show bindings, not bare method calls");
+    }
+
+    @Test
     void everyRuleFileHasFrontmatterId() throws IOException {
         try (Stream<Path> files = Files.list(PROMPTS.resolve("rules"))) {
             files.filter(p -> p.toString().endsWith(".md")).forEach(p -> {

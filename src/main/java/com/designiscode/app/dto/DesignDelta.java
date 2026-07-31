@@ -40,6 +40,7 @@ public record DesignDelta(
         List<String> permits,          // strategy classes: existing impls + the new variant
         List<MappingRow> mapping,      // discriminator value → strategy
         String bindingTime,            // carried from the classification
+        String discriminator,          // carried from the classification: the value the resolver keys on
         String sutMode,                // "regen" | "update"; null unless generate — how the orchestrator is applied
         List<Change> changes           // ordered, reviewable change list
 ) {

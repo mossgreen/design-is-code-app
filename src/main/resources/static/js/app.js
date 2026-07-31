@@ -1273,6 +1273,22 @@ function methodSignature(m) {
     return `${n.name || '?'}(${inputs})`;
 }
 
+// What a call arrow says: `feeFor(hoursUntilVisit)` — the VALUES passed, not the
+// callee's parameter list. The plugin reads this label as a binding (it becomes
+// `verify(collab).feeFor(hoursUntilVisit)`), so a value that exists nowhere in
+// the flow produces code that references something undefined.
+//
+// Falls back to the declared parameter names when a step carries no binding —
+// hand-built sequences and pre-binding AI responses still emit something valid,
+// and DataflowLinter then judges whether those names actually resolve.
+function callSignature(step, m) {
+    const n = normalizeMethodLike(m); if (!n) return '?()';
+    const bound = (step && Array.isArray(step.args)) ? step.args.filter(Boolean) : [];
+    if (bound.length > 0) return `${n.name || '?'}(${bound.join(', ')})`;
+    const declared = (n.inputs || []).map(i => (i.name || i.type || '').trim()).filter(Boolean);
+    return `${n.name || '?'}(${declared.join(', ')})`;
+}
+
 function methodPreviewSignature(m) {
     const n = normalizeMethodLike(m); if (!n) return '?() → void';
     const types = (n.inputs || []).map(i => (i.type || '').trim()).filter(Boolean).join(', ');
@@ -1293,6 +1309,110 @@ function returnLabelFor(m) {
     const n = normalizeMethodLike(m);
     if (!n || !n.output || n.output.trim() === '' || n.output.trim().toLowerCase() === 'void') return null;
     return n.output.trim();
+}
+
+// --- Named results: the value a call hands back ---
+//
+// The grammar's return arrow is `value : Type` (java_spring.md) — a NAME, then
+// its type. Emitting the type alone loses the data flow: nothing downstream can
+// say "this is the value I pass on", so a design can fetch a strategy and never
+// use it and still look correct. Names are derived from the type, deduplicated
+// in flow order, and overridable per step via `step.resultName`.
+
+// "Optional<Owner>" / "List<Visit>" / "org.x.Owner" → "Owner".
+function payloadTypeName(type) {
+    let t = unwrapOptional((type || '').trim());
+    const generic = /^([A-Za-z_][\w]*)<(.+)>$/.exec(t);
+    if (generic && JDK_GENERIC_OUTER.has(generic[1])) {
+        // A container's payload is what the reader cares about; Map keeps its outer name.
+        const inner = generic[2].split(',').pop().trim();
+        t = generic[1] === 'Map' ? generic[1] : inner;
+    } else if (generic) {
+        t = generic[1];
+    }
+    const dot = t.lastIndexOf('.');
+    return dot >= 0 ? t.slice(dot + 1) : t;
+}
+
+function defaultResultName(type) {
+    const t = payloadTypeName(type);
+    if (!t) return 'result';
+    const base = t.charAt(0).toLowerCase() + t.slice(1);
+    // A collection returns many of them: List<Visit> → visits.
+    const isCollection = /^(List|Set|Collection|Iterable|Queue|Deque|Stream)</.test((type || '').trim());
+    return isCollection ? base + 's' : base;
+}
+
+// Returns Map<step.id, resultName>. Void calls are absent (no return arrow).
+// The entry method's parameters seed the namespace so a result never shadows an
+// input the flow already refers to by that name.
+//
+// A returned value is named after the first later argument that needs its type
+// and has no other source — a guard returning `long` into `feeFor(hoursUntilVisit)`
+// is `hoursUntilVisit`, not `long`. That is not cosmetic: it is how the design
+// states which value feeds which call, and it is what makes an unconsumed
+// result visible (nothing claims it, so it keeps its type-derived name and the
+// data-flow gate can see it dangling).
+function resolveResultNames(seq) {
+    const seq2 = seq || state.sequence;
+    const used = new Set();
+    const entry = seq2.find(s => s.kind === STEP_KIND.CALL && isSystemCaller(s.callerId));
+    if (entry) {
+        const entryMethod = findMethod(entry.calleeId, entry.methodId);
+        for (const i of ((entryMethod && entryMethod.inputs) || [])) {
+            if (i && i.name) used.add(i.name);
+        }
+    }
+
+    // Every argument consumed downstream, in flow order, with the step that consumes it.
+    const consumers = [];
+    seq2.forEach((s, idx) => {
+        if (s.kind !== STEP_KIND.CALL || isSystemCaller(s.callerId) || isSystemCaller(s.calleeId)) return;
+        const m = findCalleeMethod(s.calleeId, s.methodId);
+        for (const i of ((normalizeMethodLike(m) || {}).inputs || [])) {
+            if (i && i.name && i.type) consumers.push({ idx, name: i.name, type: i.type, claimed: false });
+        }
+    });
+
+    const map = new Map();
+    seq2.forEach((s, idx) => {
+        if (s.kind !== STEP_KIND.CALL || isSystemCaller(s.callerId)) return;
+        const method = isSystemCaller(s.calleeId)
+            ? findMethod(s.callerId, s.methodId)
+            : findCalleeMethod(s.calleeId, s.methodId);
+        const type = method ? returnLabelFor(method) : null;
+        if (!type) return;
+
+        let wanted = (s.resultName || '').trim();
+        if (!wanted && isSystemCaller(s.calleeId)) {
+            // The final return to [*] is named `result`, matching DesignDeltaEmitter
+            // so a derived before-flow and a proposed after-flow read the same.
+            wanted = 'result';
+        }
+        if (!wanted) {
+            const need = consumers.find(c => !c.claimed && c.idx > idx && !used.has(c.name)
+                && payloadTypeName(c.type) === payloadTypeName(type));
+            if (need) {
+                need.claimed = true;
+                wanted = need.name;
+            }
+        }
+        if (!wanted) wanted = defaultResultName(type);
+
+        let name = wanted;
+        for (let n = 2; used.has(name); n++) name = wanted + n;
+        used.add(name);
+        map.set(s.id, name);
+    });
+    return map;
+}
+
+// The return-arrow label for one step: `owner : Owner`, or null when void.
+function returnLabelForStep(step, method, names) {
+    const type = returnLabelFor(method);
+    if (!type) return null;
+    const name = names ? names.get(step.id) : null;
+    return name ? `${name} : ${type}` : type;
 }
 
 // Returns Map<step.id, participant | null>. A call step "creates" a participant
@@ -1595,8 +1715,18 @@ function hideAnalyzeBanner() {
 // Walk the AI's recursive {steps} response and produce state.sequence
 // entries. Caller/callee names resolve to participant IDs; methods
 // resolve by name on the named callee, and if missing are AUTO-CREATED
-// on that participant using the AI's args/returns (or empty/void).
+// on that participant from the step's `newMethod` signature.
 // Unknown participants → step dropped + warning surfaced.
+//
+// Two different things travel on a step and must not be confused:
+//   step.args      — the VALUES the caller passes here (a data_pipe binding),
+//                    e.g. ["initiator"]. Strings, caller's vocabulary.
+//   method.inputs  — the callee's declared PARAMETERS, e.g. [{name:"key"}].
+//                    Objects, callee's vocabulary; decision-table sidecars key
+//                    on these names, so they must not be rewritten to match a
+//                    binding (analyzer.md: cases[].inputs keys match args[].name).
+// The .puml arrow shows the binding, because that is what the plugin needs to
+// generate `verify(collab).method(value)`.
 function resolveSequence(aiResponse) {
     const seq = [];
     const warnings = [];
@@ -1616,16 +1746,30 @@ function resolveSequence(aiResponse) {
             || null;
     }
 
-    function findOrCreateMethod(callee, methodName, args, returns) {
+    // The signature comes from `newMethod` (the AI proposing a contract). Older
+    // responses put a {name,type} list in `args`; accept that shape too so a
+    // design produced before the binding split still resolves.
+    function findOrCreateMethod(callee, methodName, step) {
         if (!methodName) return null;
         let m = callee.methods.find(mm => mm.name === methodName);
         if (m) return m;
-        const inputs = (args || [])
-            .filter(a => a && (a.name || a.type))
+        const proposed = step.newMethod || {};
+        const rawParams = Array.isArray(proposed.params) ? proposed.params
+            : (Array.isArray(step.args) ? step.args : []);
+        const inputs = rawParams
+            .filter(a => a && typeof a === 'object' && (a.name || a.type))
             .map(a => ({ name: a.name || '', type: a.type || '' }));
-        m = makeMethod(methodName, inputs, returns || '');
+        m = makeMethod(methodName, inputs, proposed.returns || step.returns || '');
         callee.methods.push(m);
         return m;
+    }
+
+    // The values passed at this call site. Strings only — an object here is a
+    // signature from a pre-binding response, and a signature is not a binding.
+    function bindingsOf(step) {
+        return (Array.isArray(step.args) ? step.args : [])
+            .filter(a => typeof a === 'string' && a.trim())
+            .map(a => a.trim());
     }
 
     function visit(steps) {
@@ -1669,7 +1813,7 @@ function resolveSequence(aiResponse) {
             // (behaviors are part of the entity contract — never invent).
             let method;
             if (callee.methods) {
-                method = findOrCreateMethod(callee, s.method, s.args, s.returns);
+                method = findOrCreateMethod(callee, s.method, s);
                 if (!method) {
                     warnings.push(`Dropped call to ${callee.name}: no method name given`);
                     continue;
@@ -1692,7 +1836,12 @@ function resolveSequence(aiResponse) {
                 calleeId: callee.id,
                 // Participant methods have a stable id; entity behaviors
                 // are identified by name (Option A — see findCalleeMethod).
-                methodId: method.id || method.name
+                methodId: method.id || method.name,
+                // The data_pipe binding: what this call passes, and what the
+                // returned value is called. Absent → the emitter falls back to
+                // the declared parameter names (hand-built sequences, older runs).
+                args: bindingsOf(s),
+                resultName: (s.resultName || '').trim()
             });
         }
     }
@@ -1790,6 +1939,25 @@ async function runSequence(refusalFeedback = null) {
             // can still run.
             showAnalyzeBanner(warnings.join(' · '), { spinning: false, error: true, dismissable: true });
         }
+
+        // Check the value graph as soon as the flow exists, not at review time.
+        // Same rule, same server-side implementation as the Step-3 gate — the
+        // only difference is that here the sequencer can still fix it itself.
+        const broken = (await lintDesign()).violations;
+        if (broken.length > 0 && !refusalFeedback) {
+            showAnalyzeBanner('Sequence used values nothing produces — asking for a fix…', { spinning: true });
+            return await runSequence(
+                'The sequence you produced does not connect its values:\n\n'
+                + broken.map(v => '- ' + v).join('\n')
+                + '\n\nEvery argument must be a parameter of the entry method or the '
+                + 'resultName of an earlier step. Add the step that produces the '
+                + 'missing value, or pass a value that already exists. Do not invent names.');
+        }
+        if (broken.length > 0) {
+            // Second attempt still broken: keep the design, let the Step-3 gate
+            // block sign-off. A wrong design that is visible beats a hidden retry loop.
+            showAnalyzeBanner(broken.join(' · '), { spinning: false, error: true, dismissable: true });
+        }
         return true;
     } catch (err) {
         if (state.analyzeAborted) {
@@ -1804,6 +1972,54 @@ async function runSequence(refusalFeedback = null) {
             { spinning: false, error: true, dismissable: true }
         );
         return false;
+    }
+}
+
+// Ask the server whether the design's value graph connects: every argument has
+// a source above it, every stated result has a consumer below it. One rule
+// (DataflowLinter), one endpoint, called from wherever a design exists — after
+// composition, where the sequencer can still fix it, and at Step-3 review, where
+// the team can. Never throws: a gate that cannot run reports nothing rather than
+// blocking the wizard.
+// The public methods of every type this design REUSES, keyed by simple name.
+// Sending only the bound types keeps the payload proportional to the design
+// rather than to the codebase, and it is exactly the set the accessor rule can
+// judge: a type being created has no methods to check against yet.
+function reusedTypeMethods() {
+    const catalog = state.codebaseCatalog;
+    if (!catalog || !Array.isArray(catalog.types)) return {};
+    const boundFqns = new Set([
+        ...(state.participants || []).filter(p => p && p.existingFqn).map(p => p.existingFqn.trim()),
+        ...(state.entities || []).filter(e => e && e.existingFqn).map(e => e.existingFqn.trim())
+    ]);
+    if (boundFqns.size === 0) return {};
+    const out = {};
+    for (const t of catalog.types) {
+        if (!t || !boundFqns.has(t.fqn)) continue;
+        out[t.name] = (t.publicMethods || []).map(m => m && m.name).filter(Boolean);
+    }
+    return out;
+}
+
+async function lintDesign() {
+    try {
+        // Sidecars travel with the diagram: a decision table and the flow it
+        // belongs to can each be right alone and disagree with each other, and
+        // that disagreement is only visible when both are in hand.
+        const sidecars = {};
+        for (const dt of collectAllDecisionTables()) sidecars[dt.fileName] = dt.content;
+        const res = await fetch('/api/design/lint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                puml: emitPlantUml(), knownTypes: reusedTypeMethods(), sidecars
+            })
+        });
+        if (!res.ok) return { violations: [], warnings: [] };
+        const report = await res.json();
+        return { violations: report.violations || [], warnings: report.warnings || [] };
+    } catch {
+        return { violations: [], warnings: [] };
     }
 }
 
@@ -3146,6 +3362,7 @@ function renderSteps() {
     }
 
     const creates = resolveCreates();
+    const resultNames = resolveResultNames();
     let callIdx = 0;
 
     // Track the open fragment stack so frag-end rows know what they're closing
@@ -3263,7 +3480,9 @@ function renderSteps() {
             const sutName = sut.name || '(unnamed)';
             const inputArgs = (method.inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
             const methodCall = `${method.name || '?'}(${inputArgs})`;
-            const ret = returnLabelFor(method);
+            // The entry row previews the method's return type; the final-return
+            // row is a real return arrow, so it shows the named value.
+            const ret = isEntry ? returnLabelFor(method) : returnLabelForStep(step, method, resultNames);
             const row = document.createElement('div');
             row.className = 'step-row sys-edge';
             row.dataset.id = step.id;
@@ -3319,9 +3538,9 @@ function renderSteps() {
         callIdx++;
         const callerName = caller.name || '(unnamed)';
         const calleeName = callee.name || '(unnamed)';
-        const inputArgs = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
-        const methodCall = `${method.name || '?'}(${inputArgs})`;
-        const ret = returnLabelFor(method);
+        // Show the binding, so the row reads the same as the emitted arrow.
+        const methodCall = callSignature(call, method);
+        const ret = returnLabelForStep(call, method, resultNames);
         const created = creates.get(call.id);
 
         // Inline trailing return suffix on the same line as the call.
@@ -3931,6 +4150,7 @@ function emitPlantUml() {
     }
 
     const creates = resolveCreates();
+    const resultNames = resolveResultNames();
     let indent = 0;
     const pad = () => '  '.repeat(indent);
 
@@ -3986,7 +4206,7 @@ function emitPlantUml() {
             const caller = findParticipant(s.callerId);
             const method = findMethod(s.callerId, s.methodId);
             if (!caller || !method) return;
-            const ret = returnLabelFor(method);
+            const ret = returnLabelForStep(s, method, resultNames);
             if (ret) {
                 lines.push(`${pad()}[*] <-- ${caller.name || '_'} : ${ret}`);
             }
@@ -4015,13 +4235,16 @@ function emitPlantUml() {
             // PlantUML start Builder's lifeline mid-diagram, faithfully
             // reflecting the "constructed at this point" semantics.
             const createdName = created.name;
-            lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
+            lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
             lines.push(`${pad()}create ${createdName}`);
-            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdName}`);
+            // The returned instance is named like any other result, so later calls
+            // can reference it (java_spring.md's factory walkthrough does the same).
+            const createdValue = resultNames.get(s.id) || createdName;
+            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdValue} : ${createdName}`);
             return;
         }
-        lines.push(`${pad()}${callerName} -> ${calleeName} : ${methodSignature(method)}`);
-        const ret = returnLabelFor(method);
+        lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
+        const ret = returnLabelForStep(s, method, resultNames);
         if (ret) {
             // Returns use the dashed `<--` form (PlantUML's conventional return
             // arrow) so they're visually distinct from the solid call arrows
@@ -4061,6 +4284,7 @@ function renderSequenceDiagram(steps, container) {
     }
 
     const creates = resolveCreates(steps);
+    const resultNames = resolveResultNames(steps);
 
     // Resolve calls; build lifelines + remember which step (by index) creates which.
     const resolved = [];
@@ -4075,14 +4299,13 @@ function renderSequenceDiagram(steps, container) {
         const toName = callee.name || '(unnamed)';
         if (!lifelines.includes(fromName)) lifelines.push(fromName);
         if (!lifelines.includes(toName)) lifelines.push(toName);
-        const argText = (normalizeMethodLike(method).inputs || []).map(i => i.name || i.type || '').filter(Boolean).join(', ');
         const created = creates.get(s.id);
         if (created && !lifelines.includes(created.name)) lifelines.push(created.name);
         resolved.push({
             from: fromName,
             to: toName,
-            label: `${method.name || '?'}(${argText})`,
-            ret: returnLabelFor(method),
+            label: callSignature(s, method),
+            ret: returnLabelForStep(s, method, resultNames),
             isCreate: !!created,
             createsName: created ? created.name : null
         });
@@ -4392,6 +4615,9 @@ function syncSignoffUI() {
         if (signoffBlockedByDrops()) {
             status.textContent = 'Blocked — this design removes existing calls; acknowledge under Design diff first.';
             status.classList.remove('complete');
+        } else if (signoffBlockedByDataflow()) {
+            status.textContent = 'Blocked — this design uses values nothing produces; acknowledge under Design diff first.';
+            status.classList.remove('complete');
         } else {
             status.textContent = signed
                 ? 'Team signoff received — ready to generate.'
@@ -4404,7 +4630,7 @@ function syncSignoffUI() {
 }
 
 function allSignedOff() {
-    return !!state.teamSignedOff && !signoffBlockedByDrops();
+    return !!state.teamSignedOff && !signoffBlockedByDrops() && !signoffBlockedByDataflow();
 }
 
 (() => {
@@ -4531,10 +4757,120 @@ function setDroppedCalls(dropped) {
     syncSignoffUI();
 }
 
+// --- Data-flow gate: a proposal must connect the values it names ---
+//
+// Sibling of the dropped-call gate, and the same shape: a deterministic verdict
+// that blocks sign-off until acknowledged. The rules live server-side
+// (DataflowLinter) so the wizard, the CLI and CI all judge a design the same way.
+// Violations = a call consumes a value nothing produces. Warnings = a value is
+// produced and never used (severed variance) — informational, never blocking.
+
+function signoffBlockedByDataflow() {
+    return (state.reviewDataflow || []).length > 0 && !state.reviewDataflowAck;
+}
+
+async function refreshDataflowLint() {
+    const report = await lintDesign();
+    setDataflowIssues(report.violations, report.warnings);
+}
+
+function setDataflowIssues(violations, warnings) {
+    const panel = document.getElementById('review-dataflow');
+    const signature = violations.join('|');
+    if (state.reviewDataflowSig !== signature) {
+        state.reviewDataflowSig = signature;
+        state.reviewDataflowAck = false;  // a different set of breaks needs a fresh acknowledgement
+    }
+    state.reviewDataflow = violations;
+    if (panel) {
+        if (violations.length === 0 && warnings.length === 0) {
+            panel.classList.add('hidden');
+            panel.innerHTML = '';
+        } else {
+            panel.classList.remove('hidden');
+            const vBlock = violations.length === 0 ? '' : `
+                <div class="review-dropped-title">⚠ This design uses values that nothing in the flow produces:</div>
+                <ul>${violations.map(v => `<li><code>${escapeHtml(v)}</code></li>`).join('')}</ul>
+                <label class="review-dropped-ack">
+                    <input type="checkbox" id="dataflow-ack" ${state.reviewDataflowAck ? 'checked' : ''}>
+                    <span>These values arrive some other way — proceed</span>
+                </label>`;
+            const wBlock = warnings.length === 0 ? '' : `
+                <div class="review-dataflow-warn-title">Produced but never used:</div>
+                <ul>${warnings.map(w => `<li><code>${escapeHtml(w)}</code></li>`).join('')}</ul>`;
+            panel.innerHTML = vBlock + wBlock;
+            const ack = document.getElementById('dataflow-ack');
+            if (ack) ack.addEventListener('change', e => {
+                state.reviewDataflowAck = !!e.target.checked;
+                syncSignoffUI();
+            });
+        }
+    }
+    syncSignoffUI();
+}
+
+// --- Defaults applied on the human's behalf ------------------------------------
+//
+// A decision table pins behaviour at its sampled rows; its `config:` block pins
+// what happens off the rows — nulls, rounding, the exception type. When the
+// author leaves those blank the wizard fills them in, and an unstated default is
+// exactly the kind of decision this tool exists to surface. So they are listed
+// at sign-off. Informational, never a gate: the defaults are usually right, and
+// a gate you always dismiss teaches people to dismiss gates.
+
+// Human-readable gloss per config key. Anything unlisted falls back to the key.
+const DEFAULT_LABELS = {
+    nullHandling: 'null input',
+    exceptionType: 'exception type',
+    rounding: 'rounding mode',
+    scale: 'decimal scale',
+    defaultValue: 'default value',
+    locale: 'locale'
+};
+
+// Pure: [{ fileName, keys: [...] }] for every sidecar that took at least one
+// default. Kept separate from the DOM so it is testable in the Node harness.
+function appliedDefaultsSummary(tables) {
+    return (tables || collectAllDecisionTables())
+        .filter(t => (t.appliedDefaults || []).length > 0)
+        .map(t => ({ fileName: t.fileName, keys: t.appliedDefaults.slice() }));
+}
+
+function renderAppliedDefaults() {
+    const panel = document.getElementById('review-defaults');
+    if (!panel) return;
+    let summary;
+    try {
+        summary = appliedDefaultsSummary();
+    } catch (err) {
+        console.warn('appliedDefaults summary failed:', err);
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+    if (summary.length === 0) {
+        panel.classList.add('hidden');
+        panel.innerHTML = '';
+        return;
+    }
+    const items = summary.map(s => {
+        const keys = s.keys.map(k => escapeHtml(DEFAULT_LABELS[k] || k)).join(', ');
+        return `<li><code>${escapeHtml(s.fileName)}</code> — ${keys}</li>`;
+    }).join('');
+    panel.classList.remove('hidden');
+    panel.innerHTML = `
+        <div class="review-defaults-title">Chosen for you — no one stated these:</div>
+        <ul>${items}</ul>
+        <div class="review-defaults-note">Off-row behaviour the table does not pin.
+        Edit the decision table if any of these should be different.</div>`;
+}
+
 function renderReviewBefore() {
     const body = reviewEls.beforeBody;
     if (!body || !reviewEls.diff) return;
     setDroppedCalls([]); // no before, no gate — until a flow is derived below
+    refreshDataflowLint();
+    renderAppliedDefaults();
     const showBanner = (extraNote) => {
         reviewEls.diff.classList.remove('has-before');
         body.innerHTML = greenfieldBannerHtml()
@@ -5258,9 +5594,12 @@ function collectDecisionTablesForSave() {
         const participant = findParticipant(step.calleeId);
         const method = findMethod(step.calleeId, step.methodId);
         if (!participant || !method) continue;
+        const { content, appliedDefaults } = emitDecisionTable(
+            participant, method, step.decisionTable, state.targetPackage);
         out.push({
             fileName: decisionTableFileName(participant),
-            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
+            content,
+            appliedDefaults
         });
     }
     return out;
@@ -5315,15 +5654,16 @@ function collectResolverDecisionTables() {
         // Build the YAML+markdown sidecar directly — the plugin's resolver
         // mode (see java_spring.md "Resolver impl from decision table")
         // recognises this shape and generates a Map-based resolver.
-        const lines = [];
-        lines.push('---');
-        lines.push(`target: ${resolver.name}.${resolveMethod.name}`);
-        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-        lines.push('input:');
-        lines.push(`  ${input.name}: ${input.type || '?'}`);
-        lines.push(`output: ${iface.name}`);
-        lines.push('---');
-        lines.push('');
+        // Resolver mode, deliberately without `config:` — the generated body is
+        // `map.get(key)`, so it contains no rounding, scale or null decision to
+        // pin, and the plugin's documented resolver frontmatter has none.
+        const { lines } = decisionFrontmatter({
+            target: `${resolver.name}.${resolveMethod.name}`,
+            pkg: state.targetPackage,
+            inputs: [{ name: input.name, type: input.type }],
+            output: iface.name,
+            mode: 'resolver'
+        });
         const headers = [input.name, 'expected'];
         const rows = v.mapping.map(m => [String(m.key || ''), String(m.strategy || '')]);
         lines.push(emitMarkdownTable(headers, rows));
@@ -5385,15 +5725,19 @@ function collectRuleTableDecisionTables() {
         const input = method.inputs[0];
         if (!input || !input.name) continue;
 
-        const lines = [];
-        lines.push('---');
-        lines.push(`target: ${repo.name}.${method.name}`);
-        if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-        lines.push('input:');
-        lines.push(`  ${input.name}: ${input.type || '?'}`);
-        lines.push(`output: ${rule.name}`);
-        lines.push('---');
-        lines.push('');
+        // A rule-table lookup is not one of the plugin's special modes — it is a
+        // pure-function leaf returning a record, so standard filled mode applies
+        // and its required_decisions must be pinned. The body is a Map lookup,
+        // so only the null decision is live; `isNumericOutput` keeps rounding
+        // and scale out of a table that does no arithmetic.
+        const { lines, appliedDefaults } = decisionFrontmatter({
+            target: `${repo.name}.${method.name}`,
+            pkg: state.targetPackage,
+            inputs: [{ name: input.name, type: input.type }],
+            output: rule.name,
+            method,
+            mode: 'filled'
+        });
         const headers = [input.name, ...fieldNames.map(f => `expected.${f}`)];
         const rows = v.mapping.map(m => [
             String(m.key || ''),
@@ -5407,9 +5751,49 @@ function collectRuleTableDecisionTables() {
 
         out.push({
             fileName: decisionTableFileName(repo),
-            content: lines.join('\n')
+            content: lines.join('\n'),
+            appliedDefaults
         });
     }
+    return out;
+}
+
+// Every sidecar this design will write, in precedence order. Save writes this
+// set and the data-flow gate judges this set — one function, so the files the
+// reviewer is warned about are exactly the files that land on disk.
+//
+// A user-authored table (the DT chip) wins over an auto-synthesised one for the
+// same participant: the human answered the question, so the generator should
+// not get a machine's guess instead.
+function collectAllDecisionTables() {
+    const out = [];
+    const taken = new Set();
+    const add = (dt) => {
+        if (!dt || taken.has(dt.fileName)) return;
+        taken.add(dt.fileName);
+        out.push(dt);
+    };
+
+    for (const step of state.sequence || []) {
+        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
+        const participant = findParticipant(step.calleeId);
+        const method = findMethod(step.calleeId, step.methodId);
+        if (!participant || !method) continue;
+        const { content, appliedDefaults } = emitDecisionTable(
+            participant, method, step.decisionTable, state.targetPackage);
+        add({
+            fileName: decisionTableFileName(participant),
+            content,
+            appliedDefaults
+        });
+    }
+    // Auto-emitted sidecars per resolver / rule-table entry in the analyzer's
+    // variancePlan, then per AC-driven pure-function leaf. The plugin reads
+    // these and generates working implementations; without them the
+    // participants ship as UnsupportedOperationException skeletons.
+    collectResolverDecisionTables().forEach(add);
+    collectRuleTableDecisionTables().forEach(add);
+    collectPureFunctionLeafDecisionTables().forEach(add);
     return out;
 }
 
@@ -5430,16 +5814,16 @@ function collectPureFunctionLeafDecisionTables() {
             const inputs = (m.inputs || []);
             if (inputs.length === 0) continue;
 
-            const lines = [];
-            lines.push('---');
-            lines.push(`target: ${p.name}.${m.name}`);
-            if (state.targetPackage) lines.push(`package: ${state.targetPackage}`);
-            lines.push('input:');
-            inputs.forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
-            lines.push(`output: ${m.output || 'void'}`);
-            boundariesFrontmatterLines(m).forEach(l => lines.push(l));
-            lines.push('---');
-            lines.push('');
+            // Standard filled mode: the plugin refuses here when a
+            // required_decision is unpinned, so this table needs `config:`.
+            const { lines, appliedDefaults } = decisionFrontmatter({
+                target: `${p.name}.${m.name}`,
+                pkg: state.targetPackage,
+                inputs,
+                output: m.output || 'void',
+                method: m,
+                mode: 'filled'
+            });
 
             const headers = [...inputs.map(i => i.name), 'expected'];
             const rows = cases.map(c => {
@@ -5457,7 +5841,8 @@ function collectPureFunctionLeafDecisionTables() {
 
             out.push({
                 fileName: decisionTableFileName(p),
-                content: lines.join('\n')
+                content: lines.join('\n'),
+                appliedDefaults
             });
         }
     }
@@ -5569,41 +5954,7 @@ saveEls.save.addEventListener('click', async () => {
     const originalLabel = saveEls.save.textContent;
     saveEls.save.textContent = 'Saving…';
 
-    // Collect any decision tables attached to CALL steps and serialize each
-    // as a YAML+markdown sidecar. The backend writes them next to the .puml.
-    const decisionTables = [];
-    for (const step of state.sequence) {
-        if (step.kind !== STEP_KIND.CALL || !step.decisionTable) continue;
-        const participant = findParticipant(step.calleeId);
-        const method = findMethod(step.calleeId, step.methodId);
-        if (!participant || !method) continue;
-        decisionTables.push({
-            fileName: decisionTableFileName(participant),
-            content: emitDecisionTable(participant, method, step.decisionTable, state.targetPackage)
-        });
-    }
-    // Auto-emit a decision-table sidecar per resolver / rule-table entry in
-    // the analyzer's variancePlan. The plugin reads these and generates
-    // working Map-based / lookup implementations; without them participants
-    // stay as UnsupportedOperationException skeletons. Deduplicate by
-    // fileName so a user-authored table for the same participant wins over
-    // the auto one.
-    const existingNames = new Set(decisionTables.map(d => d.fileName));
-    for (const dt of collectResolverDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
-    for (const dt of collectRuleTableDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
-    for (const dt of collectPureFunctionLeafDecisionTables()) {
-        if (existingNames.has(dt.fileName)) continue;
-        decisionTables.push(dt);
-        existingNames.add(dt.fileName);
-    }
+    const decisionTables = collectAllDecisionTables();
 
     // Surface any design that will generate stubs (non-blocking — the save
     // still proceeds so the user can iterate). These are invisible to the
@@ -6011,6 +6362,64 @@ function boundariesFrontmatterLines(method) {
     return lines.length > 0 ? ['boundaries:', ...lines] : [];
 }
 
+// The `.decision.md` frontmatter contract, stated once.
+//
+// Four places emit a sidecar — the DT modal, the pure-function-leaf
+// synthesiser, the rule-table synthesiser and the resolver — and they had
+// drifted: three of the four omitted `config:` entirely. The plugin refuses at
+// Step 1 when a `required_decision` (rounding, scale, nullHandling,
+// exceptionType) is pinned by neither the rows nor `config:`, so a drifted
+// emitter writes a file the generator will not accept.
+//
+// `mode` matters because the plugin's decision-table modes do NOT share one
+// contract:
+//   'resolver' — a Map lookup keyed by the input (java_spring.md, "Resolver
+//                impl from decision table"). Its documented frontmatter has no
+//                `config:` at all, and correctly so: the generated body is
+//                `map.get(key)`, so there is no rounding, scale or null
+//                decision in it to pin.
+//   'filled'   — standard pure-function filled mode, where every
+//                `required_decision` must be pinned or Step 1 refuses.
+//
+// Returns the frontmatter lines plus the config keys that came from a DEFAULT
+// rather than from a human. Those are choices the methodology assigns to a
+// person (SKILL.md: when AI invents both the cases and the implementation, the
+// pair can agree and still be wrong), so the caller carries them forward to be
+// shown at sign-off rather than applied silently.
+function decisionFrontmatter({ target, pkg, inputs, output, method, config, mode }) {
+    const lines = ['---', `target: ${target}`];
+    if (pkg) lines.push(`package: ${pkg}`);
+    lines.push('input:');
+    (inputs || []).forEach(i => lines.push(`  ${i.name}: ${i.type || '?'}`));
+    lines.push(`output: ${output}`);
+    if (method) boundariesFrontmatterLines(method).forEach(l => lines.push(l));
+
+    const appliedDefaults = [];
+    if (mode !== 'resolver') {
+        const chosen = config || {};
+        const defaults = defaultDecisionConfig(method || {});
+        const effective = { ...defaults, ...chosen };
+        const cfg = [];
+        const take = (key) => {
+            if (effective[key] === undefined || effective[key] === '') return;
+            cfg.push(`  ${key}: ${effective[key]}`);
+            if (chosen[key] === undefined || chosen[key] === '') appliedDefaults.push(key);
+        };
+        if (isNumericOutput(method || {})) {
+            take('rounding');
+            take('scale');
+        }
+        take('nullHandling');
+        if (effective.nullHandling === 'throw') take('exceptionType');
+        if (effective.nullHandling === 'defaultValue') take('defaultValue');
+        if (effective.locale && String(effective.locale).trim()) take('locale');
+        if (cfg.length > 0) lines.push('config:', ...cfg);
+    }
+
+    lines.push('---', '');
+    return { lines, appliedDefaults };
+}
+
 // Markdown-table column-width formatter: pads each column to its longest cell
 // (header included) so the saved sidecar reads cleanly when opened in an editor.
 function emitMarkdownTable(headers, rows) {
@@ -6029,33 +6438,21 @@ function emitDecisionTable(participant, method, dt, targetPackage) {
         type: (i.type || '').trim() || '?'
     }));
     const output = (method.output || '').trim() || 'void';
-    const config = dt.config || defaultDecisionConfig(method);
 
-    const lines = [];
-    lines.push('---');
-    lines.push(`target: ${participant.name || '?'}.${method.name || '?'}`);
-    if (targetPackage) lines.push(`package: ${targetPackage}`);
-    lines.push('input:');
-    inputs.forEach(i => lines.push(`  ${i.name}: ${i.type}`));
-    lines.push(`output: ${output}`);
-    boundariesFrontmatterLines(method).forEach(l => lines.push(l));
-    lines.push('config:');
-    if (isNumericOutput(method)) {
-        if (config.rounding) lines.push(`  rounding: ${config.rounding}`);
-        if (config.scale !== undefined && config.scale !== '') lines.push(`  scale: ${config.scale}`);
-    }
-    if (config.nullHandling) lines.push(`  nullHandling: ${config.nullHandling}`);
-    if (config.nullHandling === 'throw' && config.exceptionType) {
-        lines.push(`  exceptionType: ${config.exceptionType}`);
-    }
-    if (config.nullHandling === 'defaultValue' && config.defaultValue) {
-        lines.push(`  defaultValue: ${config.defaultValue}`);
-    }
-    if (config.locale && config.locale.trim()) {
-        lines.push(`  locale: ${config.locale.trim()}`);
-    }
-    lines.push('---');
-    lines.push('');
+    // The DT modal is the one path where a human actually answered these, so
+    // its `dt.config` is passed as the chosen values rather than defaults.
+    // Anything they left blank is still a default, and this is the case that
+    // most needs reporting: the author opened the editor and believes the
+    // config is theirs.
+    const { lines, appliedDefaults } = decisionFrontmatter({
+        target: `${participant.name || '?'}.${method.name || '?'}`,
+        pkg: targetPackage,
+        inputs,
+        output,
+        method,
+        config: dt.config,
+        mode: 'filled'
+    });
 
     const headers = [...inputs.map(i => i.name), 'expected'];
     const tableRows = (dt.rows || []).map(r => {
@@ -6065,7 +6462,7 @@ function emitDecisionTable(participant, method, dt, targetPackage) {
     });
     lines.push(emitMarkdownTable(headers, tableRows));
     lines.push('');
-    return lines.join('\n');
+    return { content: lines.join('\n'), appliedDefaults };
 }
 
 // --- DT modal ---

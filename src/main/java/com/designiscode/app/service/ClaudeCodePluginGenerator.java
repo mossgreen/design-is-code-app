@@ -34,9 +34,8 @@ public class ClaudeCodePluginGenerator implements CodeGenerator {
     @Override
     public GenerationStatus status() {
         PluginStatus s = pluginService.status();
-        String cmd = installCommand();
         if (!s.installed()) {
-            return GenerationStatus.notInstalled(cmd);
+            return GenerationStatus.notInstalled(installCommand());
         }
         boolean outdated = s.latestVersion() != null
                 && s.version() != null
@@ -44,6 +43,11 @@ public class ClaudeCodePluginGenerator implements CodeGenerator {
         GenerationStatus.State state = outdated
                 ? GenerationStatus.State.OUTDATED
                 : GenerationStatus.State.READY;
+        // An already-installed plugin needs `update`. Handing back the `install`
+        // form here is worse than handing back nothing: `install` succeeds,
+        // prints "already installed", and leaves the old version in place — so
+        // the user runs the command we gave them and stays outdated.
+        String cmd = outdated ? updateCommand() : installCommand();
         return new GenerationStatus(state, s.version(), s.installPath(), s.latestVersion(), cmd);
     }
 
@@ -107,6 +111,11 @@ public class ClaudeCodePluginGenerator implements CodeGenerator {
 
     private String installCommand() {
         return "claude plugin install " + PluginService.PLUGIN_ID + " --scope user";
+    }
+
+    /** Upgrading an installed plugin: `install` is a no-op, only `update` moves the version. */
+    private String updateCommand() {
+        return "claude plugin update " + PluginService.PLUGIN_ID;
     }
 
     private static RunRequest toRunRequest(GenerationOptions opts) {

@@ -1,6 +1,7 @@
 package com.designiscode.app.controller;
 
 import com.designiscode.app.dto.DesignRequest;
+import com.designiscode.app.service.DataflowLinter;
 import com.designiscode.app.service.DesignService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -8,6 +9,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -18,6 +23,58 @@ public class DesignController {
 
     public DesignController(DesignService designService) {
         this.designService = designService;
+    }
+
+    /**
+     * Data-flow lint over a proposed design, for the Step-3 review gate. Takes the
+     * assembled {@code .puml} so any client with a design — wizard, CLI, CI — gets
+     * the same verdict from the same rules.
+     *
+     * <p>Optional {@code knownTypes} (simple type name → public method names) lets
+     * the lint also judge accessors called on types reused from a scanned project.
+     * A client without a scanned project simply omits it.
+     */
+    @PostMapping("/design/lint")
+    public ResponseEntity<?> lint(@RequestBody Map<String, Object> request) {
+        Object raw = request.get("puml");
+        String puml = raw == null ? null : raw.toString();
+
+        DataflowLinter.Report flow = DataflowLinter.lint(puml, knownTypes(request.get("knownTypes")));
+        // Optional `sidecars` (file name → .decision.md content). A client that
+        // sends none gets the flow verdict alone, unchanged.
+        DataflowLinter.Report decision = DataflowLinter.lintDecision(puml, sidecars(request.get("sidecars")));
+
+        List<String> violations = new ArrayList<>(flow.violations());
+        violations.addAll(decision.violations());
+        List<String> warnings = new ArrayList<>(flow.warnings());
+        warnings.addAll(decision.warnings());
+        return ResponseEntity.ok(new DataflowLinter.Report(violations, warnings));
+    }
+
+    /** Coerce untrusted JSON: a malformed entry is ignored rather than thrown. */
+    private static Map<String, String> sidecars(Object raw) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (!(raw instanceof Map<?, ?> map)) return out;
+        map.forEach((k, v) -> {
+            if (k != null && v != null) out.put(k.toString(), v.toString());
+        });
+        return out;
+    }
+
+    /**
+     * Coerce the request's {@code knownTypes} rather than casting it: this is
+     * untrusted JSON, and a malformed entry should be ignored rather than throw.
+     */
+    private static Map<String, Collection<String>> knownTypes(Object raw) {
+        Map<String, Collection<String>> out = new LinkedHashMap<>();
+        if (!(raw instanceof Map<?, ?> map)) return out;
+        map.forEach((k, v) -> {
+            if (k == null || !(v instanceof Collection<?> methods)) return;
+            List<String> names = new ArrayList<>();
+            methods.forEach(m -> { if (m != null) names.add(m.toString()); });
+            out.put(k.toString(), names);
+        });
+        return out;
     }
 
     @PostMapping("/design")

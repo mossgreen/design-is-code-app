@@ -140,8 +140,46 @@ final class DesignContractValidator {
             }
         }
 
+        checkDataflowProvenance(participants, sut, v);
+
         return new Report(v, w);
     }
+
+    /**
+     * Rule {@code dataflow-provenance}, the part that is decidable here.
+     *
+     * <p>The full property — every consumed value has a producer earlier in the flow —
+     * is a property of the <b>flow</b>, and at analyzer time no flow exists yet: only
+     * the sequencer decides who calls whom and in what order. Checking it here would
+     * mean guessing, and guessing produces false refusals (an enum argument is
+     * usually held as a field or written as a literal, never "produced"). The exact
+     * check runs where the flow exists — {@code DataflowLinter} over the assembled
+     * design — and the judgment part is carried by the LLM rule of the same name.
+     *
+     * <p>What IS decidable from the model alone is whether a name was copied rather
+     * than chosen. The pattern sketches in {@code analyzer.md} use abstract argument
+     * names ({@code key}, {@code input}); shipping one means the shape was pasted, not
+     * instantiated. That is the defect that put {@code resolve(key)} into generated
+     * code, where {@code key} referred to nothing at all.
+     */
+    private static void checkDataflowProvenance(List<Map<String, Object>> participants,
+                                                String sut, List<String> v) {
+        for (Map<String, Object> p : participants) {
+            String pn = str(p, "name");
+            for (Map<String, Object> b : mapList(p, "behaviors")) {
+                for (Map<String, Object> a : mapList(b, "args")) {
+                    String an = str(a, "name");
+                    if (an != null && PLACEHOLDER_ARGS.contains(an)) {
+                        v.add(pn + "." + str(b, "name") + " takes a placeholder argument '" + an
+                                + "' — pattern sketches use abstract names, a design must not");
+                    }
+                }
+            }
+        }
+    }
+
+    /** Placeholder names carried straight out of the prompt's pattern sketches. */
+    private static final Set<String> PLACEHOLDER_ARGS = Set.of("key", "input", "value", "data");
 
     /** The created (non-reuse) record entity whose field-name set matches the
      *  rule-table mapping's expected keys — "the rule record". Empty when the

@@ -1,0 +1,6 @@
+# Vendored PMD (pinned 7.26.0, fetched by setup) and maven/clone caches.
+.tools/
+.cache/
+# Per-chain PetClinic clones and build output are huge and reproducible;
+# metrics, diffs, logs and metadata under results/ ARE tracked (see below).
+results/*/repo/

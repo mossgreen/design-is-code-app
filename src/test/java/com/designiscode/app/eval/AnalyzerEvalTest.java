@@ -1,6 +1,5 @@
 package com.designiscode.app.eval;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -10,7 +9,6 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicTest;
@@ -58,12 +56,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("eval")
 class AnalyzerEvalTest {
 
-    private static final String PROP_PATH = "disc.eval.projectPath";
-    private static final String ENV_PATH = "DISC_EVAL_PROJECT_PATH";
-    private static final String PROP_MODEL = "disc.eval.model";
-    private static final String PROP_RUNS = "disc.eval.runs";
-    private static final String PROP_PASS_RATE = "disc.eval.passRate";
-
     private static final List<EvalFixture> FIXTURES = List.of(
             new VisitFeeFixture());
 
@@ -76,7 +68,6 @@ class AnalyzerEvalTest {
             "/prompts/rules/R4a-feature-envy.md",
             "/prompts/rules/composition-over-inheritance.md");
 
-    private static final Properties EVAL_PROPS = loadEvalProps();
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     private record RunResult(int run, List<String> contractViolations, List<String> goldFailures,
@@ -88,17 +79,17 @@ class AnalyzerEvalTest {
 
     @TestFactory
     List<DynamicTest> analyzerProducesAcceptableDesignModels() throws Exception {
-        String pathStr = cfg(PROP_PATH, ENV_PATH);
+        String pathStr = EvalConfig.cfg(EvalConfig.PROP_PATH, EvalConfig.ENV_PATH);
         Assumptions.assumeTrue(pathStr != null && !pathStr.isBlank(),
-                "SKIP: set disc.eval.projectPath (eval.properties, -D, or env " + ENV_PATH + ")");
+                "SKIP: set disc.eval.projectPath (eval.properties, -D, or env " + EvalConfig.ENV_PATH + ")");
         Path projectDir = Path.of(pathStr.trim());
         Assumptions.assumeTrue(Files.isDirectory(projectDir),
                 "SKIP: project path is not a directory: " + projectDir);
-        Assumptions.assumeTrue(claudeOnPath(), "SKIP: `claude` CLI not found on PATH");
+        Assumptions.assumeTrue(EvalConfig.claudeOnPath(), "SKIP: `claude` CLI not found on PATH");
 
-        String model = resolveModel();
-        int runs = resolveRuns();
-        double passRate = resolvePassRate();
+        String model = EvalConfig.model();
+        int runs = EvalConfig.runs();
+        double passRate = EvalConfig.passRate();
         AnalyzeService analyzeService = new AnalyzeService("elided", 300L, "low", new CancelRegistry());
         ScanCatalog catalog = new ScanService().scan(projectDir.toString());
 
@@ -202,69 +193,4 @@ class AnalyzerEvalTest {
         return sb.toString();
     }
 
-    // ---------- config resolution: -D > env > eval.properties ----------
-
-    private static int resolveRuns() {
-        String raw = cfg(PROP_RUNS, null);
-        if (raw == null || raw.isBlank()) return 1;
-        try {
-            return Math.max(1, Integer.parseInt(raw.trim()));
-        } catch (NumberFormatException e) {
-            return 1;
-        }
-    }
-
-    /** Fraction of runs that must pass; default 2/3, clamped to (0,1]. */
-    private static double resolvePassRate() {
-        String raw = cfg(PROP_PASS_RATE, null);
-        if (raw == null || raw.isBlank()) return 2.0 / 3.0;
-        try {
-            double d = Double.parseDouble(raw.trim());
-            return (d > 0 && d <= 1) ? d : 2.0 / 3.0;
-        } catch (NumberFormatException e) {
-            return 2.0 / 3.0;
-        }
-    }
-
-    private static String resolveModel() {
-        String requested = cfg(PROP_MODEL, null);
-        if (requested == null || requested.isBlank()) return null;
-        String trimmed = requested.trim();
-        return Models.ALLOWED.contains(trimmed) ? trimmed : null;
-    }
-
-    private static String cfg(String prop, String env) {
-        return firstNonBlank(
-                System.getProperty(prop),
-                env == null ? null : System.getenv(env),
-                EVAL_PROPS.getProperty(prop));
-    }
-
-    private static Properties loadEvalProps() {
-        Properties p = new Properties();
-        try (InputStream in = AnalyzerEvalTest.class.getResourceAsStream("/eval.properties")) {
-            if (in != null) p.load(in);
-        } catch (IOException ignored) {
-            // absent or unreadable -> rely on -D / env
-        }
-        return p;
-    }
-
-    private static boolean claudeOnPath() {
-        String path = System.getenv("PATH");
-        if (path == null) return false;
-        for (String dir : path.split(File.pathSeparator)) {
-            if (dir.isBlank()) continue;
-            File f = new File(dir, "claude");
-            if (f.isFile() && f.canExecute()) return true;
-        }
-        return false;
-    }
-
-    private static String firstNonBlank(String... vals) {
-        for (String v : vals) {
-            if (v != null && !v.isBlank()) return v;
-        }
-        return null;
-    }
 }

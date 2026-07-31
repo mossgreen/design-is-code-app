@@ -1,0 +1,23 @@
+
+[1m== chain 1 / arm naive — preparing clean clone[0m
+  petclinic @ 88e37c15cf6fc8490b01bc3e8e2c800cec1ac272
+
+[1m== arm naive / act1 — invoking claude[0m
+
+[1m== formatting (act1)[0m
+
+[1m== running tests (act1)[0m
+measure.sh: wrote /Users/mossgu/Documents/projects/design-is-code-app/experiments/naive-vs-disc/results/naive-chain1/metrics-act1.json
+{"scoped_npath_max":3,"scoped_files":2,"repo_npath_max":36,"main_files":30,"main_loc":1896,"tests":77,"failures":0}
+
+[1m== arm naive / act2 — invoking claude[0m
+
+[1m== formatting (act2)[0m
+
+[1m== running tests (act2)[0m
+measure.sh: wrote /Users/mossgu/Documents/projects/design-is-code-app/experiments/naive-vs-disc/results/naive-chain1/metrics-act2.json
+{"scoped_npath_max":4,"scoped_files":1,"repo_npath_max":36,"main_files":30,"main_loc":1926,"tests":79,"failures":0}
+
+[1m== chain complete → /Users/mossgu/Documents/projects/design-is-code-app/experiments/naive-vs-disc/results/naive-chain1[0m
+{"act1_scoped_npath_max":3}
+{"act2_scoped_npath_max":4,"change_cost":{"prod_existing_files_modified":1,"prod_existing_lines_added":31,"prod_existing_lines_deleted":1,"test_existing_files_modified":1,"test_existing_lines_added":12,"test_existing_lines_deleted":0,"prod_new_files":0,"prod_new_lines":0,"test_new_files":0,"test_new_lines":0}}

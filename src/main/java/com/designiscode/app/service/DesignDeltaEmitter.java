@@ -107,6 +107,7 @@ public class DesignDeltaEmitter {
         String dispatchName = method == null ? "apply" : method.name();
         String dispatchArgs = method == null ? ""
                 : method.params().stream().map(Param::name).collect(Collectors.joining(", "));
+        String key = discriminatorArg(delta);
 
         if (regen) {
             // reproduce the complete flow in order; rewrite only the variation point to resolve→dispatch
@@ -114,7 +115,7 @@ public class DesignDeltaEmitter {
             for (CallSite cs : flow) {
                 if (family.contains(cs.calleeType())) {
                     if (!resolverEmitted) {
-                        appendResolve(p, slice.sut(), resolver, iface);
+                        appendResolve(p, slice.sut(), resolver, iface, key);
                         resolverEmitted = true;
                     }
                     p.append(slice.sut()).append(" -> ").append(iface).append(" : ")
@@ -129,13 +130,13 @@ public class DesignDeltaEmitter {
                 }
             }
             if (!resolverEmitted) {  // defensive: variation point wasn't among captured calls
-                appendResolve(p, slice.sut(), resolver, iface);
+                appendResolve(p, slice.sut(), resolver, iface, key);
                 p.append(slice.sut()).append(" -> ").append(iface).append(" : ")
                         .append(dispatchName).append('(').append(dispatchArgs).append(")\n");
             }
         } else {
             // add-only UPDATE: only the resolver rewrite is specified; the body is not regenerated
-            appendResolve(p, slice.sut(), resolver, iface);
+            appendResolve(p, slice.sut(), resolver, iface, key);
             p.append(slice.sut()).append(" -> ").append(iface).append(" : ")
                     .append(dispatchName).append('(').append(dispatchArgs).append(")\n");
         }
@@ -147,22 +148,24 @@ public class DesignDeltaEmitter {
         p.append("@enduml\n");
 
         DecisionTableFile sidecar = new DecisionTableFile(
-                resolver + ".decision.md", resolverSidecar(pkg, resolver, iface, delta.mapping()));
+                resolver + ".decision.md", resolverSidecar(pkg, resolver, iface, delta.mapping(),
+                        discriminatorParam(key), discriminatorType(slice, key)));
 
         return new ApplyArtifacts(slice.sut() + ".puml", p.toString(), List.of(sidecar));
     }
 
     /** The resolver decision-table sidecar, byte-compatible with the wizard's emitter. */
-    private String resolverSidecar(String pkg, String resolver, String iface, List<MappingRow> mapping) {
+    private String resolverSidecar(String pkg, String resolver, String iface, List<MappingRow> mapping,
+                                   String keyName, String keyType) {
         StringBuilder s = new StringBuilder();
         s.append("---\n");
         s.append("target: ").append(resolver).append(".resolve\n");
         if (notBlank(pkg)) s.append("package: ").append(pkg).append('\n');
         s.append("input:\n");
-        s.append("  key: String\n");
+        s.append("  ").append(keyName).append(": ").append(keyType).append('\n');
         s.append("output: ").append(iface).append('\n');
         s.append("---\n\n");
-        s.append("| key | expected |\n");
+        s.append("| ").append(keyName).append(" | expected |\n");
         s.append("| --- | --- |\n");
         for (MappingRow r : mapping) {
             s.append("| ").append(r.key()).append(" | ").append(r.strategy()).append(" |\n");
@@ -201,9 +204,38 @@ public class DesignDeltaEmitter {
     }
 
     /** The resolver rewrite: resolve the strategy, then the orchestrator holds the abstraction. */
-    private void appendResolve(StringBuilder p, String sut, String resolver, String iface) {
-        p.append(sut).append(" -> ").append(resolver).append(" : resolve(key)\n");
+    private void appendResolve(StringBuilder p, String sut, String resolver, String iface, String key) {
+        p.append(sut).append(" -> ").append(resolver).append(" : resolve(").append(key).append(")\n");
         p.append(resolver).append(" --> ").append(sut).append(" : strategy : ").append(iface).append('\n');
+    }
+
+    /**
+     * The expression the resolver keys on. Stage B classified it, and Phase 1 only
+     * emits {@code request-dynamic}, so it roots in the entry method's inputs and is
+     * in scope at the call site. Emitting a placeholder here would put a value in the
+     * design that nothing produces — see {@link DataflowLinter}.
+     */
+    static String discriminatorArg(DesignDelta delta) {
+        String d = delta.discriminator();
+        return d == null || d.isBlank() ? "key" : d.trim();
+    }
+
+    /** The sidecar's input column name: the last identifier of the expression ({@code order.region()} → {@code region}). */
+    static String discriminatorParam(String arg) {
+        String t = arg.replace("()", "");
+        int dot = t.lastIndexOf('.');
+        if (dot >= 0) t = t.substring(dot + 1);
+        t = t.trim();
+        return t.isEmpty() ? "key" : t;
+    }
+
+    /** The discriminator's declared type when it is an entry parameter outright; String otherwise. */
+    static String discriminatorType(DerivedSlice slice, String arg) {
+        return slice.entryMethod().params().stream()
+                .filter(pp -> arg.equals(pp.name()))
+                .map(pp -> simpleName(pp.type()))
+                .findFirst()
+                .orElse("String");
     }
 
     /** A typed return arrow {@code SUT <-- from : name : Type}, or nothing (void / unnamed result). */

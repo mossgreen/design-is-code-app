@@ -1,5 +1,7 @@
 # DisC Studio
 
+> **The design layer of AI coding.** Bringing engineering discipline to what AI writes.
+
 DisC Studio is the design step in front of [DisC](https://github.com/mossgreen/design-is-code-plugin). You give it a user story and acceptance criteria; it gives back an editable sequence-diagram design. Point it at an existing Java/Spring project and it derives the design your code has *today* and shows a **before/after diff** of the change under review — so a team can approve the design before any code is written.
 
 > **What's verified vs experimental (v0.7.0):** the design + review path — derive, before/after diff, and the dropped-call gate — is the product today. Handing the design to the DisC plugin to generate Java/Spring tests + code works but is **experimental**; treat generated output as a draft to review, not a finished result.
@@ -33,7 +35,7 @@ After install, make sure `java -version` resolves on your PATH (the Temurin inst
 
 ### 2. Claude Code CLI · required
 
-The Studio shells out to the `claude` CLI on Step 2 (Design) — one Analyze click chains three LLM calls: decompose acceptance criteria into participants, compose the call sequence, and validate the design against the codegen plugin. Step 4 shells out again when you click **Run it for me** to do the actual code generation. Without Claude Code on your PATH, Step 2 fails immediately with `claude CLI not found on PATH`.
+The Studio shells out to the `claude` CLI on Step 2 (Design) — one Analyze click chains three LLM calls: decompose acceptance criteria into participants, compose the call sequence, and validate the design against the codegen plugin. A fourth call happens when the data-flow gate rejects the first sequence and asks the model to fix it. Step 4 shells out again when you click **Run it for me** to do the actual code generation. Without Claude Code on your PATH, Step 2 fails immediately with `claude CLI not found on PATH`.
 
 Install from [claude.com/product/claude-code](https://www.claude.com/product/claude-code). After install, sign in once with `claude` and run `claude --version` to confirm it's on PATH.
 
@@ -45,13 +47,23 @@ Step 2's design validation and Step 4's code generation run the DisC plugin
 inside Claude Code. Install it once:
 
 ```sh
-claude plugin marketplace add mossgreen/design-is-code
+claude plugin marketplace add mossgreen/design-is-code-plugin
 claude plugin install design-is-code@mossgreen-design-is-code --scope user
 ```
 
 Verify with `/plugin` in a Claude Code session — check the Installed tab.
 Without it, Step 2's validation soft-fails and Step 4's **Run it for me** has
 nothing to run.
+
+**Already have it installed?** Use `update`, not `install` — `install` reports
+"already installed" and leaves the old version in place:
+
+```sh
+claude plugin update design-is-code@mossgreen-design-is-code
+```
+
+DisC Studio needs plugin **v0.11.2 or newer**. The Connect step shows the
+installed version and offers an Update button if it is behind.
 
 ### 4. A Java/Spring project to save designs into · required
 
@@ -163,8 +175,29 @@ Spring Boot 4 / Java 17 / vanilla HTML+CSS+JS / hand-rolled SVG. No frontend bui
 ### Tests
 
 ```sh
-./gradlew test           # Java unit tests
+./gradlew test           # Java unit tests + the frontend chain tests. No model calls.
 ```
+
+`test` excludes the JUnit tag `eval`. Two suites cost money and run separately:
+
+```sh
+./gradlew eval           # Tag `eval` only. Shells out to `claude` — costs model calls.
+```
+
+`eval` needs a real Spring project to point at. Copy
+`src/test/resources/eval.properties.example` to `eval.properties` (gitignored)
+and set `disc.eval.projectPath`, or pass `-Ddisc.eval.projectPath=…`. Each eval
+test skips cleanly when the path is missing, so a bare `./gradlew eval` on a
+fresh clone is a no-op rather than a failure.
+
+```sh
+node src/test/js/e2e-wizard.js --repo <path to a Spring project>
+```
+
+Drives the real browser through the whole wizard against a real project — scan
+→ analyze → sequence → data-flow gate → `.puml`. Needs the app already running
+on `:8080`, the `claude` CLI on PATH, and Playwright. Costs model calls; not
+part of either Gradle task.
 
 **Releasing:** see [RELEASE.md](RELEASE.md).
 

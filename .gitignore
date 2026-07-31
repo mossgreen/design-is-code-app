@@ -27,6 +27,12 @@ about.md
 TODO.md
 action.md
 demo.md
+outreach.md
+video-script.md
+showhn.md
 
 ### Analyzer eval (machine-local config; template is eval.properties.example) ###
 src/test/resources/eval.properties
+
+### CLI wrapper output (scripts/disc-* write derived slices, deltas, pr-body) ###
+disc-out/

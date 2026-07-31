@@ -23,8 +23,18 @@ require_tools
 require_server
 
 if [ -z "$FILE" ]; then
-  FILE=$(find "$REPO/design" -maxdepth 1 -name '*.puml' | sort | head -1)
-  [ -n "$FILE" ] || { echo "error: no .puml under $REPO/design — run disc-apply first" >&2; exit 1; }
+  # Only auto-pick when there is exactly one design. With several, picking the
+  # alphabetically-first one silently regenerates the wrong ticket — the second
+  # ticket in a repo is the common case, so make the ambiguity loud.
+  COUNT=$(find "$REPO/design" -maxdepth 1 -name '*.puml' | wc -l | tr -d ' ')
+  if [ "$COUNT" -eq 0 ]; then
+    echo "error: no .puml under $REPO/design — run disc-apply first" >&2; exit 1
+  elif [ "$COUNT" -gt 1 ]; then
+    echo "error: $COUNT designs under $REPO/design — pass --file to say which one:" >&2
+    find "$REPO/design" -maxdepth 1 -name '*.puml' | sort | sed 's/^/  --file /' >&2
+    exit 1
+  fi
+  FILE=$(find "$REPO/design" -maxdepth 1 -name '*.puml')
 fi
 
 PUML=$(jq -Rs . <"$FILE")

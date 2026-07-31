@@ -1,0 +1,17 @@
+{
+  "arm": "naive",
+  "chain": "1",
+  "model": "claude-opus-4-8",
+  "petclinic_sha": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+  "refs": {
+    "base": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+    "after_act1": "889d5214c9aefce2d89094c76cdfa93886619d6e",
+    "after_act2": "36826850ad5933af62848b4c23a6d3ec14787cc4"
+  },
+  "tests": {
+    "act1": "pass",
+    "act2": "pass"
+  },
+  "naive_extracted_strategy": null,
+  "note": "naive_extracted_strategy is filled in by hand after reading act2.diff; see PROTOCOL.md"
+}

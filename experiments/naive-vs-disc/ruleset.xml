@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  Measurement ruleset for the naive-vs-DisC experiment.
+
+  These are stock PMD rules with their report thresholds lowered to 1 so that
+  EVERY method is reported with its score, not only those breaching a default
+  limit. We are measuring, not linting: a violation here means "here is the
+  number", not "this is bad".
+
+  Pinned to PMD 7.26.0. Do not change thresholds after the first run — the
+  protocol is frozen.
+-->
+<ruleset name="disc-experiment-metrics"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+    <description>Report NPath, cyclomatic complexity and CBO for every method/class.</description>
+
+    <rule ref="category/java/design.xml/NPathComplexity">
+        <properties>
+            <property name="reportLevel" value="1"/>
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/CyclomaticComplexity">
+        <properties>
+            <property name="methodReportLevel" value="1"/>
+            <property name="classReportLevel" value="1"/>
+        </properties>
+    </rule>
+
+    <rule ref="category/java/design.xml/CouplingBetweenObjects">
+        <properties>
+            <property name="threshold" value="1"/>
+        </properties>
+    </rule>
+
+</ruleset>

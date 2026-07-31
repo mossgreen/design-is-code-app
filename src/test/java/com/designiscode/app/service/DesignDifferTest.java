@@ -259,7 +259,7 @@ class DesignDifferTest {
                         : ch)
                 .toList();
         DesignDelta broken = new DesignDelta(good.disposition(), good.reason(), good.strategyInterface(),
-                good.resolver(), good.permits(), good.mapping(), good.bindingTime(), good.sutMode(), tampered);
+                good.resolver(), good.permits(), good.mapping(), good.bindingTime(), good.discriminator(), good.sutMode(), tampered);
 
         DesignDeltaValidator.Report r = DesignDeltaValidator.validate(slice, req, broken);
         assertFalse(r.ok(), "validator must reject a delta that modifies an existing leaf");

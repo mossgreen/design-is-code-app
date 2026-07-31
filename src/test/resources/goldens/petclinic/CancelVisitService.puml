@@ -22,7 +22,7 @@ CancelVisitService -> OwnerLoader : load(ownerId)
 CancelVisitService <-- OwnerLoader : owner : Owner
 CancelVisitService -> CancellationGuard : check(owner, petId, visitId)
 CancelVisitService <-- CancellationGuard : hoursUntilVisit : long
-CancelVisitService -> CancellationFeePolicyResolver : resolve(key)
+CancelVisitService -> CancellationFeePolicyResolver : resolve(initiator)
 CancellationFeePolicyResolver --> CancelVisitService : strategy : CancellationFeePolicy
 CancelVisitService -> CancellationFeePolicy : feeFor(hoursUntilVisit)
 CancelVisitService <-- CancellationFeePolicy : fee : BigDecimal

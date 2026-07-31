@@ -5,6 +5,97 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
+## [Unreleased]
+
+Unreleased work on `feature/data-pipe-bindings`. The theme is a single defect
+class: **a design could name values that nothing produces.** Call arrows echoed
+the callee's declared parameter names instead of binding the caller's actual
+values, so a flow could fetch something and hand it to nobody — code that
+compiles, tests that pass, and a feature that does nothing. The fix restores
+`data_pipe` in the emitter, then adds a deterministic gate so the same class of
+defect cannot reach a reviewer again.
+
+### Fixed
+- **Call arrows carry value bindings, not signature echoes.** `sequencer.md`
+  told the model to omit args when reusing an existing method, and `app.js`
+  discarded any args it did send, rendering the callee's *declared* parameter
+  names into the arrow. The plugin reads an arrow as `verify(collab).method(value)`
+  — a binding — so the two agreed only when names happened to coincide. Steps
+  now carry `args` and `resultName`; `callSignature(step, m)` emits the binding
+  and falls back to declared names only for hand-built sequences. Declaration
+  and binding stay separate, because decision-table sidecars key on parameter
+  names and a binding must never rewrite them.
+- **Resolvers emit the real discriminator instead of a placeholder `key`.**
+  Every generated resolver carried `resolve(key)` and a sidecar keyed on
+  `key: String` — a name copied out of the analyzer prompt's pattern sketch and
+  hardcoded into `DesignDeltaEmitter`, referring to a value no flow produced.
+  Stage B already classified the discriminator; it was simply dropped after
+  classification. `DesignDelta` now carries it, and the emitter uses it for both
+  the arrow and the sidecar's input column.
+- **`scripts/disc-generate` refuses an ambiguous repo.** It picked the
+  alphabetically-first `.puml` when a project had several — the normal case from
+  the second ticket onward — and reported success having generated the wrong
+  one. It now refuses and lists the `--file` options. The app's Generate button
+  is unaffected; it passes an explicit path.
+- **Missing favicon.** `index.html` declared no icon, putting a `/favicon.ico`
+  404 in every user's console on first load. Now an inline SVG data URI.
+
+### Added
+- **Data-flow gate.** `DataflowLinter` + `POST /api/design/lint`, run by the
+  wizard right after composition — it retries the sequencer once through the
+  existing `{REFUSAL_FEEDBACK}` path, so the model fixes its own mistake before
+  a reviewer sees it. Step 3 stays as the backstop. One rule core over a
+  normalized `Flow`, with two adapters (`fromPuml`, `lintSteps`). Rules: an
+  argument with no producer above it (violation); a design-declared value
+  produced and never used (warning); a method invoked on a REUSE'd type that the
+  codebase scan says does not exist (violation); a return label that is a bare
+  type rather than `value : Type` (warning). Unknown and generic types are never
+  judged — a false refusal costs more than a missed catch.
+- **Decision-table sidecars are linted against the flow.**
+  `DataflowLinter.lintDecision` reports a sidecar with no `target:`, a malformed
+  target, a target nothing in the flow calls, and two rows mapping the same
+  inputs to different outputs. `POST /api/design/lint` accepts an optional
+  `sidecars` map and merges both verdicts; a client that sends none gets the
+  flow verdict alone, unchanged.
+- **One decision-table frontmatter emitter.** `decisionFrontmatter()` replaces
+  four hand-rolled copies across the resolver, rule-table, pure-function-leaf,
+  and human-authored paths, and `collectAllDecisionTables()` returns one deduped
+  list in precedence order — a human-authored table wins over a synthesised one.
+  Config defaults are merged per key rather than as a whole object, and the keys
+  that came from a default are reported back as `appliedDefaults`.
+- **The frontend's first automated tests.** `app.js` was 6.4k lines with no test
+  coverage, which is where the `data_pipe` defect lived. `FrontendChainTest` +
+  `src/test/js/{harness,design-chain}.js` load the *real* `static/js/app.js` in a
+  Node vm behind a DOM stub — a copy would prove nothing. Each case is a property,
+  not a scenario: a binding beats the declared name, a step without args falls
+  back, a signature-shaped args list is never read as values, a severed flow is
+  reported. Runs under `./gradlew test` with no model calls, and skips cleanly
+  when `node` is absent.
+- **`SequencerEvalTest`** — judges the sequencer's raw step JSON, which is
+  exactly what the prompt controls: args as strings not signature objects, no
+  placeholder names, `resultName` on non-void calls, and `DataflowLinter.lintSteps`
+  clean. Pass-rate gated like the analyzer eval. `EvalConfig` extracted so both
+  evals share one opt-in config path.
+- **`src/test/js/e2e-wizard.js`** — Playwright against the real browser and a
+  real Spring project. It also breaks a binding on purpose and asserts sign-off
+  is blocked: a gate observed only passing is not observed.
+- **`rules/dataflow-provenance.md`** — a new `must` rule, single-sourced into
+  both the analyzer's guidance and its self-check. States the outside-in
+  contract, forbids placeholder names, and (added after live runs invented a
+  `visit.hoursUntilVisit()` that does not exist) states that a reused type's
+  method surface is fixed.
+
+### Requires
+- The DisC plugin **v0.11.2+** — resolver-mode permits are Spring beans. The
+  earlier rules said permits get no Spring stereotype while resolver mode injects
+  them by constructor; the contradiction was invisible to every unit test and
+  only appeared when the application context loaded.
+- **Upgrade with `claude plugin update design-is-code@mossgreen-design-is-code`.**
+  If you already have the plugin, `marketplace update` followed by
+  `plugin install` does **not** upgrade it — `install` reports "already
+  installed" and leaves the old version in place. Earlier releases documented
+  that sequence, so anyone who followed it is still on the older plugin.
+
 ## [v0.7.0] - 2026-07-27
 
 DisC Studio becomes a **design-review tool**: point it at an existing

@@ -1,0 +1,15 @@
+Done. Full suite passes: 79 tests, 0 failures, 0 errors (2 skipped are the Docker-dependent MySQL integration tests, unrelated to this change).
+
+## What I changed
+
+`Visit.java`
+- Added a `CancellationInitiator` enum (`OWNER`, `CLINIC`).
+- Added a 3-argument `cancellationFee(appointment, cancellationTime, initiator)`. When the initiator is `CLINIC`, it returns `NO_CANCELLATION_FEE` (0.00) regardless of lead time. Otherwise it applies the existing late-fee rule.
+- The original 2-argument `cancellationFee(...)` now delegates with `OWNER`, so existing owner behavior is unchanged.
+
+`VisitCancellationTests.java`
+- `clinicCancelling2HoursAheadChargesNoFee` → 0.00
+- `ownerCancelling2HoursAheadStillChargesLateFee` → 20.00
+- Existing owner-path tests still pass, covering the "unchanged" criterion.
+
+All three acceptance criteria are covered and green.

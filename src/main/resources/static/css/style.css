@@ -3232,6 +3232,50 @@ button.small {
     cursor: pointer;
 }
 
+/* Data-flow gate. Same anatomy as the dropped-call gate; the amber accent marks
+ * the warning-only case (a value produced and never used), which informs the
+ * reviewer without blocking sign-off. */
+.review-dataflow-warn-title {
+    font-weight: 600;
+    color: #92400e;
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+}
+.review-dataflow:not(:has(.review-dropped-title)) {
+    background: #fffbeb;
+    border-color: #fde68a;
+    border-left-color: #d97706;
+}
+
+/* Applied-defaults disclosure. Deliberately the quietest panel in the review
+ * column — slate, not amber: it reports choices the wizard made because nobody
+ * stated them, which is information, not a problem. It never blocks sign-off. */
+.review-defaults {
+    margin-top: 0.75rem;
+    padding: 0.7rem 0.9rem;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-left: 3px solid #64748b;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+}
+.review-defaults-title {
+    font-weight: 600;
+    color: #334155;
+}
+.review-defaults ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1.2rem;
+}
+.review-defaults li {
+    margin: 0.15rem 0;
+}
+.review-defaults-note {
+    margin-top: 0.45rem;
+    color: var(--muted, #64748b);
+    font-size: 0.8rem;
+}
+
 /* Update-mode chip: shows whether story-named classes matched the catalog
  * (flow injection will fire) or nearly missed (rename hint). */
 .update-mode-chip {

@@ -84,15 +84,19 @@ Show the full draft to the user. Wait for "go" / changes / approval. Iterate if 
 When the changelog draft is approved:
 
 1. **Bump the version.** Edit `build.gradle` (or whatever build manifest lives at the repo root — check `ls *.gradle pom.xml package.json` first). Change the line `version = '<old>'` to `version = '<new>'`. Do not script this with `sed` — just edit the file with the Edit tool, less brittle.
-2. **Insert the changelog entry** at the top of `CHANGELOG.md`, immediately after the header preamble and before the previous entry.
-3. **Show the user `git diff`** of both files. Confirm.
-4. **Ask before commit.** Then:
+2. **Insert the changelog entry** at the top of `CHANGELOG.md`, immediately after the header preamble and before the previous entry. If an `## [Unreleased]` section exists, it becomes the new entry — rename its heading to `## [vX.Y.Z] - <date>` rather than writing a second one, and re-read it against the commit list in case work landed after it was written.
+3. **Bump the jar filename in `README.md`.** The quickstart hardcodes the version in its `java -jar disc-studio-<X.Y.Z>.jar` commands (three occurrences at the time of writing — grep, don't trust the count). Miss this and the release ships a quickstart pointing at a jar that does not exist. Check for the same pattern anywhere else:
    ```sh
-   git add <build-file> CHANGELOG.md
+   grep -rn "disc-studio-[0-9]" --include=*.md .
+   ```
+4. **Show the user `git diff`** of all changed files. Confirm.
+5. **Ask before commit.** Then:
+   ```sh
+   git add <build-file> CHANGELOG.md README.md
    git commit -m "Release <vX.Y.Z> — <one-line summary>"
    ```
    The summary is the first line of the changelog entry, trimmed.
-5. **Ask before push.** Then `git push origin main` (or current branch if user chose otherwise in Step 1).
+6. **Ask before push.** Then `git push origin main` (or current branch if user chose otherwise in Step 1).
 
 ---
 
