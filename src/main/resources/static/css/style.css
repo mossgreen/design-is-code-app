@@ -3232,6 +3232,31 @@ button.small {
     cursor: pointer;
 }
 
+/* Capture disclosure. Sits above the before-diagram and states what derivation
+ * could not account for. Slate rather than red: this blocks nothing and accuses
+ * nobody — it tells the reviewer the picture below is partial, which is the
+ * difference between an incomplete diagram and a misleading one. The `complete`
+ * variant is deliberately quiet but never absent, so silence is never something
+ * the reader has to interpret. */
+.review-capture {
+    margin-bottom: 0.7rem;
+    padding: 0.55rem 0.75rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-left: 4px solid #64748b;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    color: #334155;
+}
+.review-capture strong { color: #1e293b; }
+.review-capture ul { margin: 0.35rem 0 0; padding-left: 1.3rem; }
+.review-capture li { margin: 0.15rem 0; font-family: ui-monospace, Menlo, monospace; font-size: 0.82rem; }
+.review-capture.complete {
+    border-left-color: #94a3b8;
+    color: #64748b;
+    background: #fcfdfe;
+}
+
 /* Data-flow gate. Same anatomy as the dropped-call gate; the amber accent marks
  * the warning-only case (a value produced and never used), which informs the
  * reviewer without blocking sign-off. */

@@ -1,0 +1,61 @@
+name: test
+
+# The free suite only. `./gradlew eval` costs model calls and needs
+# `disc.eval.projectPath`, so it stays off CI by design.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'          # build.gradle pins this toolchain
+          distribution: 'temurin'
+          cache: gradle
+
+      # Load-bearing. FrontendChainTest shells out to `node src/test/js/design-chain.js`
+      # and calls Assumptions.abort("node not on PATH") when node is missing. Without
+      # this step its 18 tests SKIP and CI reports green with 18 fewer tests than a
+      # laptop run — a mechanism that exists and does not run, arriving through the
+      # tool meant to catch exactly that. The skip assertion below is the backstop.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test
+        run: ./gradlew test
+
+      # A green build is not enough on its own: a test that silently stops running
+      # still reports success. Three skips are expected and accounted for —
+      # DerivationStabilityForeignRepoTest is opt-in via -Ddisc.stability.repo.
+      # Any fourth means something stopped running, and that must fail the build.
+      - name: Assert nothing skipped unexpectedly
+        if: always()
+        run: |
+          set -euo pipefail
+          EXPECTED=3
+          counts=$(grep -ho 'tests="[0-9]*" skipped="[0-9]*"' build/test-results/test/*.xml \
+            | awk -F'"' '{t+=$2; s+=$4} END {print t" "s}')
+          total=${counts% *}
+          skipped=${counts#* }
+          echo "ran $total tests, $skipped skipped (expected $EXPECTED)"
+          if [ "$skipped" -ne "$EXPECTED" ]; then
+            echo "::error::expected $EXPECTED skipped tests, found $skipped."
+            echo "A new skip usually means a toolchain is missing and a suite quietly stopped running."
+            grep -l 'skipped="[1-9]' build/test-results/test/*.xml || true
+            exit 1
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/test-results/test/

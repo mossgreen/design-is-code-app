@@ -13,9 +13,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Self-test of the eval's P0 tier with hand-written design models — no CLI,
- * runs in the normal suite. One fully-valid model, then one mutation per
- * violation class. This is what makes eval changes verifiable in seconds.
+ * Self-test of {@link DesignContractValidator} with hand-written design models —
+ * no CLI, runs in the normal suite. One fully-valid model, then one mutation per
+ * violation class. This is what makes rule changes verifiable in seconds.
+ *
+ * <p>The validator is production code now (it backs {@code POST
+ * /api/design/lint}), but its rules were written against <b>analyzer output</b>,
+ * and the models below are that shape. That is a real limit of this file: it
+ * cannot tell you whether a rule is satisfiable from some <em>other</em> input.
+ * Pointing the validator at the wizard's edited state is what surfaced the
+ * {@code ownedBy} rule refusing every hand-authored design, and the test that
+ * caught it had to build its fixture through the wizard's own constructors —
+ * {@code FrontendChainTest.entitiesTheWizardInventedStillGetAnOwner}. Keep new
+ * consumers honest the same way.
  */
 class DesignContractValidatorTest {
 

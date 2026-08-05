@@ -20,3 +20,7 @@
 ### Capture gaps — wholesale REGEN blocked; add-only UPDATE is the fallback
 - a branch (if / ternary) in the entry body
 - an unattributable call: visit.getDate().isAfter(LocalDate.now()) (self, chained, or static receiver)
+- a static call, so there is no collaborator to be an arrow to: LocalDate.now()
+- a call on an unprovided type: result.rejectValue() on 'BindingResult'
+- a call on an unprovided type: result.hasErrors() on 'BindingResult'
+- a call on an unprovided type: redirectAttributes.addFlashAttribute() on 'RedirectAttributes'

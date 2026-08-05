@@ -261,6 +261,34 @@ class FrontendChainTest {
     }
 
     /**
+     * The rule that broke this once: {@code ownedBy} is required by the contract
+     * checks but is <em>analyzer</em> metadata — no entity the wizard builds has
+     * it. {@code makeEntity()} has no such field and {@code mergeDerivedEntities()}
+     * invents entities from signatures without one, so every hand-authored design
+     * reported "entity X has no ownedBy", which then blocked sign-off and burned a
+     * sequencer retry that could not have fixed it.
+     *
+     * <p>The fixture above builds its entities through those two functions, so
+     * this asserts the derivation actually fires. Naming the rule explicitly
+     * matters: the accept-test above would also pass if the entity list were
+     * simply empty.
+     */
+    @Test
+    void entitiesTheWizardInventedStillGetAnOwner() {
+        JsonNode good = cases.get("contractProjection").get("good");
+        JsonNode derived = cases.get("contractProjection").get("derivedNames");
+
+        assertTrue(derived.size() > 0,
+                () -> "fixture no longer derives an entity, so it cannot prove anything: " + derived);
+        for (JsonNode e : good.get("entities")) {
+            assertFalse(e.get("ownedBy").isNull(),
+                    () -> "entity " + e.get("name").asString() + " reached the contract checks "
+                            + "with no owner — this is what made every wizard-built design "
+                            + "report a violation");
+        }
+    }
+
+    /**
      * And the other direction: a projection that always returns something clean
      * would be a pre-filter that never fires. One broken rule — a sealed family
      * with a single permit, which the plugin refuses at Step 1 — must survive the

@@ -34,6 +34,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@link CodeDesignDiffPetclinicRoundTripTest}, so these assertions are about the
  * <i>shape</i> the emitter produces, not about a file someone could quietly edit.
  *
+ * <p><b>Provenance of the counterfactual.</b> {@code oldway-act2.puml} is
+ * hand-authored — its own line 2 says {@code never generated} — so on its own it
+ * is a prediction of the naive shape, written by the author of the thing it is
+ * compared against. Naive chain 1 of {@code experiments/naive-vs-disc} then
+ * produced that shape unaided: it added a {@code CancellationInitiator} parameter
+ * to the existing {@code Visit.cancellationFee} and branched inside it, reaching
+ * green on its own. Read the comparison as one confirmed prediction rather than
+ * as a measurement.
+ *
  * <p>What this cannot check for free: that the plugin then emits exactly that many
  * {@code verify()} calls. Only a generation run shows that — recorded for
  * petclinic Act 2 in about.md §10c and visible in

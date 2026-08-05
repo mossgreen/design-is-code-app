@@ -37,7 +37,7 @@ After install, make sure `java -version` resolves on your PATH (the Temurin inst
 
 ### 2. Claude Code CLI · required
 
-The Studio shells out to the `claude` CLI on Step 2 (Design) — one Analyze click chains three LLM calls: decompose acceptance criteria into participants, compose the call sequence, and validate the design against the codegen plugin. A fourth call happens when the data-flow gate rejects the first sequence and asks the model to fix it. Step 4 shells out again when you click **Run it for me** to do the actual code generation. Without Claude Code on your PATH, Step 2 fails immediately with `claude CLI not found on PATH`.
+The Studio shells out to the `claude` CLI on Step 2 (Design) — one Analyze click chains two LLM calls: decompose acceptance criteria into participants, then compose the call sequence. A third happens when the data-flow gate rejects the first sequence and asks the model to fix it. Everything else Step 2 checks — the data-flow gate, the sidecar lint, the design-contract rules — runs locally and instantly, with no model call. Step 4 shells out again: once to ask the plugin for its own verdict on the design, and once for the actual code generation. Without Claude Code on your PATH, Step 2 fails immediately with `claude CLI not found on PATH`.
 
 Install from [claude.com/product/claude-code](https://www.claude.com/product/claude-code). After install, sign in once with `claude` and run `claude --version` to confirm it's on PATH.
 
@@ -45,8 +45,8 @@ This is separate from your Anthropic API key — Claude Code uses your interacti
 
 ### 3. The DisC codegen plugin · required
 
-Step 2's design validation and Step 4's code generation run the DisC plugin
-inside Claude Code. Install it once:
+Step 4 runs the DisC plugin inside Claude Code — first to check the design
+against its own rules, then to generate. Install it once:
 
 ```sh
 claude plugin marketplace add mossgreen/design-is-code-plugin
@@ -54,8 +54,7 @@ claude plugin install design-is-code@mossgreen-design-is-code --scope user
 ```
 
 Verify with `/plugin` in a Claude Code session — check the Installed tab.
-Without it, Step 2's validation soft-fails and Step 4's **Run it for me** has
-nothing to run.
+Without it, Step 4's **Run it for me** has nothing to run.
 
 **Already have it installed?** Use `update`, not `install` — `install` reports
 "already installed" and leaves the old version in place:
@@ -123,7 +122,7 @@ Four steps, top to bottom:
 1. **Connect** — pick the target Java project folder; the Studio scans it so existing types can be reused in the design.
 2. **Design** — write the user story + acceptance criteria, then click **Analyze**. Claude Code decomposes them into participants, entities, and a call sequence. Edit any of it inline; the live SVG preview updates as you go.
 3. **Sign-off** — the **design diff**: your code's current flow (*before*) beside the proposed design (*after*), the analyzer's reasons, and a gate that blocks sign-off if the proposal drops calls that exist in your code today. The team-review point.
-4. **Generate** *(experimental)* — pick the target Java package, name the file, save into your project's `design/` folder, and click **Run it for me** to run the DisC codegen plugin — or copy the slash command and run it yourself from Claude Code. Review the generated tests + code as a draft.
+4. **Generate** *(verified on spring-petclinic, not elsewhere)* — pick the target Java package, name the file, save into your project's `design/` folder, and click **Run it for me** to run the DisC codegen plugin — or copy the slash command and run it yourself from Claude Code. Review the generated tests + code as a draft.
 
 ## Run from source
 

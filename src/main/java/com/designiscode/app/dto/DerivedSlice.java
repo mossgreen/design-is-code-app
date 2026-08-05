@@ -28,7 +28,7 @@ public record DerivedSlice(
         List<ConfigFact> configFacts,     // config-loading anchor across the provided sources
         String targetPackage,             // the SUT's package — where Stage E writes new code / the .puml @package
         List<TypeRef> knownTypes,         // every provided type, with its FQN + kind (for REUSE stereotypes)
-        List<String> captureGaps          // entry-body constructs the flow cannot represent (see captureComplete)
+        List<String> captureGaps          // every reason this slice may be incomplete (see captureComplete)
 ) {
     /**
      * True when the derived call sites describe the entry method's <b>complete</b>
@@ -36,6 +36,13 @@ public record DerivedSlice(
      * unprovided callee types. This is the REGEN precondition: an orchestrator may
      * be regenerated wholesale only from a design that shows its whole body,
      * because an omitted call is dropped from the regenerated implementation.
+     *
+     * <p>{@link #captureGaps} holds two families, and both must block REGEN
+     * equally: constructs in the entry body a linear flow cannot represent, and
+     * facts that make the <i>derivable world smaller than the real one</i> — a
+     * source that would not parse, a file that could not be read, two provided
+     * types sharing a simple name. The second family is the dangerous one,
+     * because a slice missing it looks exactly as confident as a complete slice.
      */
     public boolean captureComplete() {
         return captureGaps.isEmpty();

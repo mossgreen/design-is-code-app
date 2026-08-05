@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.designiscode'
-version = '0.8.0'
+version = '0.8.1'
 
 java {
     toolchain {
@@ -24,6 +24,25 @@ dependencies {
 }
 
 tasks.named('test') {
+    // FrontendChainTest, DesignAgreementTest and ReviewGateTest shell out to
+    // `node src/test/js/*.js`. Gradle cannot see those files — they are read by
+    // ProcessBuilder from the project directory, not from the classpath — so
+    // without this the task reports UP-TO-DATE after a driver changes and reuses
+    // the previous results. Editing a driver then looks green while nothing ran.
+    // (app.js and diagram-svg.js need no such declaration: they live under
+    // src/main/resources and reach the test classpath through processResources.)
+    inputs.dir('src/test/js')
+            .withPropertyName('frontendTestDrivers')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+
+    // Same reason: CoverageGovernanceTest parses these two at runtime, from the
+    // project directory. Without declaring them, editing a claim in WHY.md or a
+    // property row in TESTING.md leaves `:test` UP-TO-DATE — so the check that
+    // exists to keep those files honest is the one that quietly stops running.
+    inputs.files('TESTING.md', 'WHY.md')
+            .withPropertyName('coverageGovernanceDocs')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+
     // Excludes @Tag("eval"): the analyzer eval shells out to the `claude` CLI
     // and costs real model calls — it must never fire from a plain `test` run
     // just because eval.properties happens to be configured. Run it via the

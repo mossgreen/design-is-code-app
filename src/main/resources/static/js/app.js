@@ -70,6 +70,9 @@ const JAVA_PACKAGE_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 // paths special-case it where rendering matters.
 const SYSTEM_CALLER_ID = '__system_caller__';
 function isSystemCaller(id) { return id === SYSTEM_CALLER_ID; }
+// PlantUML's start/end marker. The system caller has no participant record, so
+// this is the name both the .puml text and the drawn diagram give it.
+const SYSTEM_LIFELINE = '[*]';
 
 let nextId = 1;
 const newId = () => `id-${nextId++}`;
@@ -1928,7 +1931,15 @@ async function runSequence(refusalFeedback = null) {
         // Check the value graph as soon as the flow exists, not at review time.
         // Same rule, same server-side implementation as the Step-3 gate — the
         // only difference is that here the sequencer can still fix it itself.
-        const broken = (await lintDesign()).violations;
+        //
+        // FLOW violations only. The same call also returns contract violations
+        // (grammar: permits, decision tables, entity metadata), and those must
+        // NOT reach the retry below: the sequencer emits the ordered call list
+        // and nothing else, so it cannot fix a one-permit sealed family — it
+        // would only be handed a prompt about arguments describing a problem
+        // that is not about arguments. They surface at Step 3 instead, in their
+        // own panel. This is the same misrouting the plugin-validator retry had.
+        const broken = (await lintDesign({ contract: false })).violations;
         if (broken.length > 0 && !refusalFeedback) {
             showAnalyzeBanner('Sequence used values nothing produces — asking for a fix…', { spinning: true });
             return await runSequence(
@@ -1994,12 +2005,39 @@ function reusedTypeMethods() {
 // It deliberately projects the EDITED state, not the analyzer's original output:
 // the reviewer must be told about the design in front of them, not the one the
 // model first proposed.
+// Which participant owns an entity's lifecycle. The analyzer states this
+// (`ownedBy`), and the contract rules require it — but nothing the WIZARD builds
+// carries it: `makeEntity()` has no such field and `mergeDerivedEntities()`
+// invents entities from method signatures without one. So the projection derives
+// it, rather than reporting every hand-authored entity as a rule break.
+//
+// The heuristic matches the field's definition closely enough to be honest: the
+// owner is the participant whose signature introduced the type. Falling back to
+// the SUT is the same answer the analyzer gives for a type only the entry point
+// touches. The field never reaches the .puml and is not required for codegen
+// (see adoptEntity) — it exists for the analyzer's R4a self-check.
+function ownerForEntity(entity, participants, sutName) {
+    const stated = (entity.ownedBy || '').trim();
+    if (stated) return stated;
+    const name = (entity.name || '').trim();
+    if (name) {
+        for (const p of participants) {
+            for (const m of (p.methods || [])) {
+                const types = [(m.output || '')].concat((m.inputs || []).map(i => i.type || ''));
+                if (types.some(t => extractTypeRefs(t).includes(name))) return p.name;
+            }
+        }
+    }
+    return sutName || null;
+}
+
 function designModelForContract() {
     const participants = state.participants || [];
     const sut = participants.find(p => p.id === state.sutParticipantId);
+    const sutName = sut ? sut.name : '';
     return {
         story: state.story || '',
-        sut: sut ? sut.name : '',
+        sut: sutName,
         participants: participants.map(p => ({
             name: p.name,
             // `kind` collapsed isLeaf on the way in. A REUSE participant is
@@ -2016,12 +2054,24 @@ function designModelForContract() {
                 boundaries: m.boundaries || null
             }))
         })),
-        entities: state.entities || [],
+        entities: (state.entities || []).map(e => ({
+            ...e,
+            ownedBy: ownerForEntity(e, participants, sutName)
+        })),
         variancePlan: state.variancePlan || []
     };
 }
 
-async function lintDesign() {
+// `contract: false` asks for the data-flow verdict alone.
+//
+// Two reasons, and either would be enough. First, routing: the contract rules are
+// grammar, and the only caller that passes false is the sequencer retry, which
+// cannot act on grammar. Second, and more basic — that caller runs INSIDE
+// runSequence(), before runAnalyze() has set the SUT or added the entry
+// interaction. The design is not assembled yet, so contract answers there are
+// about a half-built model: "sut is missing or blank" every time. A check that
+// runs too early does not report a problem, it invents one.
+async function lintDesign({ contract = true } = {}) {
     try {
         // Sidecars travel with the diagram: a decision table and the flow it
         // belongs to can each be right alone and disagree with each other, and
@@ -2035,17 +2085,30 @@ async function lintDesign() {
                 puml: emitPlantUml(), knownTypes: reusedTypeMethods(), sidecars,
                 // The contract checks: the deterministic half of what the plugin's
                 // Step 1 would refuse, answered here instantly instead of by a
-                // model call on every Analyze.
-                model: designModelForContract(),
+                // model call on every Analyze. Omitting the model is what turns
+                // them off — the server does no contract work without it.
+                model: contract ? designModelForContract() : undefined,
                 acCount: (state.ac || []).length
             })
         });
-        if (!res.ok) return { violations: [], warnings: [] };
+        if (!res.ok) return emptyLintReport();
         const report = await res.json();
-        return { violations: report.violations || [], warnings: report.warnings || [] };
+        return {
+            violations: report.violations || [],
+            warnings: report.warnings || [],
+            // Kept separate from the flow verdict all the way to the UI. These
+            // are grammar complaints; the sequencer cannot act on them and the
+            // data-flow panel's wording is false for them. See DesignController.
+            contractViolations: report.contractViolations || [],
+            contractWarnings: report.contractWarnings || []
+        };
     } catch {
-        return { violations: [], warnings: [] };
+        return emptyLintReport();
     }
+}
+
+function emptyLintReport() {
+    return { violations: [], warnings: [], contractViolations: [], contractWarnings: [] };
 }
 
 // --- Plugin validator (runs once, at Generate) ---
@@ -2055,7 +2118,8 @@ async function lintDesign() {
 //   {refused: false}              → ok
 //   {refused: false, error: ...}  → transport failure; soft-pass (Step 4 will
 //                                   surface real generator errors anyway)
-//   {refused: true, message}      → plugin refused; caller decides retry
+//   {refused: true, message}      → plugin refused; the caller shows it and stops
+//                                   (no retry: see the Generate handler)
 // We never throw — failures are advisory at the wizard level.
 // The model Step-1 validation is asked for. Kept as a named constant because
 // the choice is evidence-based, not incidental — see the note at the call site.
@@ -3986,6 +4050,10 @@ step2Els.flowNext.addEventListener('click', () => {
     goToStep(3);
 });
 
+// The panel lives in panel-4 (the Generate step), which is the only step this
+// can fire from. Un-hiding a node whose ancestor section is display:none shows
+// nothing and scrolls nowhere, so placement is not cosmetic here: it decides
+// whether a refused generation says anything at all.
 function showPluginRefusal(message) {
     const panel = document.getElementById('plugin-refusal-panel');
     const body = document.getElementById('plugin-refusal-body');
@@ -3993,7 +4061,6 @@ function showPluginRefusal(message) {
     body.textContent = message;
     panel.classList.remove('hidden');
     panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    syncFlowNext();
 }
 
 function hidePluginRefusal() {
@@ -4001,15 +4068,6 @@ function hidePluginRefusal() {
     const body = document.getElementById('plugin-refusal-body');
     if (panel) panel.classList.add('hidden');
     if (body) body.textContent = '';
-    syncFlowNext();
-}
-
-// Kept as the single place that would re-enable the button, should anything ever
-// need to disable it again. The plugin refusal no longer does: it surfaces at
-// Generate, long after this button matters.
-function syncFlowNext() {
-    if (!step2Els.flowNext) return;
-    step2Els.flowNext.disabled = false;
 }
 
 // --- UML emission + parsing (preserved for Step 3 preview & Step 4 generate) ---
@@ -4067,6 +4125,96 @@ function parseUml(text) {
     });
 
     return { arrows, items, participants: [...participantSet], errors };
+}
+
+/**
+ * The single ordered interaction list behind BOTH the `.puml` text and the drawn
+ * diagram.
+ *
+ * Before this existed the two were resolved independently, and they disagreed.
+ * `emitPlantUml` special-cased `isSystemCaller` to emit `[*] -> SUT` and
+ * `[*] <-- SUT`; `renderSequenceDiagram` had no such branch, so
+ * `findParticipant('__system_caller__')` returned undefined, its guard dropped
+ * both steps, and the diagram never drew `[*]`. Since Step 3's *after* panel is
+ * that same renderer, the reviewer signed off a picture missing the entry
+ * signature and the return type — two design decisions the file carried anyway.
+ * A third copy of the logic indexed fragment spans by call ordinal, and had to
+ * agree with both.
+ *
+ * Sharing the selection makes disagreement unrepresentable. `SliceRenderer` does
+ * exactly this server-side: one `pumlArrows()` behind `renderPuml` and
+ * `renderModel`, "so the drawn diagram and the puml text never disagree". This
+ * is the client half.
+ *
+ * Rendering stays with each consumer — text formatting and SVG drawing have
+ * nothing in common. Only the *selection* is shared, which is where they drifted.
+ *
+ * Names are returned raw. Each consumer applies its own fallback for an unnamed
+ * participant (`_` in the puml, `(unnamed)` in the diagram), so unifying the
+ * selection changes neither one's output.
+ */
+function resolveSteps(steps) {
+    const seq = steps || state.sequence;
+    const creates = resolveCreates(seq);
+    const resultNames = resolveResultNames(seq);
+    const out = [];
+    for (const s of seq) {
+        if (s.kind !== STEP_KIND.CALL) continue;
+
+        // Entry interaction: [*] -> SUT : method(args). methodId points at a
+        // method on the SUT (the callee); the caller is the sentinel.
+        if (isSystemCaller(s.callerId)) {
+            const callee = findParticipant(s.calleeId);
+            const method = findMethod(s.calleeId, s.methodId);
+            if (!callee || !method) continue;
+            out.push({
+                id: s.id, kind: 'entry', from: SYSTEM_LIFELINE, to: callee.name,
+                method: method.name, label: methodSignature(method), ret: null,
+                isCreate: false, createsName: null, createdValue: null
+            });
+            continue;
+        }
+        // Final return: SUT --> [*] : returnType. A void entry method emits no
+        // final arrow, which the language profile allows.
+        if (isSystemCaller(s.calleeId)) {
+            const caller = findParticipant(s.callerId);
+            const method = findMethod(s.callerId, s.methodId);
+            if (!caller || !method) continue;
+            const ret = returnLabelForStep(s, method, resultNames);
+            if (!ret) continue;
+            out.push({
+                id: s.id, kind: 'exit', from: caller.name, to: SYSTEM_LIFELINE,
+                method: method.name, label: null, ret,
+                isCreate: false, createsName: null, createdValue: null
+            });
+            continue;
+        }
+
+        // Ordinary call. The callee may be a participant OR a poly-callable
+        // entity (interface / sealed-interface with behaviors).
+        const caller = findParticipant(s.callerId);
+        const callee = findCallee(s.calleeId);
+        const method = findCalleeMethod(s.calleeId, s.methodId);
+        if (!caller || !callee || !method) continue;
+        const created = creates.get(s.id);
+        out.push({
+            id: s.id, kind: 'call', from: caller.name, to: callee.name,
+            method: method.name,
+            label: callSignature(s, method),
+            ret: returnLabelForStep(s, method, resultNames),
+            isCreate: !!created,
+            createsName: created ? created.name : null,
+            createdValue: created ? (resultNames.get(s.id) || created.name) : null
+        });
+    }
+    return out;
+}
+
+/** Step id → resolved interaction, for consumers that walk the raw sequence. */
+function resolveStepsById(steps) {
+    const byId = new Map();
+    for (const it of resolveSteps(steps)) byId.set(it.id, it);
+    return byId;
 }
 
 function emitPlantUml() {
@@ -4195,10 +4343,12 @@ function emitPlantUml() {
         lines.push('');  // blank line before the sequence interactions
     }
 
-    const creates = resolveCreates();
-    const resultNames = resolveResultNames();
+    // Arrows come from the shared selection, so this text and the drawn diagram
+    // can never disagree about which interactions exist. See resolveSteps().
+    const interactions = resolveStepsById();
     let indent = 0;
     const pad = () => '  '.repeat(indent);
+    const nm = (name) => name || '_';
 
     // Track the open fragment stack so that:
     //  (a) FRAG_ELSE emits the right keyword (`else` for alt/opt, also `else`
@@ -4234,45 +4384,25 @@ function emitPlantUml() {
             lines.push(`${pad()}end`);
             return;
         }
-        // CALL
+        // CALL — resolved once, in resolveSteps(). A step absent from the map
+        // is one neither surface shows.
+        const it = interactions.get(s.id);
+        if (!it) return;
 
-        // Entry interaction: [*] -> SUT : method(args). The methodId points
-        // at a method on the SUT (callee); the caller is the system_caller
-        // sentinel. Only emits a call line — the return arrow is a separate
-        // step in the sequence.
-        if (isSystemCaller(s.callerId)) {
-            const callee = findParticipant(s.calleeId);
-            const method = findMethod(s.calleeId, s.methodId);
-            if (!callee || !method) return;
-            lines.push(`${pad()}[*] -> ${callee.name || '_'} : ${methodSignature(method)}`);
+        // Entry interaction: [*] -> SUT : method(args).
+        if (it.kind === 'entry') {
+            lines.push(`${pad()}[*] -> ${nm(it.to)} : ${it.label}`);
             return;
         }
-        // Final return: SUT --> [*] : returnType. Only emits a return line.
-        if (isSystemCaller(s.calleeId)) {
-            const caller = findParticipant(s.callerId);
-            const method = findMethod(s.callerId, s.methodId);
-            if (!caller || !method) return;
-            const ret = returnLabelForStep(s, method, resultNames);
-            if (ret) {
-                lines.push(`${pad()}[*] <-- ${caller.name || '_'} : ${ret}`);
-            }
-            // void entry method → no final return arrow emitted, which
-            // matches the language profile (entry can return void).
+        // Final return: SUT --> [*] : returnType.
+        if (it.kind === 'exit') {
+            lines.push(`${pad()}[*] <-- ${nm(it.from)} : ${it.ret}`);
             return;
         }
 
-        const caller = findParticipant(s.callerId);
-        // Callee may be a participant OR a poly-callable entity (interface
-        // / sealed-interface with behaviors). The entity prelude declared
-        // it via `class Foo <<interface>>` so the arrow `caller -> Foo`
-        // is a valid PlantUML sequence line.
-        const callee = findCallee(s.calleeId);
-        const method = findCalleeMethod(s.calleeId, s.methodId);
-        if (!caller || !callee || !method) return;
-        const callerName = caller.name || '_';
-        const calleeName = callee.name || '_';
-        const created = creates.get(s.id);
-        if (created) {
+        const callerName = nm(it.from);
+        const calleeName = nm(it.to);
+        if (it.isCreate) {
             // PlantUML's idiom for "Service asks Factory to create Builder":
             //   1. Service -> Factory : create()        (regular call to factory)
             //   2. create Builder                       (declares the new lifeline)
@@ -4280,22 +4410,19 @@ function emitPlantUml() {
             // The `create` keyword between the call and the return makes
             // PlantUML start Builder's lifeline mid-diagram, faithfully
             // reflecting the "constructed at this point" semantics.
-            const createdName = created.name;
-            lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
-            lines.push(`${pad()}create ${createdName}`);
+            lines.push(`${pad()}${callerName} -> ${calleeName} : ${it.label}`);
+            lines.push(`${pad()}create ${it.createsName}`);
             // The returned instance is named like any other result, so later calls
             // can reference it (java_spring.md's factory walkthrough does the same).
-            const createdValue = resultNames.get(s.id) || createdName;
-            lines.push(`${pad()}${calleeName} --> ${callerName} : ${createdValue} : ${createdName}`);
+            lines.push(`${pad()}${calleeName} --> ${callerName} : ${it.createdValue} : ${it.createsName}`);
             return;
         }
-        lines.push(`${pad()}${callerName} -> ${calleeName} : ${callSignature(s, method)}`);
-        const ret = returnLabelForStep(s, method, resultNames);
-        if (ret) {
+        lines.push(`${pad()}${callerName} -> ${calleeName} : ${it.label}`);
+        if (it.ret) {
             // Returns use the dashed `<--` form (PlantUML's conventional return
             // arrow) so they're visually distinct from the solid call arrows
             // above. Matches the canonical source .puml files in design-is-code-demo.
-            lines.push(`${pad()}${callerName} <-- ${calleeName} : ${ret}`);
+            lines.push(`${pad()}${callerName} <-- ${calleeName} : ${it.ret}`);
         }
     });
     // Auto-close any unbalanced loops so we always emit valid PlantUML.
@@ -4329,31 +4456,27 @@ function renderSequenceDiagram(steps, container) {
         return;
     }
 
-    const creates = resolveCreates(steps);
-    const resultNames = resolveResultNames(steps);
+    // The same selection emitPlantUml formats — see resolveSteps(). This loop
+    // used to resolve steps itself and had no system-caller branch, so the entry
+    // interaction and the final return were dropped and `[*]` never appeared.
+    const interactions = resolveSteps(steps);
 
-    // Resolve calls; build lifelines + remember which step (by index) creates which.
     const resolved = [];
     const lifelines = [];
-    for (const s of steps) {
-        if (s.kind !== STEP_KIND.CALL) continue;
-        const caller = findParticipant(s.callerId);
-        const callee = findCallee(s.calleeId);
-        const method = findCalleeMethod(s.calleeId, s.methodId);
-        if (!caller || !callee || !method) continue;
-        const fromName = caller.name || '(unnamed)';
-        const toName = callee.name || '(unnamed)';
+    for (const it of interactions) {
+        const fromName = it.from || '(unnamed)';
+        const toName = it.to || '(unnamed)';
         if (!lifelines.includes(fromName)) lifelines.push(fromName);
         if (!lifelines.includes(toName)) lifelines.push(toName);
-        const created = creates.get(s.id);
-        if (created && !lifelines.includes(created.name)) lifelines.push(created.name);
+        if (it.createsName && !lifelines.includes(it.createsName)) lifelines.push(it.createsName);
         resolved.push({
+            kind: it.kind,
             from: fromName,
             to: toName,
-            label: callSignature(s, method),
-            ret: returnLabelForStep(s, method, resultNames),
-            isCreate: !!created,
-            createsName: created ? created.name : null
+            label: it.label,
+            ret: it.ret,
+            isCreate: it.isCreate,
+            createsName: it.createsName
         });
     }
 
@@ -4438,13 +4561,12 @@ function renderSequenceDiagram(steps, container) {
     {
         const stack = [];
         let callIdx = 0;
-        const isValidCall = (s) => {
-            if (s.kind !== STEP_KIND.CALL) return false;
-            const caller = findParticipant(s.callerId);
-            const callee = findCallee(s.calleeId);
-            const method = findCalleeMethod(s.calleeId, s.methodId);
-            return !!(caller && callee && method);
-        };
+        // Bracket rows are indexed by position in `resolved`, so this must count
+        // exactly the steps that made it into `resolved`. It was a third,
+        // independent copy of the resolution — now it asks the shared selection,
+        // and cannot drift out of step with the rows it is bracketing.
+        const drawnIds = new Set(interactions.map(it => it.id));
+        const isValidCall = (s) => drawnIds.has(s.id);
         for (const s of steps) {
             if (isFragStart(s)) {
                 const type = effectiveFragType(s);
@@ -4615,10 +4737,24 @@ function renderSequenceDiagram(steps, container) {
             return;
         }
 
+        // Final return to the system caller. A return with no call of its own —
+        // the matching call was the entry interaction, several rows above.
+        if (s.kind === 'exit') {
+            svg.appendChild(el('text', { x: (x1 + x2) / 2, y: y - 6, 'text-anchor': 'middle', 'font-size': '10', fill: '#888888', 'font-style': 'italic' }, `← ${s.ret}`));
+            svg.appendChild(el('path', { d: `M ${x1} ${y} L ${x2 - dir * head} ${y}`, fill: 'none', stroke: '#444444', 'stroke-width': '1.2', 'stroke-dasharray': '5 3' }));
+            svg.appendChild(el('polygon', { points: `${x2 - dir * head},${y - 3.5} ${x2},${y} ${x2 - dir * head},${y + 3.5}`, fill: '#444444' }));
+            return;
+        }
+
         // Regular call: forward arrow.
         svg.appendChild(el('text', { x: (x1 + x2) / 2, y: y - 8, 'text-anchor': 'middle', 'font-size': '11', fill: '#444444' }, `${i + 1}. ${s.label}`));
         svg.appendChild(el('path', { d: `M ${x1} ${y} L ${x2 - dir * head} ${y}`, fill: 'none', stroke: '#1a1a1a', 'stroke-width': '1.4' }));
         svg.appendChild(el('polygon', { points: `${x2 - dir * head},${y - 4} ${x2},${y} ${x2 - dir * head},${y + 4}`, fill: '#1a1a1a' }));
+
+        // The entry interaction's response is its own step (kind 'exit'), so
+        // drawing a return here would invent a second one.
+        if (s.kind === 'entry') return;
+
         // Return arrow: dashed back. Label "← ret" or "← ack" if void.
         const respLabel = s.ret || 'ack';
         svg.appendChild(el('text', { x: (x1 + x2) / 2, y: ry - 5, 'text-anchor': 'middle', 'font-size': '10', fill: '#888888', 'font-style': 'italic' }, `← ${respLabel}`));
@@ -4651,6 +4787,39 @@ function signoffBlockedByDrops() {
     return (state.reviewDropped || []).length > 0 && !state.reviewDroppedAck;
 }
 
+/**
+ * Sign-off is also blocked when the before-view could not be derived.
+ *
+ * A failed derive is not a design with no dropped calls — it is a design nobody
+ * checked. renderReviewBefore() clears the gate up front and recomputes it only
+ * on the success path, so before this the gate reported clean after learning
+ * nothing, and the cached failure made that stick for the rest of the session.
+ *
+ * Greenfield is a different thing and stays open: with no entry, no project or a
+ * method that does not exist yet there is no baseline to compare against, and
+ * those cases return above the fetch without setting this flag.
+ */
+function signoffBlockedByFailedDerive() {
+    return !!state.reviewDeriveFailed;
+}
+
+/**
+ * And while the derive is still in flight. renderReviewBefore() returns
+ * synchronously and the fetch settles later, so between those two moments the
+ * gate has cleared its old answer and has no new one. Reading that gap as "no
+ * dropped calls" enables Next on a design nothing has checked yet — the same
+ * fail-open as a failed derive, just narrower.
+ */
+function signoffBlockedByPendingDerive() {
+    return !!state.reviewDerivePending;
+}
+
+/** Every reason Step 3 refuses to release sign-off. */
+function signoffBlocked() {
+    return signoffBlockedByDrops() || signoffBlockedByFailedDerive()
+        || signoffBlockedByPendingDerive();
+}
+
 function syncSignoffUI() {
     const input = document.getElementById('signoff-team');
     const signed = !!state.teamSignedOff;
@@ -4661,8 +4830,14 @@ function syncSignoffUI() {
         if (signoffBlockedByDrops()) {
             status.textContent = 'Blocked — this design removes existing calls; acknowledge under Design diff first.';
             status.classList.remove('complete');
+        } else if (signoffBlockedByFailedDerive()) {
+            status.textContent = 'Blocked — the current code could not be derived, so the dropped-call check never ran. See Design diff.';
+            status.classList.remove('complete');
         } else if (signoffBlockedByDataflow()) {
             status.textContent = 'Blocked — this design uses values nothing produces; acknowledge under Design diff first.';
+            status.classList.remove('complete');
+        } else if (signoffBlockedByContract()) {
+            status.textContent = 'Blocked — the DisC plugin would refuse this design; acknowledge under Design diff first.';
             status.classList.remove('complete');
         } else {
             status.textContent = signed
@@ -4676,7 +4851,8 @@ function syncSignoffUI() {
 }
 
 function allSignedOff() {
-    return !!state.teamSignedOff && !signoffBlockedByDrops() && !signoffBlockedByDataflow();
+    return !!state.teamSignedOff && !signoffBlocked()
+        && !signoffBlockedByDataflow() && !signoffBlockedByContract();
 }
 
 (() => {
@@ -4747,15 +4923,24 @@ function greenfieldBannerHtml() {
 // Anything present in code but absent from the design blocks team sign-off
 // until explicitly acknowledged — deterministic set comparison, no LLM.
 
+/**
+ * The calls the design actually makes, as `Callee.method`, for the dropped-call
+ * gate to compare against the derived before-view.
+ *
+ * Reads the shared selection rather than resolving the sequence again. It used to
+ * do its own walk and omit the caller check `resolveSteps()` applies, so a step
+ * whose caller did not resolve produced **no arrow** while this set still claimed
+ * the call was proposed: the design lost the call silently and the gate reported
+ * nothing. A false release, in the gate that exists to catch exactly that.
+ *
+ * Filtering to `kind === 'call'` also drops the entry and final-return steps,
+ * which is what the old `isSystemCaller` skip was for.
+ */
 function proposedCallSet() {
     const set = new Set();
-    for (const s of (state.sequence || [])) {
-        if (s.kind !== STEP_KIND.CALL) continue;
-        if (isSystemCaller(s.callerId) || isSystemCaller(s.calleeId)) continue;
-        const callee = findCallee(s.calleeId);
-        if (!callee || !callee.name) continue;
-        const m = findCalleeMethod(s.calleeId, s.methodId);
-        if (m && m.name) set.add(callee.name + '.' + m.name);
+    for (const it of resolveSteps()) {
+        if (it.kind !== 'call' || !it.to || !it.method) continue;
+        set.add(it.to + '.' + it.method);
     }
     return set;
 }
@@ -4815,21 +5000,41 @@ function signoffBlockedByDataflow() {
     return (state.reviewDataflow || []).length > 0 && !state.reviewDataflowAck;
 }
 
-async function refreshDataflowLint() {
-    const report = await lintDesign();
-    setDataflowIssues(report.violations, report.warnings);
+// The contract gate is a separate blocker from the data-flow one because it is a
+// separate KIND of problem: the flow gate says a value has no producer, the
+// contract gate says the design breaks a rule the DisC plugin will refuse at
+// Generate. Sharing a blocker would mean sharing a message, and one of the two
+// messages would then be false.
+function signoffBlockedByContract() {
+    return (state.reviewContract || []).length > 0 && !state.reviewContractAck;
 }
 
-function setDataflowIssues(violations, warnings) {
+async function refreshDataflowLint() {
+    const report = await lintDesign();
+    setDataflowIssues(report.violations, report.warnings,
+                      report.contractViolations, report.contractWarnings);
+}
+
+function setDataflowIssues(violations, warnings, contractViolations, contractWarnings) {
+    const contractV = contractViolations || [];
+    const contractW = contractWarnings || [];
     const panel = document.getElementById('review-dataflow');
     const signature = violations.join('|');
     if (state.reviewDataflowSig !== signature) {
         state.reviewDataflowSig = signature;
         state.reviewDataflowAck = false;  // a different set of breaks needs a fresh acknowledgement
     }
+    const contractSig = contractV.join('|');
+    if (state.reviewContractSig !== contractSig) {
+        state.reviewContractSig = contractSig;
+        state.reviewContractAck = false;
+    }
     state.reviewDataflow = violations;
+    state.reviewContract = contractV;
     if (panel) {
-        if (violations.length === 0 && warnings.length === 0) {
+        const empty = violations.length === 0 && warnings.length === 0
+            && contractV.length === 0 && contractW.length === 0;
+        if (empty) {
             panel.classList.add('hidden');
             panel.innerHTML = '';
         } else {
@@ -4844,10 +5049,30 @@ function setDataflowIssues(violations, warnings) {
             const wBlock = warnings.length === 0 ? '' : `
                 <div class="review-dataflow-warn-title">Produced but never used:</div>
                 <ul>${warnings.map(w => `<li><code>${escapeHtml(w)}</code></li>`).join('')}</ul>`;
-            panel.innerHTML = vBlock + wBlock;
+            // The escape hatch is deliberate, and its wording is the honest one.
+            // These checks are the app's local MIRROR of the plugin's Step-1
+            // rules, so a false positive here would otherwise strand the user on
+            // a design the plugin would happily accept. Generate re-checks with
+            // the plugin itself, which is the authority.
+            const cvBlock = contractV.length === 0 ? '' : `
+                <div class="review-dropped-title">⛔ The DisC plugin will refuse this design at Generate:</div>
+                <ul>${contractV.map(v => `<li><code>${escapeHtml(v)}</code></li>`).join('')}</ul>
+                <label class="review-dropped-ack">
+                    <input type="checkbox" id="contract-ack" ${state.reviewContractAck ? 'checked' : ''}>
+                    <span>Let the plugin decide at Generate — proceed</span>
+                </label>`;
+            const cwBlock = contractW.length === 0 ? '' : `
+                <div class="review-dataflow-warn-title">Design metadata the plugin would like:</div>
+                <ul>${contractW.map(w => `<li><code>${escapeHtml(w)}</code></li>`).join('')}</ul>`;
+            panel.innerHTML = vBlock + cvBlock + wBlock + cwBlock;
             const ack = document.getElementById('dataflow-ack');
             if (ack) ack.addEventListener('change', e => {
                 state.reviewDataflowAck = !!e.target.checked;
+                syncSignoffUI();
+            });
+            const cAck = document.getElementById('contract-ack');
+            if (cAck) cAck.addEventListener('change', e => {
+                state.reviewContractAck = !!e.target.checked;
                 syncSignoffUI();
             });
         }
@@ -4913,10 +5138,44 @@ function renderAppliedDefaults() {
         Edit the decision table if any of these should be different.</div>`;
 }
 
+/**
+ * What derivation could NOT account for, said out loud above the before-diagram.
+ *
+ * Stage A is honest — it records a capture gap for a branch, a loop, a chained or
+ * static receiver, a source that would not parse — and the derive response has
+ * carried them all along inside `slice.captureGaps`. The wizard used to read only
+ * `sliceModel` and drop the rest, so the panel drew a partial flow and said
+ * nothing about the remainder. `slice-act1` shows 3 arrows for an 8-call method.
+ *
+ * Each gap is named rather than counted: "3 calls not derived" tells a reviewer
+ * something is missing without telling them what to go and read. And complete
+ * capture is stated rather than left silent, so silence never has to be
+ * interpreted — a disclosure that renders nothing looks exactly like one that
+ * stopped working.
+ */
+function captureDisclosureHtml(gaps) {
+    const list = (gaps || []).filter(Boolean);
+    if (list.length === 0) {
+        return `<div class="review-capture complete">Capture complete — every call in `
+            + `the entry method is accounted for below.</div>`;
+    }
+    const items = list.map(g => `<li>${escapeHtml(g)}</li>`).join('');
+    const noun = list.length === 1 ? 'thing' : 'things';
+    return `<div class="review-capture">`
+        + `<strong>Capture gaps</strong> — the diagram below omits ${list.length} ${noun} `
+        + `the deriver could not represent, so it is not the whole flow:`
+        + `<ul>${items}</ul></div>`;
+}
+
 function renderReviewBefore() {
     const body = reviewEls.beforeBody;
     if (!body || !reviewEls.diff) return;
     setDroppedCalls([]); // no before, no gate — until a flow is derived below
+    // Cleared alongside the gate, and set again on every path that fails to
+    // produce a model. Without it, "the derive failed" and "there are no dropped
+    // calls" were the same observable state, and sign-off released on both.
+    state.reviewDeriveFailed = false;
+    state.reviewDerivePending = false;
     refreshDataflowLint();
     renderAppliedDefaults();
     const showBanner = (extraNote) => {
@@ -4947,23 +5206,30 @@ function renderReviewBefore() {
     const unboundWarn = bound ? '' : `<div class="review-before-warn">Matches existing `
         + `<code>${escapeHtml(catalogType.name)}</code> but the analysis did not bind it as reuse — `
         + `the proposal was designed without your current flow.</div>`;
-    const drawModel = (model) => {
+    const drawModel = (model, gaps) => {
         reviewEls.diff.classList.add('has-before');
-        body.innerHTML = unboundWarn;
+        body.innerHTML = unboundWarn + captureDisclosureHtml(gaps);
         const holder = document.createElement('div');
         body.appendChild(holder);
         renderSeqSvg(model, holder, '#64748b',
             { line: '#cbd5e1', ink: '#1f2937', muted: '#64748b', box: '#f1f5f9' });
         setDroppedCalls(computeDroppedCalls(model));
     };
+    // Only successes are cached. Caching a failure would lock the gate for the
+    // whole session: the banner would replay on every visit, the fetch would
+    // never be retried, and there is no acknowledgement affordance to release it.
+    // A transient error must cost one retry, not the rest of the sitting.
     const cached = reviewBeforeCache[key];
-    if (cached) {
-        if (cached.model) drawModel(cached.model);
-        else showBanner(cached.note);
+    if (cached && cached.model) {
+        drawModel(cached.model, cached.gaps);
         return;
     }
 
     body.innerHTML = '<div class="muted">Deriving the current code…</div>';
+    // Blocks sign-off until the answer lands. Without this the gap between this
+    // line and the fetch settling reads as "no dropped calls".
+    state.reviewDerivePending = true;
+    syncSignoffUI();
     fetch('/api/code-derive-by-path', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4976,14 +5242,20 @@ function renderReviewBefore() {
         .then(async res => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `derive failed (${res.status})`);
-            reviewBeforeCache[key] = { model: data.sliceModel };
-            drawModel(data.sliceModel);
+            state.reviewDerivePending = false;
+            const gaps = (data.slice && data.slice.captureGaps) || [];
+            reviewBeforeCache[key] = { model: data.sliceModel, gaps };
+            drawModel(data.sliceModel, gaps);
+            syncSignoffUI();
         })
         .catch(err => {
-            const note = `Couldn't derive the current code: ${err.message}`;
-            reviewBeforeCache[key] = { note };
             console.warn('[wizard] before-derive failed:', err);
-            showBanner(note);
+            // The dropped-call check never ran, so the gate knows nothing. Say so
+            // rather than reporting clean. Deliberately not cached — see above.
+            state.reviewDerivePending = false;
+            state.reviewDeriveFailed = true;
+            showBanner(`Couldn't derive the current code: ${err.message}`);
+            syncSignoffUI();
         });
 }
 

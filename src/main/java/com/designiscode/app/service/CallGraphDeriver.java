@@ -79,14 +79,37 @@ public class CallGraphDeriver {
      * @throws IllegalArgumentException if the class or method is not found
      */
     public DerivedSlice derive(List<String> sources, String entryClass, String entryMethod) {
+        return derive(sources, entryClass, entryMethod, List.of());
+    }
+
+    /**
+     * @param callerGaps facts the caller knows that shrink the derivable world —
+     *                   e.g. a file it could not read. Recorded as capture gaps so
+     *                   an incomplete view can never present itself as a complete
+     *                   one; see {@link DerivedSlice#captureComplete()}.
+     */
+    public DerivedSlice derive(List<String> sources, String entryClass, String entryMethod,
+                               List<String> callerGaps) {
+        // Every way the derivable world can be smaller than the real one is
+        // recorded here, never swallowed. A slice that quietly dropped a source
+        // still looks complete, and REGEN would then overwrite an orchestrator
+        // from a design missing whatever lived in that file.
+        List<String> worldGaps = new ArrayList<>(callerGaps);
+
         List<CompilationUnit> units = new ArrayList<>();
-        for (String src : sources) {
+        for (int i = 0; i < sources.size(); i++) {
+            String src = sources.get(i);
             if (src == null || src.isBlank()) continue;
             ParseResult<CompilationUnit> r = parser.parse(src);
-            if (r.isSuccessful() && r.getResult().isPresent()) units.add(r.getResult().get());
+            if (r.isSuccessful() && r.getResult().isPresent()) {
+                units.add(r.getResult().get());
+            } else {
+                worldGaps.add("a source did not parse, so its types are invisible: "
+                        + sourceLabel(src, i) + " (" + firstProblem(r) + ")");
+            }
         }
 
-        Map<String, TypeInfo> typeIndex = buildTypeIndex(units);
+        Map<String, TypeInfo> typeIndex = buildTypeIndex(units, worldGaps);
 
         // The entry name may denote an interface whose behavior lives in an
         // implementing class (DisC's own generated code is interface + impl).
@@ -145,8 +168,10 @@ public class CallGraphDeriver {
         List<DerivedSlice.Dependency> deps = collectDependencies(sut);
         Map<String, String> scope = buildScope(sut, entry);
         List<DerivedSlice.CallSite> callSites = collectCallSites(entry, scope, typeIndex);
-        List<String> captureGaps = new ArrayList<>(resolutionNotes);
+        List<String> captureGaps = new ArrayList<>(worldGaps);
+        captureGaps.addAll(resolutionNotes);
         captureGaps.addAll(detectCaptureGaps(entry));
+        captureGaps.addAll(detectUnemittableCalls(callSites));
 
         boolean orchestrator = callSites.stream()
                 .anyMatch(cs -> "interface".equals(cs.calleeKind()) || "class".equals(cs.calleeKind()));
@@ -175,29 +200,71 @@ public class CallGraphDeriver {
 
     // --- type index ---
 
-    private Map<String, TypeInfo> buildTypeIndex(List<CompilationUnit> units) {
+    /**
+     * Index every provided type by <b>simple name</b> — the same key receiver
+     * resolution uses, because Stage A is lexical and never reads imports.
+     *
+     * <p>That key is not unique across packages. When two distinct types share a
+     * simple name, one silently shadows the other and every call on that receiver
+     * is attributed to the wrong collaborator — <i>deterministically</i>, so no
+     * stability check can see it. The collision is therefore recorded as a capture
+     * gap: the slice says it could not tell the two apart instead of guessing.
+     */
+    private Map<String, TypeInfo> buildTypeIndex(List<CompilationUnit> units, List<String> worldGaps) {
         Map<String, TypeInfo> index = new LinkedHashMap<>();
         for (CompilationUnit u : units) {
             String pkg = u.getPackageDeclaration().map(pd -> pd.getNameAsString()).orElse("");
             for (ClassOrInterfaceDeclaration c : u.findAll(ClassOrInterfaceDeclaration.class)) {
                 String n = c.getNameAsString();
-                index.put(n, new TypeInfo(n, fqn(pkg, n),
+                put(index, worldGaps, new TypeInfo(n, fqn(pkg, n),
                         c.isInterface() ? "interface" : "class",
                         c.getImplementedTypes().stream().map(t -> simpleType(t.getNameAsString())).toList(),
                         methodsOf(c.getMethods())));
             }
             for (RecordDeclaration r : u.findAll(RecordDeclaration.class)) {
                 String n = r.getNameAsString();
-                index.put(n, new TypeInfo(n, fqn(pkg, n), "record",
+                put(index, worldGaps, new TypeInfo(n, fqn(pkg, n), "record",
                         r.getImplementedTypes().stream().map(t -> simpleType(t.getNameAsString())).toList(),
                         methodsOf(r.getMethods())));
             }
             for (EnumDeclaration e : u.findAll(EnumDeclaration.class)) {
                 String n = e.getNameAsString();
-                index.put(n, new TypeInfo(n, fqn(pkg, n), "enum", List.of(), List.of()));
+                put(index, worldGaps, new TypeInfo(n, fqn(pkg, n), "enum", List.of(), List.of()));
             }
         }
         return index;
+    }
+
+    /**
+     * Index {@code type} under its simple name, disclosing rather than resolving a
+     * clash with a different fully-qualified type. First writer wins, so the
+     * outcome stays deterministic; the gap is what stops it being trusted.
+     */
+    private static void put(Map<String, TypeInfo> index, List<String> worldGaps, TypeInfo type) {
+        TypeInfo existing = index.get(type.name());
+        if (existing == null) {
+            index.put(type.name(), type);
+            return;
+        }
+        if (existing.fqn().equals(type.fqn())) return; // same type provided twice
+        worldGaps.add("two provided types share the simple name '" + type.name() + "', so calls "
+                + "on it cannot be attributed: " + existing.fqn() + " vs " + type.fqn());
+    }
+
+    /** A stable, human-readable handle for a source that would not parse. */
+    private static String sourceLabel(String src, int index) {
+        java.util.regex.Matcher m = TYPE_DECLARATION.matcher(src);
+        return m.find() ? m.group(1) : "source #" + index;
+    }
+
+    private static final java.util.regex.Pattern TYPE_DECLARATION = java.util.regex.Pattern.compile(
+            "\\b(?:class|interface|enum|record)\\s+(\\w+)");
+
+    /** The parser's first complaint, flattened to one line. */
+    private static String firstProblem(ParseResult<CompilationUnit> result) {
+        return result.getProblems().isEmpty()
+                ? "no diagnostic"
+                : result.getProblem(0).getMessage().replace('\n', ' ').trim();
     }
 
     private static List<DerivedSlice.MethodSig> methodsOf(List<MethodDeclaration> methods) {
@@ -350,6 +417,35 @@ public class CallGraphDeriver {
         for (MethodCallExpr call : entry.findAll(MethodCallExpr.class)) {
             if (receiverName(call.getScope().orElse(null)) == null) {
                 gaps.add("an unattributable call: " + call + " (self, chained, or static receiver)");
+            }
+        }
+        return gaps;
+    }
+
+    /**
+     * Call sites {@link DesignDeltaEmitter} will not put in the flow, because it
+     * emits arrows only for a callee that resolves to a provided interface or
+     * class. A receiver that is not a known variable (a static call written as
+     * {@code Type.method()}) or whose declared type was never provided lands in
+     * {@link DerivedSlice#callSites()} with no usable callee, gets no arrow, and
+     * would therefore be <b>deleted</b> by a wholesale REGEN.
+     *
+     * <p>{@code captureComplete}'s contract has always named "unprovided callee
+     * types" as a gap; until this existed, only chained and unqualified receivers
+     * were caught, so {@code Type.method()} passed the gate as a phantom
+     * collaborator instead of blocking it.
+     */
+    private static List<String> detectUnemittableCalls(List<DerivedSlice.CallSite> callSites) {
+        List<String> gaps = new ArrayList<>();
+        for (DerivedSlice.CallSite cs : callSites) {
+            // Kept under SliceRenderer's 100-char line cap: the receiver and the
+            // reason must survive rendering, the explanation lives in the javadoc.
+            if (cs.calleeType() == null) {
+                gaps.add("a static call, so there is no collaborator to be an arrow to: "
+                        + cs.receiver() + "." + cs.method() + "()");
+            } else if ("unknown".equals(cs.calleeKind())) {
+                gaps.add("a call on an unprovided type: " + cs.receiver() + "." + cs.method()
+                        + "() on '" + cs.calleeType() + "'");
             }
         }
         return gaps;

@@ -54,7 +54,13 @@ public class CodeDesignDiffService {
 
     /** Stage A + rendering only: the what-IS view for an additive ticket. */
     public DeriveResult derive(List<String> sources, String entryClass, String entryMethod) {
-        DerivedSlice slice = deriver.derive(sources, entryClass, entryMethod);
+        return derive(sources, entryClass, entryMethod, List.of());
+    }
+
+    /** @param callerGaps sources the caller knows it could not supply — see {@link CallGraphDeriver#derive}. */
+    public DeriveResult derive(List<String> sources, String entryClass, String entryMethod,
+                               List<String> callerGaps) {
+        DerivedSlice slice = deriver.derive(sources, entryClass, entryMethod, callerGaps);
         return new DeriveResult(slice, sliceRenderer.renderMarkdown(slice),
                 sliceRenderer.renderPuml(slice), sliceRenderer.renderModel(slice));
     }
@@ -73,24 +79,24 @@ public class CodeDesignDiffService {
         if (!java.nio.file.Files.isDirectory(root)) {
             throw new IllegalArgumentException("no src/main/java under " + projectPath);
         }
-        List<String> sources;
+        List<String> sources = new java.util.ArrayList<>();
+        // An unreadable file must not kill the derive, but it must not vanish
+        // either: it shrinks the world the slice was built from, so it is handed
+        // to Stage A as a capture gap and blocks REGEN like any other gap.
+        List<String> unreadable = new java.util.ArrayList<>();
         try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
-            sources = paths
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .sorted()
-                    .map(p -> {
-                        try {
-                            return java.nio.file.Files.readString(p);
-                        } catch (java.io.IOException e) {
-                            return null; // unreadable file: skip, don't kill the derive
-                        }
-                    })
-                    .filter(java.util.Objects::nonNull)
-                    .toList();
+            for (java.nio.file.Path p : paths.filter(p -> p.toString().endsWith(".java")).sorted().toList()) {
+                try {
+                    sources.add(java.nio.file.Files.readString(p));
+                } catch (java.io.IOException e) {
+                    unreadable.add("a source could not be read, so its types are invisible to this slice: "
+                            + root.relativize(p) + " (" + e.getMessage() + ")");
+                }
+            }
         } catch (java.io.IOException e) {
             throw new IllegalArgumentException("cannot read sources under " + projectPath + ": " + e.getMessage());
         }
-        return derive(sources, entryClass, entryMethod);
+        return derive(sources, entryClass, entryMethod, unreadable);
     }
 
     /**

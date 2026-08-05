@@ -269,6 +269,13 @@ JSON.stringify({
 // sign-off panel reports violations about a design nobody has. So: project a
 // known-good design and a deliberately broken one, and let Java judge both
 // through the real validator.
+//
+// EVERY entity here is built the way the APP builds one — makeEntity() for a
+// hand-added entity, mergeDerivedEntities() for one inferred from a signature —
+// never as an object literal. The first version of this fixture wrote its
+// entities by hand, complete with the `ownedBy` the analyzer supplies and the
+// wizard does not, so it proved the projection worked on data the projection
+// never sees. A fixture shaped to pass tests the fixture.
 out.contractProjection = JSON.parse(withApp(`
 state.targetPackage = 'com.example.checkout';
 state.story = 'An owner cancels a visit and may be charged a late fee.';
@@ -283,25 +290,26 @@ const svc = { id: newId(), name: 'CancelVisitService', kind: 'orchestrator', exi
 ]};
 state.participants = [svc, policy];
 state.sutParticipantId = svc.id;
-state.entities = [
-  { id: newId(), name: 'CancellationResult', kind: 'record', existingFqn: null, ownedBy: 'CancelVisitService',
-    fields: [{ name: 'fee', type: 'BigDecimal' }], values: [], behaviors: [], permits: [] }
-];
+state.entities = [];
 state.variancePlan = [];
 
+// CancellationResult is named by cancel()'s return type, so this is the path a
+// real Analyze takes: the wizard invents the entity from the signature.
+mergeDerivedEntities();
+
 const good = designModelForContract();
+const derivedNames = state.entities.map(e => e.name);
 
 // Break exactly one rule the validator owns: a sealed family needs >= 2 permits.
-state.entities = state.entities.concat([
-  { id: newId(), name: 'FeePolicy', kind: 'sealed-interface', existingFqn: null, ownedBy: 'CancelVisitService',
-    fields: [], values: [], behaviors: [{ name: 'feeFor', args: [], returns: 'BigDecimal' }],
-    permits: ['OnlyOne'] },
-  { id: newId(), name: 'OnlyOne', kind: 'record', existingFqn: null, ownedBy: 'CancelVisitService',
-    fields: [], values: [], behaviors: [], permits: [] }
-]);
+// Built with makeEntity(), the same call the "+ Entity" button makes.
+const fam = makeEntity('FeePolicy', 'sealed-interface');
+fam.behaviors = [{ name: 'feeFor', args: [], returns: 'BigDecimal' }];
+fam.permits = ['OnlyOne'];
+const only = makeEntity('OnlyOne', 'record');
+state.entities = state.entities.concat([fam, only]);
 const broken = designModelForContract();
 
-JSON.stringify({ good: good, broken: broken });
+JSON.stringify({ good: good, broken: broken, derivedNames: derivedNames });
 `));
 
 process.stdout.write(JSON.stringify(out, null, 2));

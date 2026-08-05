@@ -5,11 +5,101 @@ All notable changes to this project are documented here. The format follows
 adheres loosely to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: anything may break between minors).
 
-## [Unreleased]
+## [v0.8.1] — 2026-08-05
 
-Post-v0.8.0 work on `main`. Not in the published jar.
+A correctness release for the **review surface**. Two of the fixes below mean
+that on v0.8.0 every design was approved against a picture that was not the whole
+picture, and the gate meant to catch a dropped call could report clean without
+having judged anything.
+
+### Added
+- **`TESTING.md` — a value→test map, enforced by a test.** Seven properties, each
+  stated by its failure, with every file under `src/test/java` mapped to a
+  property or a declared bucket. `CoverageGovernanceTest` checks it
+  both ways: every cited test resolves, is tracked by git and carries no
+  `@Tag("eval")`; every test file is accounted for. Guarding against "a mechanism
+  existed and did not run" with a review convention would have been the same kind
+  of object as the mechanisms that failed, so the map executes.
+- **CI, for the first time.** `.github/workflows/test.yml` runs `./gradlew test`
+  on push and pull request. It installs Node, because `FrontendChainTest` aborts
+  when node is absent and would have skipped 18 tests while reporting green — the
+  defect this repo keeps hitting, arriving through the tool meant to catch it. The
+  workflow fails when the skip count moves off its expected value.
+- **The frontend harness can reach a success path.** It loads the real
+  `diagram-svg.js`, lets a case stub `fetch` (the default still refuses the
+  network), and records DOM writes so a test can assert what a panel rendered.
+  Until now `drawModel`'s success path was unreachable from any test, which is
+  why the defect below survived.
+
+### Fixed
+- **The reviewer was never told what derivation could not account for.** Stage A
+  records a capture gap for a branch, a loop, a chained or static receiver, a
+  source that will not parse — and the derive response carried every one of them
+  inside `slice.captureGaps` all along. The wizard read `data.sliceModel` and
+  discarded `data.slice`, so the Before panel drew a partial flow and said nothing
+  about the rest: `slice-act1` shows **3 arrows for an 8-call method**, and this
+  repo's own `deriveByPath` derives 8+ gaps. The panel now names each gap above
+  the diagram, and states complete capture rather than leaving silence to be
+  interpreted. Honesty that never reaches the reader is not honesty. No backend
+  change was needed. `CaptureGapDisclosureTest`.
+- **The dropped-call gate counted calls the design does not make.**
+  `proposedCallSet()` resolved the sequence itself and omitted the caller check
+  `resolveSteps()` applies, so a step whose caller did not resolve emitted **no
+  arrow** while the gate still treated the call as proposed — the design lost a
+  call silently and the gate reported nothing. A false release, in the gate built
+  to catch exactly that. It now reads the shared selection. `ReviewGateTest`.
+- **Editing a frontend test driver did not re-run the tests.** Four Java tests
+  shell out to `node src/test/js/*.js`, and `CoverageGovernanceTest` parses
+  `TESTING.md` and `WHY.md` — none of which Gradle can see, because they are read
+  from the project directory rather than the classpath. A content change left
+  `:test` UP-TO-DATE and reused the previous results, so editing a claim switched
+  off the check that polices claims. `build.gradle` now declares all of them as
+  task inputs.
+- **The reviewer could not see the entry interaction or the return type.**
+  `emitPlantUml` emitted `[*] -> SUT` and `[*] <-- SUT`; `renderSequenceDiagram`
+  had no system-caller branch, so `findParticipant('__system_caller__')` returned
+  undefined and its guard dropped both steps. Step 3's *after* panel is that
+  renderer, so **every** design was signed off against a picture missing two
+  arrows the file carried anyway. A third copy of the resolution indexed fragment
+  brackets and had to agree with both. All three now read one `resolveSteps()` —
+  the same shape `SliceRenderer` already used server-side, where one
+  `pumlArrows()` sits behind `renderPuml` and `renderModel` "so the drawn diagram
+  and the puml text never disagree". `DesignAgreementTest` compares the drawn
+  labels against the emitted arrows; the emitted text is byte-identical.
+- **The dropped-call gate failed open, and stuck that way.** `renderReviewBefore`
+  cleared the gate before deriving and recomputed only on success, so a derive
+  error left it reporting "no dropped calls" after judging nothing. The failure
+  was cached, so every later visit to Step 3 replayed the banner and skipped the
+  recompute too. A failed derive now blocks sign-off with its own message;
+  greenfield, which genuinely has no baseline, still passes. The same gap existed
+  while the derive was merely *in flight* — `renderReviewBefore` returns
+  synchronously and the fetch settles later — so that window blocks too. Failures
+  are no longer cached: caching one turned the fix into a trap that locked
+  sign-off for the whole session on a single transient error, with nothing able to
+  release it. `ReviewGateTest`.
 
 ### Changed
+- **The claim set is corrected.** An adversarial read of `WHY.md` found seven
+  defects. The framing sentence claimed each claim forces the next; it does not —
+  claim 5's mechanism belongs to claim 1, claim 7's to claim 3, and claim 6 stands
+  alone. Claim 5 said the reviewer understands *the code*, which contradicts
+  "leaf content is sampled"; it now says *structure*. Claim 6 said "drift cannot
+  return" without qualification; design/code drift dies, intent drift moves to the
+  PR record and ages there. Claim 7 said "check all of it"; it checks that every
+  designed interaction has a test. Claim 1's PRs are self-approved and now say so.
+  Claim 3's naive counterfactual is hand-authored and now says so, together with
+  the chain-1 run that confirmed it. Claim 4 drops NPath for change cost.
+  Two things were missing and are added: a non-claim about the single shape DisC
+  imposes, and an answer to the objection the file never faced — *why review at
+  all, when you can make failure cheap and regenerate?*
+- **Derivation now proves fidelity as well as stability.** `CallGraphDeriverSoundnessTest`
+  proves every call in an entry body is captured as an arrow or disclosed as a
+  capture gap. Stage A now records a gap for a source that will not parse, a file
+  it could not read, two provided types sharing a simple name, and a call Stage E
+  cannot emit an arrow for — a static receiver or an unprovided callee type. Each
+  one used to pass silently, so a slice built on an incomplete world looked exactly
+  as confident as a complete one, and REGEN would have overwritten the orchestrator
+  without whatever it missed. `captureComplete()` had promised this all along.
 - **Analyze no longer spends a model call on plugin validation.** The
   deterministic half of what the plugin's Step 1 would refuse now runs locally
   and instantly as part of the design lint; the plugin's own check runs **once,
@@ -28,6 +118,36 @@ Post-v0.8.0 work on `main`. Not in the published jar.
   now, so it can afford to be right.
 
 ### Fixed
+- **A refused generation said nothing at all.** Moving the plugin's check to the
+  Generate button left the panel that displays its verdict back on Step 2, inside
+  a section that is `display: none` while you are on Step 4. Clicking Generate on
+  a design the plugin refuses showed "Checking the design…", returned to
+  "Generate", and stopped — no message, no generation, no explanation. The panel
+  now lives in the step it fires from, and `WizardMarkupTest` fails if it moves
+  again.
+- **Hand-authored designs were refused for a field the wizard never sets.** The
+  contract checks require every entity to name an owning participant, a rule
+  written for the *analyzer's* output. Nothing the wizard builds carries it —
+  neither the "+ Entity" button nor the entities inferred from method signatures
+  — so an ordinary design reported "entity X has no ownedBy", which blocked
+  sign-off and wasted a model call on a retry that could not have fixed it. The
+  owner is now derived from the participant whose signature introduced the type.
+- **Grammar problems were being sent to the sequencer.** The lint endpoint
+  returned data-flow and contract findings in one list, so a "sealed family has
+  one permit" reached the retry that exists for data-flow problems, wrapped in a
+  prompt about call arguments — the same misrouting removed from the validator
+  path, arriving through a different door. The two families are now reported
+  separately and only data-flow findings drive the retry.
+- **The sign-off gate labelled contract problems as data-flow problems.** They
+  rendered under "this design uses values that nothing in the flow produces",
+  behind a checkbox reading "these values arrive some other way — proceed".
+  Neither sentence was true of them, and ticking it waved through something the
+  plugin would hard-refuse minutes later. Contract findings now get their own
+  block, their own wording, and an acknowledgement that says what it does.
+- **The contract checks ran before the design was assembled.** They fired inside
+  the sequencer step, which completes *before* the wizard picks the SUT and adds
+  the entry interaction — so they judged a half-built model and reported "sut is
+  missing or blank" every time. They now run at sign-off, on a finished design.
 - **Validation could silently stop validating.** The verdict parser only read
   the plugin's `{"ok": …}` envelope when it was the very first thing in the
   output, so any run where the model narrated before answering fell through to

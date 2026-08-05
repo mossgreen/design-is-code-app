@@ -345,15 +345,6 @@
 
             <datalist id="types-datalist"></datalist>
 
-            <div id="plugin-refusal-panel" class="plugin-refusal-panel hidden" aria-live="polite">
-                <div class="plugin-refusal-head">
-                    <span class="plugin-refusal-icon" aria-hidden="true">⛔</span>
-                    <strong>The DisC plugin would refuse this design.</strong>
-                    <span class="plugin-refusal-sub">Edit the design above, then click Analyze again to retry.</span>
-                </div>
-                <pre id="plugin-refusal-body" class="plugin-refusal-body"></pre>
-            </div>
-
             <div class="actions actions-split">
                 <button type="button" class="secondary" data-back="1">← Back</button>
                 <button type="button" id="flow-next">Continue →</button>
@@ -500,6 +491,20 @@
                         <button type="button" class="plugin-skip" id="plugin-skip-update">Skip for this session</button>
                         <button type="button" class="plugin-recheck" data-recheck title="Re-fetch plugin status">Re-check ↻</button>
                     </div>
+                </div>
+                <!-- The plugin's Step-1 verdict, shown when Generate is refused.
+                     It lives HERE, in panel-4, because that is the only step it
+                     can fire from. It used to sit in panel-2: un-hiding it while
+                     the user stood on Step 4 revealed a node inside a
+                     display:none section, so a refusal blocked generation and
+                     said nothing. WizardMarkupTest pins the placement. -->
+                <div id="plugin-refusal-panel" class="plugin-refusal-panel hidden" aria-live="polite">
+                    <div class="plugin-refusal-head">
+                        <span class="plugin-refusal-icon" aria-hidden="true">⛔</span>
+                        <strong>The DisC plugin refused this design — nothing was generated.</strong>
+                        <span class="plugin-refusal-sub">Go back to Step 2, fix what it names below, then save and run again.</span>
+                    </div>
+                    <pre id="plugin-refusal-body" class="plugin-refusal-body"></pre>
                 </div>
                 <div id="run-progress" class="run-progress hidden">
                     <div class="run-head">

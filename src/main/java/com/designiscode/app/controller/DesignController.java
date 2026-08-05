@@ -41,6 +41,17 @@ public class DesignController {
      * instantly and without a model call. Sending it turns this endpoint into the
      * one place a design is judged before generation; omitting it leaves the
      * previous behaviour untouched.
+     *
+     * <p><b>The two families are reported separately, and that separation is
+     * load-bearing.</b> A flow violation says "this call consumes a value nothing
+     * produces" — the sequencer authors call arguments, so it can fix one, and
+     * {@code runSequence()} retries it with exactly that complaint. A contract
+     * violation says "this sealed family has one permit" — grammar, which the
+     * sequencer does not own and cannot repair. Merging them into one list (as
+     * this endpoint briefly did) sends grammar complaints to the sequencer wrapped
+     * in a description of a data-flow problem, and renders them in the Step-3
+     * panel under a heading that is false for them. Same shape, different
+     * destination: keep them apart.
      */
     @PostMapping("/design/lint")
     public ResponseEntity<?> lint(@RequestBody Map<String, Object> request) {
@@ -58,11 +69,12 @@ public class DesignController {
         warnings.addAll(decision.warnings());
 
         DesignContractValidator.Report contract = contract(request);
-        if (contract != null) {
-            violations.addAll(contract.violations());
-            warnings.addAll(contract.warnings());
-        }
-        return ResponseEntity.ok(new DataflowLinter.Report(violations, warnings));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("violations", violations);
+        body.put("warnings", warnings);
+        body.put("contractViolations", contract == null ? List.of() : contract.violations());
+        body.put("contractWarnings", contract == null ? List.of() : contract.warnings());
+        return ResponseEntity.ok(body);
     }
 
     /**
